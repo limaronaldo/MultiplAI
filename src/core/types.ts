@@ -12,6 +12,18 @@ export interface OrchestratorError {
   stack?: string;
 }
 
+// ============================================
+// Task Status & State Machine
+// ============================================
+
+export interface OrchestratorError {
+  code: string;
+  message: string;
+  taskId: string;
+  recoverable: boolean;
+  stack?: string;
+}
+
 export function createOrchestratorError(code: string, message: string, taskId: string, recoverable: boolean, stack?: string): OrchestratorError {
   return { code, message, taskId, recoverable, stack };
 }
