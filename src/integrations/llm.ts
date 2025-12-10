@@ -1,7 +1,8 @@
 import { AnthropicClient } from "./anthropic";
 import { OpenAIClient } from "./openai";
+import { OpenRouterClient } from "./openrouter";
 
-export type LLMProvider = "anthropic" | "openai";
+export type LLMProvider = "anthropic" | "openai" | "openrouter";
 
 export interface CompletionParams {
   model: string;
@@ -43,6 +44,7 @@ const MODEL_PROVIDERS: Record<string, LLMProvider> = {
 // Lazy-loaded clients
 let anthropicClient: AnthropicClient | null = null;
 let openaiClient: OpenAIClient | null = null;
+let openrouterClient: OpenRouterClient | null = null;
 
 function getAnthropicClient(): AnthropicClient {
   if (!anthropicClient) {
@@ -58,13 +60,25 @@ function getOpenAIClient(): OpenAIClient {
   return openaiClient;
 }
 
+function getOpenRouterClient(): OpenRouterClient {
+  if (!openrouterClient) {
+    openrouterClient = new OpenRouterClient();
+  }
+  return openrouterClient;
+}
+
 export function getProviderForModel(model: string): LLMProvider {
   // Check exact match first
   if (MODEL_PROVIDERS[model]) {
     return MODEL_PROVIDERS[model];
   }
 
-  // Check prefixes
+  // OpenRouter models have provider prefix (e.g., "anthropic/claude-3.5-sonnet")
+  if (model.includes("/")) {
+    return "openrouter";
+  }
+
+  // Check prefixes for direct API access
   if (model.startsWith("claude-")) {
     return "anthropic";
   }
@@ -86,10 +100,14 @@ export class LLMClient {
   async complete(params: CompletionParams): Promise<string> {
     const provider = getProviderForModel(params.model);
 
-    if (provider === "openai") {
-      return getOpenAIClient().complete(params);
-    } else {
-      return getAnthropicClient().complete(params);
+    switch (provider) {
+      case "openai":
+        return getOpenAIClient().complete(params);
+      case "openrouter":
+        return getOpenRouterClient().complete(params);
+      case "anthropic":
+      default:
+        return getAnthropicClient().complete(params);
     }
   }
 }
@@ -116,5 +134,18 @@ export const AVAILABLE_MODELS = {
     "o4-mini": "Newest, best math/coding",
     o1: "Original reasoning model",
     "o1-mini": "Smaller reasoning model",
+  },
+  openrouter: {
+    // Use any model via OpenRouter with "provider/model" format
+    "anthropic/claude-3.5-sonnet": "Claude 3.5 Sonnet via OpenRouter",
+    "openai/gpt-4o": "GPT-4o via OpenRouter",
+    "google/gemini-2.0-flash-exp": "Gemini 2.0 Flash",
+    "google/gemini-exp-1206": "Gemini Exp 1206",
+    "meta-llama/llama-3.3-70b-instruct": "Llama 3.3 70B",
+    "deepseek/deepseek-chat": "DeepSeek Chat",
+    "deepseek/deepseek-r1": "DeepSeek R1 (Reasoning)",
+    "mistralai/codestral-2501": "Codestral (Code specialist)",
+    "qwen/qwen-2.5-coder-32b-instruct": "Qwen 2.5 Coder 32B",
+    "qwen/qwq-32b-preview": "QwQ 32B (Reasoning)",
   },
 };
