@@ -1,9 +1,10 @@
 import {
   Task,
   TaskStatus,
+  OrchestratorError,
   TaskEvent,
   defaultConfig,
-  OrchestratorError,
+  type AutoDevConfig,
   type AutoDevConfig,
 } from "./types";
 import { transition, getNextAction, isTerminal } from "./state-machine";
@@ -61,30 +62,59 @@ export class Orchestrator {
   /**
     }
   }
-
-  // ============================================
-  // Validation Helpers
-  // ============================================
-
-  private validateTaskStatus(task: Task, expectedStatus: TaskStatus): void {
-    if (task.status !== expectedStatus) {
-      throw {
-        code: "INVALID_STATUS",
-        message: `Expected status ${expectedStatus}, but got ${task.status}`,
-        taskId: task.id,
-        recoverable: false,
-      } as OrchestratorError;
+        default:
+          return task;
       }
-    } catch (error) {
+    } catch (error: unknown) {
+      console.error(`Error processing task ${task.id}:`, error);
       return this.failTask(
         task,
-        error,
-      );
+      throw {
+        code: "INVALID_STATUS",
     }
   }
 
+  /**
+   * Validates that task is in expected status
+   */
+  private validateTaskStatus(task: Task, expectedStatus: TaskStatus | TaskStatus[]): void {
+    const expected = Array.isArray(expectedStatus) ? expectedStatus : [expectedStatus];
+    if (!expected.includes(task.status)) {
+      const error: OrchestratorError = {
+        code: "INVALID_TASK_STATUS",
+        message: `Task ${task.id} is in status ${task.status}, expected one of: ${expected.join(", ")}`,
+        taskId: task.id,
+        recoverable: false
+      };
+      throw error;
+    }
+  }
+
+  /**
+   * Validates that required fields exist on task
+   */
+  private validateRequiredFields(task: Task, fields: (keyof Task)[]): void {
+    const missing = fields.filter(field => {
+      const value = task[field];
+      return value === undefined || value === null || (Array.isArray(value) && value.length === 0);
+    });
+
+    if (missing.length > 0) {
+      const error: OrchestratorError = {
+        code: "MISSING_REQUIRED_FIELDS",
+        message: `Task ${task.id} is missing required fields: ${missing.join(", ")}`,
+        taskId: task.id,
+        recoverable: false
+      };
+      throw error;
+    }
+  }
+
+  /**
+   * Step 1: Planning
+   */
   private async runPlanning(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, TaskStatus.NEW);
+    this.validateTaskStatus(task, "NEW");
 
     task = this.updateStatus(task, "PLANNING");
     await this.logEvent(task, "PLANNED", "planner");
@@ -93,17 +123,19 @@ export class Orchestrator {
     ) {
       return this.failTask(
         task,
-        new OrchestratorError(
-          "COMPLEXITY_TOO_HIGH",
-          `Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`,
-          task.id,
-          false
-        ),
+        {
+          code: "COMPLEXITY_TOO_HIGH",
+          message: `Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`,
+          taskId: task.id,
+          recoverable: false
+        }
       );
     }
 
+   * Step 2: Coding
+   */
   private async runCoding(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, TaskStatus.PLANNING_DONE);
+    this.validateTaskStatus(task, "PLANNING_DONE");
     this.validateRequiredFields(task, ["definitionOfDone", "plan", "targetFiles"]);
 
     task = this.updateStatus(task, "CODING");
@@ -113,44 +145,131 @@ export class Orchestrator {
     if (diffLines > this.config.maxDiffLines) {
       return this.failTask(
         task,
-        new OrchestratorError(
-          "DIFF_TOO_LARGE",
-          `Diff muito grande (${diffLines} linhas). Máximo permitido: ${this.config.maxDiffLines}`,
-          task.id,
-          false
-        ),
+        {
+          code: "DIFF_TOO_LARGE",
+          message: `Diff muito grande (${diffLines} linhas). Máximo permitido: ${this.config.maxDiffLines}`,
+          taskId: task.id,
+          recoverable: false
+        }
       );
     }
 
+   * Step 3: Testing (via GitHub Actions)
+   */
   private async runTests(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, TaskStatus.CODING_DONE);
+    this.validateTaskStatus(task, "CODING_DONE");
     this.validateRequiredFields(task, ["branchName"]);
 
     task = this.updateStatus(task, "TESTING");
     await this.logEvent(task, "TESTED", "runner");
 
-      task.attemptCount++;
 
       if (task.attemptCount >= task.maxAttempts) {
         return this.failTask(
           task,
-          new OrchestratorError(
-            "MAX_ATTEMPTS_EXCEEDED",
-            `Máximo de tentativas (${task.maxAttempts}) atingido`,
-            task.id,
-            false
-          ),
+          {
+            code: "MAX_ATTEMPTS_REACHED",
+            message: `Máximo de tentativas (${task.maxAttempts}) atingido`,
+            taskId: task.id,
+            recoverable: false
+          }
         );
       }
 
+   * Step 4: Fix (quando testes falham)
+   */
   private async runFix(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, TaskStatus.TESTS_FAILED);
-    this.validateRequiredFields(task, ["branchName", "lastError"]);
+    this.validateTaskStatus(task, "TESTS_FAILED");
+    this.validateRequiredFields(task, ["branchName", "lastError", "currentDiff"]);
 
     task = this.updateStatus(task, "FIXING");
     await this.logEvent(task, "FIXED", "fixer");
 
+   * Step 5: Review
+   */
   private async runReview(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, "TESTS_PASSED");
+    this.validateRequiredFields(task, ["branchName", "currentDiff"]);
+
+    task = this.updateStatus(task, "REVIEWING");
+    await this.logEvent(task, "REVIEWED", "reviewer");
+
+
+      if (task.attemptCount >= task.maxAttempts) {
+        return this.failTask(
+          task,
+          {
+            code: "MAX_ATTEMPTS_REACHED",
+            message: `Máximo de tentativas (${task.maxAttempts}) atingido após review`,
+            taskId: task.id,
+            recoverable: false
+          }
+        );
+      }
+
+    return task;
+  }
+
+  private async failTask(task: Task, errorOrReason: OrchestratorError | string): Promise<Task> {
+    const error: OrchestratorError = typeof errorOrReason === "string"
+      ? {
+          code: "UNKNOWN_ERROR",
+          message: errorOrReason,
+          taskId: task.id,
+          recoverable: false,
+          stack: new Error().stack
+        }
+      : errorOrReason;
+
+    task.status = "FAILED";
+    task.lastError = JSON.stringify({
+      code: error.code,
+      message: error.message,
+      recoverable: error.recoverable,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+    task.updatedAt = new Date();
+
+    console.error(`Task ${task.id} failed [${error.code}]: ${error.message}`);
+    if (error.stack) {
+      console.error(`Stack trace:\n${error.stack}`);
+    }
+
+    // Optional: Comment on GitHub issue if COMMENT_ON_FAILURE is enabled
+    const shouldComment = process.env.COMMENT_ON_FAILURE === "true";
+    if (shouldComment) {
+      try {
+        const commentBody = `
+## ❌ AutoDev Task Failed
+
+**Error Code:** \`${error.code}\`
+**Message:** ${error.message}
+**Recoverable:** ${error.recoverable ? "Yes" : "No"}
+**Timestamp:** ${new Date().toISOString()}
+
+${error.stack ? `<details>\n<summary>Stack Trace</summary>\n\n\`\`\`\n${error.stack}\n\`\`\`\n</details>` : ""}
+
+This task has been marked as failed. ${error.recoverable ? "It may be retried." : "Manual intervention is required."}
+`.trim();
+
+        await this.github.addComment(task.githubRepo, task.githubIssueNumber, commentBody);
+      } catch (commentError) {
+        console.error(`Failed to add failure comment to issue:`, commentError);
+      }
+    }
+
+    return task;
+  }
+
+++ b/.env.example
+
+FLY_API_KEY=
+
+# Error Handling
+# Set to 'true' to post a comment on the GitHub issue when a task fails
+# Useful for transparency but may be noisy in development
+COMMENT_ON_FAILURE=false
     this.validateTaskStatus(task, TaskStatus.TESTS_PASSED);
     this.validateRequiredFields(task, ["branchName"]);
 
