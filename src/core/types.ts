@@ -242,18 +242,6 @@ COMMENT_ON_FAILURE=false
    * Step 5: Review
    */
   private async runReview(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, TaskStatus.TESTS_PASSED);
-    this.validateRequiredFields(task, ["branchName"]);
-
-    task = this.updateStatus(task, "REVIEWING");
-    await this.logEvent(task, "REVIEWED", "reviewer");
-
-   * Step 6: Open PR
-   */
-  private async openPR(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, TaskStatus.REVIEW_APPROVED);
-    this.validateRequiredFields(task, ["branchName"]);
-export const defaultConfig: AutoDevConfig = {
   maxAttempts: 3,
   maxDiffLines: 300,
   allowedRepos: [],
@@ -263,14 +251,13 @@ export const defaultConfig: AutoDevConfig = {
 };
 
 // ============================================
-// Orchestrator Error
+// Errors
 // ============================================
 
   code: string;
   message: string;
   taskId: string;
   recoverable: boolean;
-  stack?: string;
 }
 ++ b/src/core/orchestrator.ts
 import {
@@ -278,25 +265,18 @@ import {
   TaskStatus,
   TaskEvent,
   defaultConfig,
-import { transition, getNextAction, isTerminal } from "./state-machine";
 import { PlannerAgent } from "../agents/planner";
 import { CoderAgent } from "../agents/coder";
 import { FixerAgent } from "../agents/fixer";
 import { ReviewerAgent } from "../agents/reviewer";
 import { GitHubClient } from "../integrations/github";
-import {
-  MultiAgentConfig,
-  MultiAgentMetadata,
+import { db } from "../integrations/db";
   loadMultiAgentConfig,
 } from "./multi-agent-types";
 import { MultiCoderRunner, MultiFixerRunner } from "./multi-runner";
 import { ConsensusEngine, formatConsensusForComment } from "./consensus";
+
 export class Orchestrator {
-  private config: AutoDevConfig;
-  private multiAgentConfig: MultiAgentConfig;
-  private github: GitHubClient;
-  private planner: PlannerAgent;
-  private coder: CoderAgent;
     }
   }
 
@@ -304,27 +284,121 @@ export class Orchestrator {
   // Validation Helpers
   // ============================================
 
-  private validateTaskStatus(task: Task, expectedStatus: string): void {
-    if (task.status !== expectedStatus) {
+  private validateTaskStatus(task: Task, expectedStatuses: TaskStatus[]): void {
+    if (!expectedStatuses.includes(task.status)) {
       throw {
         code: "INVALID_STATUS",
-        message: `Expected status ${expectedStatus}, but got ${task.status}`,
+        message: `Task status '${task.status}' is not valid for this operation. Expected: ${expectedStatuses.join(" or ")}`,
         taskId: task.id,
         recoverable: false,
       } as OrchestratorError;
     }
   }
 
-  private validateRequiredFields(task: Task, fields: (keyof Task)[]): void {
-    for (const field of fields) {
+  private validateRequiredFields(task: Task, requiredFields: (keyof Task)[]): void {
+    for (const field of requiredFields) {
       if (!task[field]) {
         throw {
           code: "MISSING_FIELD",
-          message: `Required field '${field}' is missing`,
+          message: `Required field '${field}' is missing on task`,
           taskId: task.id,
           recoverable: false,
         } as OrchestratorError;
       }
+    }
+  }
+
+  // ============================================
+  // Task Processing
+  // ============================================
+
+  /**
+   * Processa uma task baseado no estado atual
+   */
+  async process(task: Task): Promise<Task> {
+  /**
+   * Step 1: Planning
+   */
+  private async runPlanning(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, [TaskStatus.NEW, TaskStatus.PLANNING]);
+    this.validateRequiredFields(task, []); // No required fields for planning
+
+    task = this.updateStatus(task, "PLANNING");
+    await this.logEvent(task, "PLANNED", "planner");
+
+  /**
+   * Step 2: Coding
+   */
+  private async runCoding(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, [TaskStatus.PLANNING_DONE]);
+    this.validateRequiredFields(task, ["plan"]);
+
+    task = this.updateStatus(task, "CODING");
+    await this.logEvent(task, "CODED", "coder");
+
+  /**
+   * Step 3: Testing (via GitHub Actions)
+   */
+  private async runTests(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, [TaskStatus.CODING_DONE, TaskStatus.TESTING]);
+    this.validateRequiredFields(task, ["branchName"]);
+
+    task = this.updateStatus(task, "TESTING");
+    await this.logEvent(task, "TESTED", "runner");
+
+  /**
+   * Step 4: Fix (quando testes falham)
+   */
+  private async runFix(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, [TaskStatus.TESTS_FAILED]);
+    this.validateRequiredFields(task, []); // No additional required fields
+
+    task = this.updateStatus(task, "FIXING");
+    await this.logEvent(task, "FIXED", "fixer");
+
+  /**
+   * Step 5: Review
+   */
+  private async runReview(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, [TaskStatus.TESTS_PASSED]);
+    this.validateRequiredFields(task, ["branchName", "prNumber"]);
+
+    task = this.updateStatus(task, "REVIEWING");
+    await this.logEvent(task, "REVIEWED", "reviewer");
+
+  /**
+   * Step 6: Open PR
+   */
+  private async openPR(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, [TaskStatus.REVIEW_APPROVED]);
+    this.validateRequiredFields(task, ["branchName"]);
+
+    const prBody = this.buildPRBody(task);
+
+    const pr = await this.github.createPR(task.githubRepo, {
+  private failTask(task: Task, reason: string): Task {
+    task.status = "FAILED";
+    task.lastError = reason;
+    task.updatedAt = new Date();
+    console.error(`Task ${task.id} failed: ${reason}`);
+
+    // Include stack trace if available
+    const error = new Error(reason);
+    task.lastError = `${reason}\nStack trace: ${error.stack || "No stack trace available"}`;
+
+    // Post GitHub comment if COMMENT_ON_FAILURE is true
+    if (process.env.COMMENT_ON_FAILURE === "true") {
+      this.github.addComment(
+        task.githubRepo,
+        task.githubIssueNumber,
+        `❌ Task failed: ${reason}\n\nStack trace: ${error.stack || "No stack trace available"}`,
+      ).catch((err) => console.error("Failed to post failure comment:", err));
+    }
+
+    return task;
+  }
+
+  private async logEvent(
     }
   }
 
