@@ -34,9 +34,9 @@ Respond ONLY with valid JSON:
 
 export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
   constructor() {
-    // Using GLM-4.6V via OpenRouter for performance testing
+    // Using GPT-4o via OpenAI for performance testing
     super({
-      model: "z-ai/glm-4.6v",
+      model: "gpt-4o",
       maxTokens: 8192,
       temperature: 0.2,
     });
