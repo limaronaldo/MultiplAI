@@ -86,9 +86,9 @@ Respond ONLY with valid JSON:
 
 export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
   constructor() {
-    // Kimi K2 Thinking via OpenRouter for performance testing
+    // DeepSeek V3.2 Speciale via OpenRouter
     super({
-      model: "moonshotai/kimi-k2-thinking",
+      model: "deepseek/deepseek-v3.2-speciale",
       maxTokens: 8192,
       temperature: 0.2,
     });

@@ -34,9 +34,9 @@ Respond ONLY with valid JSON:
 
 export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
   constructor() {
-    // Kimi K2 Thinking via OpenRouter for performance testing
+    // GLM-4.6V via OpenRouter - fast and efficient for fixes
     super({
-      model: "moonshotai/kimi-k2-thinking",
+      model: "z-ai/glm-4.6v",
       maxTokens: 8192,
       temperature: 0.2,
     });
