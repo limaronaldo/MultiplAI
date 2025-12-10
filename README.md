@@ -110,13 +110,50 @@ Issue marcada ──▶ Planner ──▶ Coder ──▶ Tester ──▶ Revie
 
 ## API
 
+### Tasks
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| GET | `/api/tasks` | Lista tasks pendentes |
+| GET | `/api/tasks/:id` | Detalhes da task com eventos |
+| POST | `/api/tasks/:id/process` | Processa task manualmente |
+
+### Jobs (Batch Processing)
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| POST | `/api/jobs` | Cria job com múltiplas issues |
+| GET | `/api/jobs` | Lista jobs recentes |
+| GET | `/api/jobs/:id` | Detalhes do job com status das tasks |
+| GET | `/api/jobs/:id/events` | Eventos agregados de todas as tasks |
+| POST | `/api/jobs/:id/run` | Inicia processamento do job |
+
+#### Criar Job
+
+```bash
+curl -X POST http://localhost:3000/api/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"repo": "owner/repo", "issueNumbers": [1, 2, 3]}'
+```
+
+#### Executar Job
+
+```bash
+curl -X POST http://localhost:3000/api/jobs/{id}/run
+```
+
+### Webhooks
+
 | Método | Endpoint | Descrição |
 |--------|----------|-----------|
 | POST | `/webhooks/github` | Recebe eventos do GitHub |
+
+### Outros
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
 | GET | `/api/health` | Health check |
-| GET | `/api/tasks` | Lista tasks |
-| GET | `/api/tasks/:id` | Detalhes da task |
-| POST | `/api/tasks/:id/process` | Processa task |
+| GET | `/api/review/pending` | Issues aguardando review (Linear) |
 
 ## Deploy (Fly.io)
 

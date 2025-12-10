@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **IMPORTANT**: Always consult `LEARNINGS.md` for model performance data, preferences, and lessons learned from previous sessions.
+
 ---
 
 ## Project Overview

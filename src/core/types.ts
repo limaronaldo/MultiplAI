@@ -217,6 +217,39 @@ export interface TaskEvent {
 }
 
 // ============================================
+// Job (Batch Processing)
+// ============================================
+
+export const JobStatus = {
+  PENDING: "pending",
+  RUNNING: "running",
+  COMPLETED: "completed",
+  FAILED: "failed",
+  PARTIAL: "partial", // Some tasks succeeded, some failed
+} as const;
+
+export type JobStatus = (typeof JobStatus)[keyof typeof JobStatus];
+
+export interface JobSummary {
+  total: number;
+  completed: number;
+  failed: number;
+  inProgress: number;
+  prsCreated: string[]; // PR URLs
+}
+
+export interface Job {
+  id: string;
+  status: JobStatus;
+  taskIds: string[];
+  githubRepo: string;
+  createdAt: Date;
+  updatedAt: Date;
+  summary?: JobSummary;
+  metadata?: Record<string, unknown>;
+}
+
+// ============================================
 // Config
 // ============================================
 
