@@ -78,7 +78,7 @@ export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   coderModels: [
     "claude-sonnet-4-5-20250929", // Claude Sonnet 4.5 - best quality
     "gpt-5.1-codex-max", // GPT 5.1 Codex Max - OpenAI code specialist
-    "o4-mini", // O4 Mini - OpenAI reasoning model
+    "google/gemini-3-pro-preview", // Gemini 3 Pro - Google's latest (via OpenRouter)
   ],
   fixerModels: [
     "claude-sonnet-4-5-20250929", // Claude Sonnet 4.5 - best quality
