@@ -89,7 +89,7 @@ export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
     // Default: DeepSeek V3.2 Speciale via OpenRouter
     // Can be overridden for multi-agent mode
     super({
-      model: modelOverride || "deepseek/deepseek-v3.2-speciale",
+      model: modelOverride || "claude-sonnet-4-5-20250929",
       maxTokens: 8192,
       temperature: 0.2,
     });
