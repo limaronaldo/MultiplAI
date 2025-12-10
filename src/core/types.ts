@@ -164,10 +164,22 @@ import {
     task.status = "FAILED";
     task.lastError = `${error.code}: ${error.message}${error.stack ? `\n${error.stack}` : ""}`;
     task.updatedAt = new Date();
-    console.error(`Task ${task.id} failed: ${error.message}`);
+  blockedPaths: [".env", "secrets/", ".github/workflows/"],
+  autoDevLabel: "auto-dev",
+};
 
-    // Optional GitHub comment on failure
-    if (process.env.COMMENT_ON_FAILURE === "true") {
+// ============================================
+// Orchestrator Error
+// ============================================
+
+export interface OrchestratorError {
+  code: string;
+  message: string;
+  taskId: string;
+  recoverable: boolean;
+  stack?: string;
+}
+
       this.github.addComment(
         task.githubRepo,
         task.githubIssueNumber,
