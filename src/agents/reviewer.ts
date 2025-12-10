@@ -59,8 +59,8 @@ Respond ONLY with valid JSON:
 
 export class ReviewerAgent extends BaseAgent<ReviewerInput, ReviewerOutput> {
   constructor() {
-    // Reviewer uses smarter model but lower temperature for consistency
-    super({ model: "claude-sonnet-4-5-20250929", temperature: 0.1 });
+    // Opus 4.5 for highest quality code reviews
+    super({ model: "claude-opus-4-5-20251101", temperature: 0.1 });
   }
 
   /**
