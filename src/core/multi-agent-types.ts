@@ -76,16 +76,16 @@ export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   coderCount: 3,
   fixerCount: 2,
   coderModels: [
-    "deepseek/deepseek-v3.2-speciale", // Primary - good quality
-    "z-ai/glm-4.6v", // Fast alternative
-    "anthropic/claude-3.5-sonnet", // High quality alternative
+    "claude-sonnet-4-5-20250929", // Claude Sonnet 4.5 - best quality
+    "gpt-5.1-codex-max", // GPT 5.1 Codex Max - OpenAI code specialist
+    "o4-mini", // O4 Mini - OpenAI reasoning model
   ],
   fixerModels: [
-    "z-ai/glm-4.6v", // Fast for fixes
-    "deepseek/deepseek-v3.2-speciale", // Alternative
+    "claude-sonnet-4-5-20250929", // Claude Sonnet 4.5 - best quality
+    "o4-mini", // O4 Mini - OpenAI reasoning model
   ],
   consensusStrategy: "reviewer",
-  timeout: 120000, // 2 minutes
+  timeout: 180000, // 3 minutes (increased for complex tasks)
 };
 
 // Load config from environment
@@ -98,12 +98,12 @@ export function loadMultiAgentConfig(): MultiAgentConfig {
 
   const coderCount = Math.min(
     4,
-    parseInt(process.env.MULTI_AGENT_CODER_COUNT || "3", 10)
+    parseInt(process.env.MULTI_AGENT_CODER_COUNT || "3", 10),
   );
 
   const fixerCount = Math.min(
     4,
-    parseInt(process.env.MULTI_AGENT_FIXER_COUNT || "2", 10)
+    parseInt(process.env.MULTI_AGENT_FIXER_COUNT || "2", 10),
   );
 
   const coderModels = process.env.MULTI_AGENT_CODER_MODELS

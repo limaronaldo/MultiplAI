@@ -34,10 +34,10 @@ Respond ONLY with valid JSON:
 
 export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
   constructor(modelOverride?: string) {
-    // Default: GLM-4.6V via OpenRouter - fast and efficient for fixes
+    // Default: Claude Sonnet 4.5 via OpenRouter - reliable for fixes
     // Can be overridden for multi-agent mode
     super({
-      model: modelOverride || "z-ai/glm-4.6v",
+      model: modelOverride || "claude-sonnet-4-5-20250929",
       maxTokens: 8192,
       temperature: 0.2,
     });

@@ -60,47 +60,12 @@ Respond ONLY with valid JSON:
 export class ReviewerAgent extends BaseAgent<ReviewerInput, ReviewerOutput> {
   constructor() {
     // Opus 4.5 for highest quality code reviews
-    super({ model: "claude-opus-4-5-20251101", temperature: 0.1 });
-  }
-
-  /**
-   * Quick pre-check: if code is simple and tests passed, auto-approve
-   */
-  private shouldAutoApprove(input: ReviewerInput): boolean {
-    // If tests didn't pass, don't auto-approve
-    if (!input.testsPassed) return false;
-
-    // Count diff lines (excluding headers)
-    const diffLines = input.diff
-      .split("\n")
-      .filter((line) => line.startsWith("+") || line.startsWith("-"))
-      .filter(
-        (line) => !line.startsWith("+++") && !line.startsWith("---"),
-      ).length;
-
-    // Auto-approve small changes (< 50 lines) when tests pass
-    if (diffLines < 50) {
-      console.log(
-        `[Reviewer] Auto-approving: small diff (${diffLines} lines) + tests passed`,
-      );
-      return true;
-    }
-
-    return false;
+    super({ model: "claude-sonnet-4-5-20250929", temperature: 0.1 });
   }
 
   async run(input: ReviewerInput): Promise<ReviewerOutput> {
-    // Fast path: auto-approve simple changes with passing tests
-    if (this.shouldAutoApprove(input)) {
-      return {
-        verdict: "APPROVE",
-        summary:
-          "Auto-approved: tests passed and changes are small and focused.",
-        comments: [],
-        suggestedChanges: [],
-      };
-    }
-
+    // Always use Opus for review - no auto-approve
+    // This ensures all DoD items are properly verified
     const fileContentsStr = Object.entries(input.fileContents)
       .map(([path, content]) => `### ${path}\n\`\`\`\n${content}\n\`\`\``)
       .join("\n\n");

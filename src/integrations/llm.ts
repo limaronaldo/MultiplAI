@@ -1,8 +1,13 @@
 import { AnthropicClient } from "./anthropic";
 import { OpenAIClient } from "./openai";
 import { OpenRouterClient } from "./openrouter";
+import { OpenAIDirectClient } from "./openai-direct";
 
-export type LLMProvider = "anthropic" | "openai" | "openrouter";
+export type LLMProvider =
+  | "anthropic"
+  | "openai"
+  | "openrouter"
+  | "openai-direct";
 
 export interface CompletionParams {
   model: string;
@@ -18,8 +23,7 @@ const MODEL_PROVIDERS: Record<string, LLMProvider> = {
   "claude-opus-4-5-20251101": "anthropic",
   "claude-sonnet-4-5-20250929": "anthropic",
   "claude-haiku-4-5-20251015": "anthropic",
-  "claude-3-5-sonnet-20241022": "anthropic",
-  "claude-3-5-haiku-20241022": "anthropic",
+
   // OpenAI GPT-4.1 family (2025)
   "gpt-4.1": "openai",
   "gpt-4.1-mini": "openai",
@@ -45,6 +49,7 @@ const MODEL_PROVIDERS: Record<string, LLMProvider> = {
 let anthropicClient: AnthropicClient | null = null;
 let openaiClient: OpenAIClient | null = null;
 let openrouterClient: OpenRouterClient | null = null;
+let openaiDirectClient: OpenAIDirectClient | null = null;
 
 function getAnthropicClient(): AnthropicClient {
   if (!anthropicClient) {
@@ -67,10 +72,33 @@ function getOpenRouterClient(): OpenRouterClient {
   return openrouterClient;
 }
 
+function getOpenAIDirectClient(): OpenAIDirectClient {
+  if (!openaiDirectClient) {
+    openaiDirectClient = new OpenAIDirectClient();
+  }
+  return openaiDirectClient;
+}
+
+// Models that should use OpenAI Direct client (responses API for Codex)
+const OPENAI_DIRECT_MODELS = [
+  "gpt-5.1-codex",
+  "gpt-5.1-codex-max",
+  "gpt-5.1-codex-mini",
+  "gpt-5.1-2025-11-13",
+  "gpt-5.1",
+  "o4-mini",
+  "o4",
+];
+
 export function getProviderForModel(model: string): LLMProvider {
   // Check exact match first
   if (MODEL_PROVIDERS[model]) {
     return MODEL_PROVIDERS[model];
+  }
+
+  // Check if it's an OpenAI Direct model (GPT-5.1, Codex, O4)
+  if (OPENAI_DIRECT_MODELS.some((m) => model.includes(m) || model === m)) {
+    return "openai-direct";
   }
 
   // OpenRouter models have provider prefix (e.g., "anthropic/claude-3.5-sonnet")
@@ -103,6 +131,8 @@ export class LLMClient {
     switch (provider) {
       case "openai":
         return getOpenAIClient().complete(params);
+      case "openai-direct":
+        return getOpenAIDirectClient().complete(params);
       case "openrouter":
         return getOpenRouterClient().complete(params);
       case "anthropic":
@@ -137,12 +167,15 @@ export const AVAILABLE_MODELS = {
   },
   openrouter: {
     // Use any model via OpenRouter with "provider/model" format
-    "anthropic/claude-3.5-sonnet": "Claude 3.5 Sonnet via OpenRouter",
-    "openai/gpt-4o": "GPT-4o via OpenRouter",
+    // HIGH QUALITY (recommended for coders)
+    "anthropic/claude-sonnet-4.5": "Claude Sonnet 4.5 via OpenRouter",
+    "anthropic/claude-opus-4.5": "Claude Opus 4.5 via OpenRouter",
+    "google/gemini-3-pro-preview": "Gemini 3 Pro Preview (Programming #7)",
+    "openai/gpt-5.1-codex-max": "GPT-5.1 Codex Max (Code specialist)",
     // xAI Grok
     "x-ai/grok-4.1-fast": "Grok 4.1 Fast",
     "x-ai/grok-code-fast-1": "Grok Code Fast (Code)",
-    // Google
+    // Google (other)
     "google/gemini-2.0-flash-exp": "Gemini 2.0 Flash",
     "google/gemini-exp-1206": "Gemini Exp 1206",
     // Meta

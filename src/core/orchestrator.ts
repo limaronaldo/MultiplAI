@@ -2,6 +2,8 @@ import {
   Task,
   TaskStatus,
   TaskEvent,
+  OrchestratorError,
+  createOrchestratorError,
   defaultConfig,
   type AutoDevConfig,
 } from "./types";
@@ -19,6 +21,8 @@ import {
 } from "./multi-agent-types";
 import { MultiCoderRunner, MultiFixerRunner } from "./multi-runner";
 import { ConsensusEngine, formatConsensusForComment } from "./consensus";
+
+const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
 
 export class Orchestrator {
   private config: AutoDevConfig;
@@ -88,10 +92,7 @@ export class Orchestrator {
       }
     } catch (error) {
       console.error(`Error processing task ${task.id}:`, error);
-      return this.failTask(
-        task,
-        error instanceof Error ? error.message : "Unknown error",
-      );
+      return this.failTask(task, this.toOrchestratorError(error, task.id));
     }
   }
 
@@ -99,6 +100,8 @@ export class Orchestrator {
    * Step 1: Planning
    */
   private async runPlanning(task: Task): Promise<Task> {
+    this.validateTaskState(task, "NEW", [], "Cannot run planning");
+
     task = this.updateStatus(task, "PLANNING");
     await this.logEvent(task, "PLANNED", "planner");
 
@@ -127,7 +130,12 @@ export class Orchestrator {
     ) {
       return this.failTask(
         task,
-        `Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`,
+        createOrchestratorError(
+          "COMPLEXITY_TOO_HIGH",
+          `Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`,
+          task.id,
+          false,
+        ),
       );
     }
 
@@ -138,6 +146,13 @@ export class Orchestrator {
    * Step 2: Coding
    */
   private async runCoding(task: Task): Promise<Task> {
+    this.validateTaskState(
+      task,
+      "PLANNING_DONE",
+      ["definitionOfDone", "plan", "targetFiles"],
+      "Cannot run coding",
+    );
+
     task = this.updateStatus(task, "CODING");
     await this.logEvent(task, "CODED", "coder");
 
@@ -197,7 +212,12 @@ export class Orchestrator {
     if (diffLines > this.config.maxDiffLines) {
       return this.failTask(
         task,
-        `Diff muito grande (${diffLines} linhas). Máximo permitido: ${this.config.maxDiffLines}`,
+        createOrchestratorError(
+          "DIFF_TOO_LARGE",
+          `Diff muito grande (${diffLines} linhas). Máximo permitido: ${this.config.maxDiffLines}`,
+          task.id,
+          false,
+        ),
       );
     }
 
@@ -219,6 +239,13 @@ export class Orchestrator {
    * Step 3: Testing (via GitHub Actions)
    */
   private async runTests(task: Task): Promise<Task> {
+    this.validateTaskState(
+      task,
+      "CODING_DONE",
+      ["branchName"],
+      "Cannot run tests",
+    );
+
     task = this.updateStatus(task, "TESTING");
     await this.logEvent(task, "TESTED", "runner");
 
@@ -242,7 +269,12 @@ export class Orchestrator {
       if (task.attemptCount >= task.maxAttempts) {
         return this.failTask(
           task,
-          `Máximo de tentativas (${task.maxAttempts}) atingido`,
+          createOrchestratorError(
+            "MAX_ATTEMPTS_REACHED",
+            `Máximo de tentativas (${task.maxAttempts}) atingido`,
+            task.id,
+            false,
+          ),
         );
       }
 
@@ -254,6 +286,13 @@ export class Orchestrator {
    * Step 4: Fix (quando testes falham)
    */
   private async runFix(task: Task): Promise<Task> {
+    this.validateTaskState(
+      task,
+      "TESTS_FAILED",
+      ["branchName", "lastError"],
+      "Cannot run fix",
+    );
+
     task = this.updateStatus(task, "FIXING");
     await this.logEvent(task, "FIXED", "fixer");
 
@@ -319,6 +358,13 @@ export class Orchestrator {
    * Step 5: Review
    */
   private async runReview(task: Task): Promise<Task> {
+    this.validateTaskState(
+      task,
+      "TESTS_PASSED",
+      ["branchName", "currentDiff"],
+      "Cannot run review",
+    );
+
     task = this.updateStatus(task, "REVIEWING");
     await this.logEvent(task, "REVIEWED", "reviewer");
 
@@ -350,7 +396,12 @@ export class Orchestrator {
       if (task.attemptCount >= task.maxAttempts) {
         return this.failTask(
           task,
-          `Máximo de tentativas (${task.maxAttempts}) atingido após review`,
+          createOrchestratorError(
+            "MAX_ATTEMPTS_REACHED",
+            `Máximo de tentativas (${task.maxAttempts}) atingido após review`,
+            task.id,
+            false,
+          ),
         );
       }
 
@@ -403,12 +454,132 @@ export class Orchestrator {
     return task;
   }
 
-  private failTask(task: Task, reason: string): Task {
+  private validateTaskState(
+    task: Task,
+    expectedStatus: TaskStatus,
+    requiredFields: string[],
+    contextMessage: string,
+  ): void {
+    // Validate status
+    if (task.status !== expectedStatus) {
+      throw createOrchestratorError(
+        "INVALID_STATE",
+        `${contextMessage}: task status is '${task.status}', expected '${expectedStatus}'`,
+        task.id,
+        false,
+      );
+    }
+
+    // Validate required fields
+    for (const field of requiredFields) {
+      const value = (task as any)[field];
+      if (
+        value === undefined ||
+        value === null ||
+        (Array.isArray(value) && value.length === 0)
+      ) {
+        throw createOrchestratorError(
+          "MISSING_FIELD",
+          `${contextMessage}: required field '${field}' is missing or empty`,
+          task.id,
+          false,
+        );
+      }
+    }
+  }
+
+  private toOrchestratorError(
+    error: unknown,
+    taskId: string,
+  ): OrchestratorError {
+    if (this.isOrchestratorError(error)) {
+      return error;
+    }
+
+    if (error instanceof Error) {
+      const orchError = createOrchestratorError(
+        "UNKNOWN_ERROR",
+        error.message,
+        taskId,
+        false,
+      );
+      orchError.stack = error.stack;
+      return orchError;
+    }
+
+    return createOrchestratorError(
+      "UNKNOWN_ERROR",
+      String(error),
+      taskId,
+      false,
+    );
+  }
+
+  private isOrchestratorError(error: unknown): error is OrchestratorError {
+    return (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      "taskId" in error &&
+      "recoverable" in error
+    );
+  }
+
+  private async failTask(task: Task, error: OrchestratorError): Promise<Task> {
     task.status = "FAILED";
-    task.lastError = reason;
+    task.lastError = `[${error.code}] ${error.message}`;
     task.updatedAt = new Date();
-    console.error(`Task ${task.id} failed: ${reason}`);
+    console.error(`Task ${task.id} failed [${error.code}]: ${error.message}`);
+    if (error.stack) {
+      console.error(`Stack trace:`, error.stack);
+    }
+
+    // Post comment to GitHub issue if enabled
+    if (COMMENT_ON_FAILURE) {
+      try {
+        const commentBody = this.buildFailureComment(task, error);
+        await this.github.addComment(
+          task.githubRepo,
+          task.githubIssueNumber,
+          commentBody,
+        );
+        console.log(
+          `[Orchestrator] Posted failure comment to issue #${task.githubIssueNumber}`,
+        );
+      } catch (commentError) {
+        console.error(
+          `[Orchestrator] Failed to post failure comment:`,
+          commentError,
+        );
+      }
+    }
+
     return task;
+  }
+
+  private buildFailureComment(task: Task, error: OrchestratorError): string {
+    let comment = `## ❌ AutoDev Task Failed\n\n`;
+    comment += `**Error Code:** \`${error.code}\`\n`;
+    comment += `**Message:** ${error.message}\n\n`;
+    comment += `**Status:** ${task.status}\n`;
+    comment += `**Attempts:** ${task.attemptCount}/${task.maxAttempts}\n\n`;
+
+    if (error.recoverable) {
+      comment += `⚠️ This error may be recoverable. The task will retry automatically.\n\n`;
+    } else {
+      comment += `🛑 This error is not recoverable. Manual intervention required.\n\n`;
+    }
+
+    comment += `### Suggested Actions\n`;
+    if (error.code === "INVALID_STATE") {
+      comment += `- Check the task workflow and ensure proper state transitions\n`;
+    } else if (error.code === "MISSING_FIELD") {
+      comment += `- Verify that all required data was generated in previous steps\n`;
+    }
+    comment += `- Review the task logs for more details\n`;
+    comment += `- Contact the development team if the issue persists\n`;
+
+    return comment;
   }
 
   private async logEvent(

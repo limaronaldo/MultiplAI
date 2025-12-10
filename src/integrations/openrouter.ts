@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import { OpenRouter } from "@openrouter/sdk";
 
 interface CompletionParams {
   model: string;
@@ -9,7 +9,7 @@ interface CompletionParams {
 }
 
 export class OpenRouterClient {
-  private client: OpenAI;
+  private client: OpenRouter;
 
   constructor() {
     const apiKey = process.env.OPENROUTER_API_KEY;
@@ -17,15 +17,8 @@ export class OpenRouterClient {
       throw new Error("OPENROUTER_API_KEY environment variable is required");
     }
 
-    // OpenRouter uses OpenAI SDK with custom base URL
-    this.client = new OpenAI({
+    this.client = new OpenRouter({
       apiKey,
-      baseURL: "https://openrouter.ai/api/v1",
-      defaultHeaders: {
-        "HTTP-Referer":
-          process.env.OPENROUTER_REFERER || "https://multiplai.fly.dev",
-        "X-Title": "MultiplAI",
-      },
     });
   }
 
@@ -33,10 +26,9 @@ export class OpenRouterClient {
     const startTime = Date.now();
 
     try {
-      const response = await this.client.chat.completions.create({
+      // Use streaming to get usage info including reasoning tokens
+      const stream = await this.client.chat.send({
         model: params.model,
-        max_tokens: params.maxTokens,
-        temperature: params.temperature,
         messages: [
           {
             role: "system",
@@ -47,21 +39,92 @@ export class OpenRouterClient {
             content: params.userPrompt,
           },
         ],
+        maxTokens: params.maxTokens,
+        temperature: params.temperature,
+        stream: true,
+        streamOptions: {
+          includeUsage: true,
+        },
+      });
+
+      let content = "";
+      let tokensUsed = 0;
+      let reasoningTokens = 0;
+
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta?.content;
+        if (delta) {
+          content += delta;
+        }
+
+        // Usage information comes in the final chunk
+        if (chunk.usage) {
+          tokensUsed =
+            (chunk.usage.promptTokens || 0) +
+            (chunk.usage.completionTokens || 0);
+          reasoningTokens = (chunk.usage as any).reasoningTokens || 0;
+        }
+      }
+
+      const duration = Date.now() - startTime;
+
+      let logMsg = `[LLM] OpenRouter/${params.model} | ${tokensUsed} tokens | ${duration}ms`;
+      if (reasoningTokens > 0) {
+        logMsg += ` | reasoning: ${reasoningTokens}`;
+      }
+      console.log(logMsg);
+
+      if (!content) {
+        throw new Error("No content in response");
+      }
+
+      return content;
+    } catch (error) {
+      console.error("[LLM] OpenRouter Error:", error);
+      throw error;
+    }
+  }
+
+  // Non-streaming version for simpler use cases
+  async completeSync(params: CompletionParams): Promise<string> {
+    const startTime = Date.now();
+
+    try {
+      const response = await this.client.chat.send({
+        model: params.model,
+        messages: [
+          {
+            role: "system",
+            content: params.systemPrompt,
+          },
+          {
+            role: "user",
+            content: params.userPrompt,
+          },
+        ],
+        maxTokens: params.maxTokens,
+        temperature: params.temperature,
       });
 
       const duration = Date.now() - startTime;
       const tokensUsed =
-        (response.usage?.prompt_tokens || 0) +
-        (response.usage?.completion_tokens || 0);
+        (response.usage?.promptTokens || 0) +
+        (response.usage?.completionTokens || 0);
 
       console.log(
         `[LLM] OpenRouter/${params.model} | ${tokensUsed} tokens | ${duration}ms`,
       );
 
-      const content = response.choices[0]?.message?.content;
-      if (!content) {
+      const rawContent = response.choices[0]?.message?.content;
+      if (!rawContent) {
         throw new Error("No content in response");
       }
+
+      // Handle both string and array content types
+      const content =
+        typeof rawContent === "string"
+          ? rawContent
+          : rawContent.map((item: any) => item.text || "").join("");
 
       return content;
     } catch (error) {
@@ -74,14 +137,13 @@ export class OpenRouterClient {
 // Popular OpenRouter models
 export const OPENROUTER_MODELS = {
   // Anthropic via OpenRouter
-  "anthropic/claude-3.5-sonnet": "Claude 3.5 Sonnet",
-  "anthropic/claude-3-opus": "Claude 3 Opus",
+  "anthropic/claude-sonnet-4.5": "Claude Sonnet 4.5",
+  "anthropic/claude-opus-4.5": "Claude Opus 4.5",
   "anthropic/claude-3-haiku": "Claude 3 Haiku",
 
   // OpenAI via OpenRouter
-  "openai/gpt-4o": "GPT-4o",
+  "openai/gpt-5.1-codex-max": "GPT-5.1 Codex Max (Code)",
   "openai/gpt-4-turbo": "GPT-4 Turbo",
-  "openai/o1-preview": "O1 Preview",
   "openai/o1-mini": "O1 Mini",
 
   // xAI Grok via OpenRouter
@@ -89,6 +151,7 @@ export const OPENROUTER_MODELS = {
   "x-ai/grok-code-fast-1": "Grok Code Fast (Code)",
 
   // Google via OpenRouter
+  "google/gemini-3-pro-preview": "Gemini 3 Pro Preview",
   "google/gemini-2.0-flash-exp": "Gemini 2.0 Flash",
   "google/gemini-exp-1206": "Gemini Exp 1206",
   "google/gemini-pro-1.5": "Gemini Pro 1.5",
@@ -100,13 +163,7 @@ export const OPENROUTER_MODELS = {
   // DeepSeek via OpenRouter
   "deepseek/deepseek-chat": "DeepSeek Chat",
   "deepseek/deepseek-r1": "DeepSeek R1 (Reasoning)",
-  "deepseek/deepseek-v3.2-speciale": "DeepSeek V3.2 Speciale",
-
-  // Zhipu AI via OpenRouter
-  "z-ai/glm-4.6v": "GLM-4.6V (Vision)",
-
-  // Moonshot AI via OpenRouter
-  "moonshotai/kimi-k2-thinking": "Kimi K2 Thinking (Reasoning)",
+  "deepseek/deepseek-v3.2": "DeepSeek V3.2",
 
   // Mistral via OpenRouter
   "mistralai/mistral-large-2411": "Mistral Large",
