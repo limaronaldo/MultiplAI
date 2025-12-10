@@ -78,7 +78,7 @@ export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   coderModels: [
     "claude-sonnet-4-5-20250929", // Claude Sonnet 4.5 - best quality
     "gpt-5.1-codex-max", // GPT 5.1 Codex Max - OpenAI code specialist
-    "o4-mini", // O4 Mini - OpenAI reasoning model
+    "x-ai/grok-4.1-fast", // Grok 4.1 Fast - xAI (via OpenRouter)
   ],
   fixerModels: [
     "claude-opus-4-5-20251101", // Claude Opus 4.5 - highest quality for debugging
