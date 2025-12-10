@@ -12,22 +12,47 @@ import { FixerAgent } from "../agents/fixer";
 import { ReviewerAgent } from "../agents/reviewer";
 import { GitHubClient } from "../integrations/github";
 import { db } from "../integrations/db";
+import {
+  MultiAgentConfig,
+  MultiAgentMetadata,
+  loadMultiAgentConfig,
+} from "./multi-agent-types";
+import { MultiCoderRunner, MultiFixerRunner } from "./multi-runner";
+import { ConsensusEngine, formatConsensusForComment } from "./consensus";
 
 export class Orchestrator {
   private config: AutoDevConfig;
+  private multiAgentConfig: MultiAgentConfig;
   private github: GitHubClient;
   private planner: PlannerAgent;
   private coder: CoderAgent;
   private fixer: FixerAgent;
   private reviewer: ReviewerAgent;
+  private consensus: ConsensusEngine;
+
+  // Multi-agent metadata for PR comments
+  private lastCoderConsensus?: string;
+  private lastFixerConsensus?: string;
 
   constructor(config: Partial<AutoDevConfig> = {}) {
     this.config = { ...defaultConfig, ...config };
+    this.multiAgentConfig = loadMultiAgentConfig();
     this.github = new GitHubClient();
     this.planner = new PlannerAgent();
     this.coder = new CoderAgent();
     this.fixer = new FixerAgent();
     this.reviewer = new ReviewerAgent();
+    this.consensus = new ConsensusEngine();
+
+    if (this.multiAgentConfig.enabled) {
+      console.log(`[Orchestrator] Multi-agent mode ENABLED`);
+      console.log(
+        `[Orchestrator] Coders: ${this.multiAgentConfig.coderCount} (${this.multiAgentConfig.coderModels.join(", ")})`,
+      );
+      console.log(
+        `[Orchestrator] Fixers: ${this.multiAgentConfig.fixerCount} (${this.multiAgentConfig.fixerModels.join(", ")})`,
+      );
+    }
   }
 
   /**
@@ -128,15 +153,44 @@ export class Orchestrator {
       task.targetFiles || [],
     );
 
-    // Chama o Coder Agent
-    const coderOutput = await this.coder.run({
+    const coderInput = {
       definitionOfDone: task.definitionOfDone || [],
       plan: task.plan || [],
       targetFiles: task.targetFiles || [],
       fileContents,
       previousDiff: task.currentDiff,
       lastError: task.lastError,
-    });
+    };
+
+    let coderOutput;
+
+    if (this.multiAgentConfig.enabled) {
+      // Multi-agent mode: run multiple coders in parallel
+      console.log(
+        `[Coding] Running ${this.multiAgentConfig.coderCount} coders in parallel...`,
+      );
+
+      const runner = new MultiCoderRunner(this.multiAgentConfig);
+      const candidates = await runner.run(coderInput);
+
+      const result = await this.consensus.selectBestCoder(
+        candidates,
+        {
+          definitionOfDone: task.definitionOfDone || [],
+          plan: task.plan || [],
+          fileContents,
+        },
+        this.multiAgentConfig.consensusStrategy === "reviewer",
+      );
+
+      coderOutput = result.winner.output;
+      this.lastCoderConsensus = formatConsensusForComment(result);
+
+      console.log(`[Coding] Winner: ${result.winner.model} (${result.reason})`);
+    } else {
+      // Single agent mode (default)
+      coderOutput = await this.coder.run(coderInput);
+    }
 
     // Valida tamanho do diff
     const diffLines = coderOutput.diff.split("\n").length;
@@ -209,13 +263,44 @@ export class Orchestrator {
       task.branchName,
     );
 
-    const fixerOutput = await this.fixer.run({
+    const fixerInput = {
       definitionOfDone: task.definitionOfDone || [],
       plan: task.plan || [],
       currentDiff: task.currentDiff || "",
       errorLogs: task.lastError || "",
       fileContents,
-    });
+    };
+
+    let fixerOutput;
+
+    if (this.multiAgentConfig.enabled) {
+      // Multi-agent mode: run multiple fixers in parallel
+      console.log(
+        `[Fixing] Running ${this.multiAgentConfig.fixerCount} fixers in parallel...`,
+      );
+
+      const runner = new MultiFixerRunner(this.multiAgentConfig);
+      const candidates = await runner.run(fixerInput);
+
+      const result = await this.consensus.selectBestFixer(
+        candidates,
+        {
+          definitionOfDone: task.definitionOfDone || [],
+          plan: task.plan || [],
+          fileContents,
+          errorLogs: task.lastError || "",
+        },
+        this.multiAgentConfig.consensusStrategy === "reviewer",
+      );
+
+      fixerOutput = result.winner.output;
+      this.lastFixerConsensus = formatConsensusForComment(result);
+
+      console.log(`[Fixing] Winner: ${result.winner.model} (${result.reason})`);
+    } else {
+      // Single agent mode (default)
+      fixerOutput = await this.fixer.run(fixerInput);
+    }
 
     task.currentDiff = fixerOutput.diff;
     task.commitMessage = fixerOutput.commitMessage;
@@ -358,8 +443,8 @@ export class Orchestrator {
   }
 
   private buildPRBody(task: Task): string {
-    return `
-## 🤖 AutoDev PR
+    let body = `
+## 🤖 MultiplAI PR
 
 This PR was automatically generated to address issue #${task.githubIssueNumber}.
 
@@ -371,7 +456,18 @@ ${task.plan?.map((p, i) => `${i + 1}. ${p}`).join("\n")}
 
 ### Files Modified
 ${task.targetFiles?.map((f) => `- \`${f}\``).join("\n")}
+`;
 
+    // Add multi-agent consensus reports if available
+    if (this.lastCoderConsensus) {
+      body += `\n---\n\n${this.lastCoderConsensus}\n`;
+    }
+
+    if (this.lastFixerConsensus) {
+      body += `\n---\n\n### Fixer Consensus\n\n${this.lastFixerConsensus}\n`;
+    }
+
+    body += `
 ---
 
 ### ⚠️ Human Review Required
@@ -379,6 +475,9 @@ ${task.targetFiles?.map((f) => `- \`${f}\``).join("\n")}
 This PR was generated automatically. Please review carefully before merging.
 
 **Attempts:** ${task.attemptCount}/${task.maxAttempts}
-    `.trim();
+**Mode:** ${this.multiAgentConfig.enabled ? "Multi-Agent" : "Single-Agent"}
+`;
+
+    return body.trim();
   }
 }
