@@ -4,16 +4,23 @@ import { z } from "zod";
 // Error Types
 // ============================================
 
+export const ErrorCode = {
+  INVALID_STATUS: "INVALID_STATUS",
+  MISSING_FIELD: "MISSING_FIELD",
+  VALIDATION_FAILED: "VALIDATION_FAILED",
+} as const;
+
 export class OrchestratorError extends Error {
   code: string;
   taskId: string;
   recoverable: boolean;
 
-  constructor(code: string, message: string, taskId: string, recoverable: boolean) {
+  constructor(code: string, message: string, taskId: string, recoverable = false) {
     super(message);
     this.code = code;
     this.taskId = taskId;
     this.recoverable = recoverable;
+    this.name = "OrchestratorError";
   }
 }
 
@@ -21,7 +28,6 @@ export class OrchestratorError extends Error {
 // Task Status & State Machine
 // ============================================
 ++ b/src/core/orchestrator.ts
-import {
   Task,
   TaskStatus,
   TaskEvent,
@@ -29,39 +35,119 @@ import {
   defaultConfig,
   type AutoDevConfig,
 } from "./types";
-      }
-    } catch (error) {
-      console.error(`Error processing task ${task.id}:`, error);
-      return await this.failTask(
-        task,
-        error instanceof Error ? error.message : "Unknown error",
+  loadMultiAgentConfig,
+} from "./multi-agent-types";
+import { MultiCoderRunner, MultiFixerRunner } from "./multi-runner";
+import { ErrorCode } from "./types";
+import { ConsensusEngine, formatConsensusForComment } from "./consensus";
+
+export class Orchestrator {
+    }
+  }
+
+  /**
+   * Validates task status matches expected status
+   */
+  private validateTaskStatus(task: Task, expectedStatus: TaskStatus) {
+    if (task.status !== expectedStatus) {
+      throw new OrchestratorError(
+        ErrorCode.INVALID_STATUS,
+        `Task ${task.id} has invalid status ${task.status}. Expected ${expectedStatus}`,
+        task.id
       );
+    }
+  }
+
+  /**
+   * Validates required fields exist on task
+   */
+  private validateRequiredFields(task: Task, fields: string[]) {
+    const missingFields = fields.filter(field => {
+      const value = task[field as keyof Task];
+      return value === undefined || value === null || value === "";
+    });
+
+    if (missingFields.length > 0) {
+      throw new OrchestratorError(
+        ErrorCode.MISSING_FIELD,
+        `Task ${task.id} is missing required fields: ${missingFields.join(", ")}`,
+        task.id
+      );
+    }
+  }
+
   /**
    * Step 1: Planning
    */
   private async runPlanning(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, "pending");
-    this.validateRequiredFields(task, []);
+    this.validateTaskStatus(task, TaskStatus.NEW);
 
-  task = this.updateStatus(task, "PLANNING");
-  await this.logEvent(task, "PLANNED", "planner");
+    task = this.updateStatus(task, "PLANNING");
+    await this.logEvent(task, "PLANNED", "planner");
 
-  /**
    * Step 2: Coding
    */
   private async runCoding(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, "planning_complete");
-    this.validateRequiredFields(task, []);
+    this.validateTaskStatus(task, TaskStatus.PLANNING_DONE);
+    this.validateRequiredFields(task, ["plan"]);
 
-  task = this.updateStatus(task, "CODING");
-  await this.logEvent(task, "CODED", "coder");
+    task = this.updateStatus(task, "CODING");
+    await this.logEvent(task, "CODED", "coder");
 
-  /**
    * Step 3: Testing (via GitHub Actions)
    */
   private async runTests(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, "review_complete");
+    this.validateTaskStatus(task, TaskStatus.CODING_DONE);
     this.validateRequiredFields(task, ["branchName"]);
+
+    task = this.updateStatus(task, "TESTING");
+    await this.logEvent(task, "TESTED", "runner");
+
+   * Step 4: Fix (quando testes falham)
+   */
+  private async runFix(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.TESTS_FAILED);
+    this.validateRequiredFields(task, ["lastError"]);
+
+    task = this.updateStatus(task, "FIXING");
+    await this.logEvent(task, "FIXED", "fixer");
+
+   * Step 5: Review
+   */
+  private async runReview(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.TESTS_PASSED);
+    this.validateRequiredFields(task, ["branchName", "currentDiff"]);
+
+    task = this.updateStatus(task, "REVIEWING");
+    await this.logEvent(task, "REVIEWED", "reviewer");
+
+   * Step 6: Open PR
+   */
+  private async openPR(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.REVIEW_APPROVED);
+    this.validateRequiredFields(task, ["branchName"]);
+
+    const prBody = this.buildPRBody(task);
+
+    const pr = await this.github.createPR(task.githubRepo, {
+  private failTask(task: Task, reason: string): Task {
+    task.status = "FAILED";
+    task.lastError = reason;
+
+    // Include stack trace if available
+    if (reason instanceof Error) {
+      task.lastError = `${reason.message}\n${reason.stack}`;
+    }
+
+    // Post comment to GitHub issue if enabled
+    if (process.env.COMMENT_ON_FAILURE === "true") {
+      this.github.addComment(task.githubRepo, task.githubIssueNumber,
+        `🚨 Task failed: ${task.lastError}`);
+    }
+
+    task.updatedAt = new Date();
+    console.error(`Task ${task.id} failed: ${reason}`);
+    return task;
 
   task = this.updateStatus(task, "TESTING");
   await this.logEvent(task, "TESTED", "runner");
