@@ -1,6 +1,31 @@
 import { z } from "zod";
 
 // ============================================
+// Orchestrator Error
+// ============================================
+
+export interface OrchestratorError extends Error {
+  code: string;
+  message: string;
+  taskId: string;
+  recoverable: boolean;
+  stack?: string;
+}
+
+export function createOrchestratorError(
+  code: string,
+  message: string,
+  taskId: string,
+  recoverable: boolean = false,
+): OrchestratorError {
+  const error = new Error(message) as OrchestratorError;
+  error.code = code;
+  error.taskId = taskId;
+  error.recoverable = recoverable;
+  return error;
+}
+
+// ============================================
 // Task Status & State Machine
 // ============================================
 
@@ -206,7 +231,7 @@ export interface AutoDevConfig {
 
 export const defaultConfig: AutoDevConfig = {
   maxAttempts: 3,
-  maxDiffLines: 300,
+  maxDiffLines: 800,
   allowedRepos: [],
   allowedPaths: ["src/", "lib/", "tests/", "test/"],
   blockedPaths: [".env", "secrets/", ".github/workflows/"],
