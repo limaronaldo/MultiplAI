@@ -21,6 +21,7 @@ import {
 } from "./multi-agent-types";
 import { MultiCoderRunner, MultiFixerRunner } from "./multi-runner";
 import { ConsensusEngine, formatConsensusForComment } from "./consensus";
+import { createTaskLogger, createSystemLogger, Logger } from "./logger";
 
 const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
 
@@ -33,6 +34,7 @@ export class Orchestrator {
   private fixer: FixerAgent;
   private reviewer: ReviewerAgent;
   private consensus: ConsensusEngine;
+  private systemLogger: Logger;
 
   // Multi-agent metadata for PR comments
   private lastCoderConsensus?: string;
@@ -47,29 +49,39 @@ export class Orchestrator {
     this.fixer = new FixerAgent();
     this.reviewer = new ReviewerAgent();
     this.consensus = new ConsensusEngine();
+    this.systemLogger = createSystemLogger("orchestrator");
 
     if (this.multiAgentConfig.enabled) {
-      console.log(`[Orchestrator] Multi-agent mode ENABLED`);
-      console.log(
-        `[Orchestrator] Coders: ${this.multiAgentConfig.coderCount} (${this.multiAgentConfig.coderModels.join(", ")})`,
+      this.systemLogger.info("Multi-agent mode ENABLED");
+      this.systemLogger.info(
+        `Coders: ${this.multiAgentConfig.coderCount} (${this.multiAgentConfig.coderModels.join(", ")})`,
       );
-      console.log(
-        `[Orchestrator] Fixers: ${this.multiAgentConfig.fixerCount} (${this.multiAgentConfig.fixerModels.join(", ")})`,
+      this.systemLogger.info(
+        `Fixers: ${this.multiAgentConfig.fixerCount} (${this.multiAgentConfig.fixerModels.join(", ")})`,
       );
     }
+  }
+
+  /**
+   * Get a logger for a specific task
+   */
+  private getLogger(task: Task): Logger {
+    return createTaskLogger(task.id, "orchestrator");
   }
 
   /**
    * Processa uma task baseado no estado atual
    */
   async process(task: Task): Promise<Task> {
+    const logger = this.getLogger(task);
+
     if (isTerminal(task.status)) {
-      console.log(`Task ${task.id} is in terminal state: ${task.status}`);
+      logger.info(`Task is in terminal state: ${task.status}`);
       return task;
     }
 
     const action = getNextAction(task.status);
-    console.log(`Task ${task.id}: ${task.status} -> action: ${action}`);
+    logger.info(`${task.status} -> action: ${action}`);
 
     try {
       switch (action) {
@@ -91,7 +103,9 @@ export class Orchestrator {
           return task;
       }
     } catch (error) {
-      console.error(`Error processing task ${task.id}:`, error);
+      logger.error(
+        `Error processing task: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
       return this.failTask(task, this.toOrchestratorError(error, task.id));
     }
   }
@@ -178,11 +192,12 @@ export class Orchestrator {
     };
 
     let coderOutput;
+    const logger = this.getLogger(task);
 
     if (this.multiAgentConfig.enabled) {
       // Multi-agent mode: run multiple coders in parallel
-      console.log(
-        `[Coding] Running ${this.multiAgentConfig.coderCount} coders in parallel...`,
+      logger.info(
+        `Running ${this.multiAgentConfig.coderCount} coders in parallel...`,
       );
 
       const runner = new MultiCoderRunner(this.multiAgentConfig);
@@ -201,7 +216,7 @@ export class Orchestrator {
       coderOutput = result.winner.output;
       this.lastCoderConsensus = formatConsensusForComment(result);
 
-      console.log(`[Coding] Winner: ${result.winner.model} (${result.reason})`);
+      logger.info(`Coding winner: ${result.winner.model} (${result.reason})`);
     } else {
       // Single agent mode (default)
       coderOutput = await this.coder.run(coderInput);
@@ -311,11 +326,12 @@ export class Orchestrator {
     };
 
     let fixerOutput;
+    const logger = this.getLogger(task);
 
     if (this.multiAgentConfig.enabled) {
       // Multi-agent mode: run multiple fixers in parallel
-      console.log(
-        `[Fixing] Running ${this.multiAgentConfig.fixerCount} fixers in parallel...`,
+      logger.info(
+        `Running ${this.multiAgentConfig.fixerCount} fixers in parallel...`,
       );
 
       const runner = new MultiFixerRunner(this.multiAgentConfig);
@@ -335,7 +351,7 @@ export class Orchestrator {
       fixerOutput = result.winner.output;
       this.lastFixerConsensus = formatConsensusForComment(result);
 
-      console.log(`[Fixing] Winner: ${result.winner.model} (${result.reason})`);
+      logger.info(`Fixing winner: ${result.winner.model} (${result.reason})`);
     } else {
       // Single agent mode (default)
       fixerOutput = await this.fixer.run(fixerInput);
@@ -387,7 +403,9 @@ export class Orchestrator {
       return this.updateStatus(task, "REVIEW_APPROVED");
     } else if (reviewerOutput.verdict === "NEEDS_DISCUSSION") {
       // Don't count NEEDS_DISCUSSION against attempts, go straight to PR
-      console.log(`[Review] Needs discussion - creating PR for human review`);
+      this.getLogger(task).info(
+        "Needs discussion - creating PR for human review",
+      );
       return this.updateStatus(task, "REVIEW_APPROVED");
     } else {
       task.lastError = reviewerOutput.summary;
@@ -526,12 +544,15 @@ export class Orchestrator {
   }
 
   private async failTask(task: Task, error: OrchestratorError): Promise<Task> {
+    const logger = this.getLogger(task);
+
     task.status = "FAILED";
     task.lastError = `[${error.code}] ${error.message}`;
     task.updatedAt = new Date();
-    console.error(`Task ${task.id} failed [${error.code}]: ${error.message}`);
+
+    logger.error(`Task failed [${error.code}]: ${error.message}`);
     if (error.stack) {
-      console.error(`Stack trace:`, error.stack);
+      logger.error(`Stack trace: ${error.stack}`);
     }
 
     // Post comment to GitHub issue if enabled
@@ -543,13 +564,12 @@ export class Orchestrator {
           task.githubIssueNumber,
           commentBody,
         );
-        console.log(
-          `[Orchestrator] Posted failure comment to issue #${task.githubIssueNumber}`,
+        logger.info(
+          `Posted failure comment to issue #${task.githubIssueNumber}`,
         );
       } catch (commentError) {
-        console.error(
-          `[Orchestrator] Failed to post failure comment:`,
-          commentError,
+        logger.error(
+          `Failed to post failure comment: ${commentError instanceof Error ? commentError.message : "Unknown error"}`,
         );
       }
     }
@@ -595,14 +615,18 @@ export class Orchestrator {
       createdAt: new Date(),
     };
 
+    const logger = this.getLogger(task);
+
     // Persist to database
     try {
       await db.createTaskEvent(event);
     } catch (error) {
-      console.error(`[Event] Failed to persist event:`, error);
+      logger.error(
+        `Failed to persist event: ${error instanceof Error ? error.message : "Unknown database error"}`,
+      );
     }
 
-    console.log(`[Event] Task ${task.id}: ${eventType} by ${agent}`);
+    logger.debug(`Event: ${eventType} by ${agent}`);
   }
 
   private slugify(text: string): string {
