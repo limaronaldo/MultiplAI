@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 // ============================================
-// Error Types
+// Task Status & State Machine
 // ============================================
 
 export interface OrchestratorError {
@@ -173,88 +173,207 @@ import {
       error = reason;
     }
 
-    task.status = "FAILED";
-    task.lastError = `${error.code}: ${error.message}${error.stack ? `\n${error.stack}` : ""}`;
-    task.updatedAt = new Date();
-  blockedPaths: [".env", "secrets/", ".github/workflows/"],
-  autoDevLabel: "auto-dev",
-};
+}
 
 // ============================================
 // Orchestrator Error
 // ============================================
 
-export interface OrchestratorError {
+export class OrchestratorError extends Error {
   code: string;
-  message: string;
   taskId: string;
   recoverable: boolean;
   stack?: string;
+
+  constructor(
+    code: string,
+    message: string,
+    taskId: string,
+    recoverable: boolean = false,
+    stack?: string
+  ) {
+    super(message);
+    this.name = "OrchestratorError";
+    this.code = code;
+    this.taskId = taskId;
+    this.recoverable = recoverable;
+    this.stack = stack;
+  }
 }
 
-      this.github.addComment(
-        task.githubRepo,
-        task.githubIssueNumber,
-        `❌ Task failed: ${error.message}`
-      ).catch(console.error);
-    }
+// ============================================
+// Config
+// ============================================
 
-    return task;
-  }
+++ b/src/core/orchestrator.ts
+import {
+  Task,
+  TaskStatus,
+  OrchestratorError,
+} from "./types";
+import { transition, getNextAction, isTerminal } from "./state-machine";
+import { PlannerAgent } from "../agents/planner";
+} from "./multi-agent-types";
+import { MultiCoderRunner, MultiFixerRunner } from "./multi-runner";
+import { ConsensusEngine, formatConsensusForComment } from "./consensus";
+import { db } from "../integrations/db";
+import { GitHubClient } from "../integrations/github";
 
+export class Orchestrator {
+  private config: AutoDevConfig;
+   * Step 1: Planning
+   */
+  private async runPlanning(task: Task): Promise<Task> {
+    // Validation
+    this.validateTaskStatus(task, "NEW");
 
-    return body.trim();
-  }
-}
+    task = this.updateStatus(task, "PLANNING");
+    await this.logEvent(task, "PLANNED", "planner");
+
+   * Step 2: Coding
+   */
   private async runCoding(task: Task): Promise<Task> {
+    // Validation
     this.validateTaskStatus(task, "PLANNING_DONE");
-    this.validateRequiredFields(task, ["plan"]);
+    this.validateRequiredFields(task, ["plan", "definitionOfDone", "targetFiles"]);
 
     task = this.updateStatus(task, "CODING");
     await this.logEvent(task, "CODED", "coder");
+
    * Step 3: Testing (via GitHub Actions)
    */
   private async runTests(task: Task): Promise<Task> {
+    // Validation
     this.validateTaskStatus(task, "CODING_DONE");
     this.validateRequiredFields(task, ["branchName"]);
 
     task = this.updateStatus(task, "TESTING");
     await this.logEvent(task, "TESTED", "runner");
+
    * Step 4: Fix (quando testes falham)
    */
   private async runFix(task: Task): Promise<Task> {
+    // Validation
     this.validateTaskStatus(task, "TESTS_FAILED");
-    this.validateRequiredFields(task, ["lastError"]);
+    this.validateRequiredFields(task, ["branchName", "lastError"]);
 
     task = this.updateStatus(task, "FIXING");
     await this.logEvent(task, "FIXED", "fixer");
+
    * Step 5: Review
    */
   private async runReview(task: Task): Promise<Task> {
+    // Validation
     this.validateTaskStatus(task, "TESTS_PASSED");
     this.validateRequiredFields(task, ["branchName"]);
 
     task = this.updateStatus(task, "REVIEWING");
     await this.logEvent(task, "REVIEWED", "reviewer");
+
    * Step 6: Open PR
    */
   private async openPR(task: Task): Promise<Task> {
+    // Validation
     this.validateTaskStatus(task, "REVIEW_APPROVED");
     this.validateRequiredFields(task, ["branchName"]);
 
     const prBody = this.buildPRBody(task);
 
     const pr = await this.github.createPR(task.githubRepo, {
+  // Helpers
+  // ============================================
+
+  private validateTaskStatus(task: Task, expectedStatus: TaskStatus): void {
+    if (task.status !== expectedStatus) {
+      throw new OrchestratorError(
+        "INVALID_STATUS_TRANSITION",
+        `Task ${task.id} has status ${task.status}, expected ${expectedStatus}. Cannot proceed.`,
+        task.id,
+        false
+      );
+    }
+  }
+
+  private validateRequiredFields(task: Task, fields: (keyof Task)[]): void {
+    const missingFields: string[] = [];
+
+    for (const field of fields) {
+      const value = task[field];
+      if (
+        value === undefined ||
+        value === null ||
+        (typeof value === "string" && value.trim() === "") ||
+        (Array.isArray(value) && value.length === 0)
+      ) {
+        missingFields.push(field);
+      }
+    }
+
+    if (missingFields.length > 0) {
+      throw new OrchestratorError(
+        "MISSING_REQUIRED_FIELDS",
+        `Task ${task.id} is missing required fields: ${missingFields.join(", ")}. Cannot proceed.`,
+        task.id,
+        false
+      );
+    }
+  }
+
+  private getStackFromError(error: unknown): string | undefined {
+    if (error instanceof Error && error.stack) {
+      return error.stack;
+    }
+    return undefined;
+  }
+
+  private updateStatus(task: Task, status: TaskStatus): Task {
+    task.status = transition(task.status, status);
+    task.updatedAt = new Date();
+  }
+
+  private failTask(task: Task, reason: string): Task {
+    const error = new Error(reason);
+    const stack = this.getStackFromError(error);
+
+    task.status = "FAILED";
+    task.lastError = reason;
+    task.updatedAt = new Date();
+
+    // Post error comment to GitHub issue if enabled
+    if (process.env.COMMENT_ON_FAILURE === "true") {
+      this.postErrorComment(task, reason, stack).catch((err) => {
+        console.error(`[failTask] Failed to post error comment:`, err);
+      });
+    }
+
+    console.error(`Task ${task.id} failed: ${reason}`);
+    if (stack) {
+      console.error(`Stack trace:`, stack);
+    }
+
     return task;
   }
 
-  private async failTask(task: Task, reason: string, originalError?: Error): Promise<Task> {
-    task.status = "FAILED";
-    task.lastError = originalError?.stack ? `${reason}\n\nStack trace:\n${originalError.stack}` : reason;
-    task.updatedAt = new Date();
-    console.error(`Task ${task.id} failed: ${reason}`);
+  private async postErrorComment(task: Task, reason: string, stack?: string): Promise<void> {
+    const comment = `❌ Task ${task.id} failed: ${reason}\n\n${stack ? `\`\`\`\n${stack}\n\`\`\`` : ""}`;
+    await this.github.addComment(task.githubRepo, task.githubIssueNumber, comment);
+  }
 
-    // Post GitHub comment if enabled
+  private async logEvent(
+    task: Task,
+
+    return body.trim();
+  }
+}
+ No newline at end of file
+++ b/.env.example
+MAX_DIFF_LINES=300
+ALLOWED_REPOS=owner/repo1,owner/repo2
+
+# Post error comments to GitHub issues when tasks fail
+COMMENT_ON_FAILURE=false
+
+FLY_API_KEY=
     if (this.commentOnFailure) {
       try {
         await this.github.addComment(
