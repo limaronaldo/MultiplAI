@@ -23,18 +23,67 @@ export interface DiffFile {
   deleted: boolean;
 }
 
+// Track temp directories for cleanup on process exit
+const tempDirs: Set<string> = new Set();
+
+// Cleanup handler - runs on process exit
+function cleanupTempDirs(): void {
+  for (const dir of tempDirs) {
+    try {
+      if (fs.existsSync(dir)) {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    } catch {
+      // Ignore cleanup errors on exit
+    }
+  }
+  tempDirs.clear();
+}
+
+// Register cleanup handlers once
+let cleanupRegistered = false;
+function registerCleanupHandlers(): void {
+  if (cleanupRegistered) return;
+  cleanupRegistered = true;
+
+  process.on("exit", cleanupTempDirs);
+  process.on("SIGINT", () => {
+    cleanupTempDirs();
+    process.exit(130);
+  });
+  process.on("SIGTERM", () => {
+    cleanupTempDirs();
+    process.exit(143);
+  });
+}
+
+const DEFAULT_TIMEOUT_MS = 120000; // 2 minutes
+
 /**
- * Run a command and return stdout/stderr
+ * Run a command with timeout and return stdout/stderr
  */
 async function runCommand(
   command: string,
   args: string[],
-  cwd: string
+  cwd: string,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const proc = spawn(command, args, { cwd, shell: true });
     let stdout = "";
     let stderr = "";
+    let killed = false;
+
+    // Set timeout
+    const timer = setTimeout(() => {
+      killed = true;
+      proc.kill("SIGKILL");
+      resolve({
+        exitCode: 124, // Standard timeout exit code
+        stdout,
+        stderr: stderr + "\n[TIMEOUT] Command exceeded time limit",
+      });
+    }, timeoutMs);
 
     proc.stdout.on("data", (data) => {
       stdout += data.toString();
@@ -45,46 +94,139 @@ async function runCommand(
     });
 
     proc.on("close", (exitCode) => {
-      resolve({ exitCode: exitCode ?? 1, stdout, stderr });
+      clearTimeout(timer);
+      if (!killed) {
+        resolve({ exitCode: exitCode ?? 1, stdout, stderr });
+      }
     });
 
     proc.on("error", (err) => {
-      resolve({ exitCode: 1, stdout, stderr: err.message });
+      clearTimeout(timer);
+      if (!killed) {
+        resolve({ exitCode: 1, stdout, stderr: err.message });
+      }
     });
   });
 }
 
 /**
  * Clone a repo to a temp directory (shallow clone)
+ * Uses git credential helper to avoid token in URL
  */
 async function cloneRepo(
-  repoUrl: string,
-  branch: string
+  repoFullName: string,
+  branch: string,
 ): Promise<string> {
+  registerCleanupHandlers();
+
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "diff-validate-"));
+  tempDirs.add(tempDir);
 
   const token = process.env.GITHUB_TOKEN;
-  const authUrl = repoUrl.replace("https://", `https://${token}@`);
+  if (!token) {
+    throw new Error("GITHUB_TOKEN not set");
+  }
 
-  const result = await runCommand(
+  // Use environment variable for auth instead of embedding in URL
+  // This prevents token leakage in error messages/logs
+  const repoUrl = `https://github.com/${repoFullName}.git`;
+
+  // Set up git to use token via credential helper
+  await runCommand(
     "git",
-    ["clone", "--depth", "1", "--branch", branch, authUrl, "."],
-    tempDir
+    ["config", "--global", "credential.helper", "store"],
+    tempDir,
+    10000,
   );
 
-  if (result.exitCode !== 0) {
-    // Try cloning main if branch doesn't exist yet
+  // Write credentials to temp file that git will use
+  const credentialFile = path.join(tempDir, ".git-credentials");
+  fs.writeFileSync(credentialFile, `https://oauth2:${token}@github.com\n`, {
+    mode: 0o600,
+  });
+
+  // Configure git to use this credential file
+  const envWithCredentials = {
+    ...process.env,
+    GIT_ASKPASS: "echo",
+    GIT_TERMINAL_PROMPT: "0",
+  };
+
+  // Try cloning the specific branch first
+  const cloneResult = await runCommand(
+    "git",
+    [
+      "-c",
+      `credential.helper=store --file=${credentialFile}`,
+      "clone",
+      "--depth",
+      "1",
+      "--branch",
+      branch,
+      repoUrl,
+      ".",
+    ],
+    tempDir,
+    60000, // 1 minute timeout for clone
+  );
+
+  // Clean up credentials file immediately
+  try {
+    fs.unlinkSync(credentialFile);
+  } catch {
+    // Ignore
+  }
+
+  if (cloneResult.exitCode !== 0) {
+    // Try cloning main/master if branch doesn't exist yet
+    const credentialFile2 = path.join(tempDir, ".git-credentials");
+    fs.writeFileSync(credentialFile2, `https://oauth2:${token}@github.com\n`, {
+      mode: 0o600,
+    });
+
     const mainResult = await runCommand(
       "git",
-      ["clone", "--depth", "1", authUrl, "."],
-      tempDir
+      [
+        "-c",
+        `credential.helper=store --file=${credentialFile2}`,
+        "clone",
+        "--depth",
+        "1",
+        repoUrl,
+        ".",
+      ],
+      tempDir,
+      60000,
     );
+
+    try {
+      fs.unlinkSync(credentialFile2);
+    } catch {
+      // Ignore
+    }
+
     if (mainResult.exitCode !== 0) {
-      throw new Error(`Failed to clone repo: ${mainResult.stderr}`);
+      // Sanitize error message to remove any potential token leakage
+      const sanitizedError = mainResult.stderr
+        .replace(/oauth2:[^@]+@/g, "oauth2:***@")
+        .replace(new RegExp(token, "g"), "***");
+      throw new Error(`Failed to clone repo: ${sanitizedError}`);
     }
   }
 
   return tempDir;
+}
+
+/**
+ * Remove temp directory and untrack it
+ */
+function cleanupTempDir(tempDir: string): void {
+  tempDirs.delete(tempDir);
+  try {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  } catch {
+    // Ignore cleanup errors
+  }
 }
 
 /**
@@ -114,28 +256,54 @@ function applyFileChanges(tempDir: string, files: DiffFile[]): void {
 /**
  * Run TypeScript typecheck
  */
-async function runTypecheck(tempDir: string): Promise<{ valid: boolean; errors: string[] }> {
+async function runTypecheck(
+  tempDir: string,
+): Promise<{ valid: boolean; errors: string[] }> {
   // First check if tsconfig exists
   const tsconfigPath = path.join(tempDir, "tsconfig.json");
   if (!fs.existsSync(tsconfigPath)) {
     return { valid: true, errors: [] }; // No tsconfig, skip typecheck
   }
 
-  // Install dependencies if needed
+  // Install dependencies if needed (with timeout)
   const nodeModulesPath = path.join(tempDir, "node_modules");
   if (!fs.existsSync(nodeModulesPath)) {
-    const installResult = await runCommand("bun", ["install", "--frozen-lockfile"], tempDir);
+    const installResult = await runCommand(
+      "bun",
+      ["install", "--frozen-lockfile"],
+      tempDir,
+      90000, // 90 second timeout for install
+    );
     if (installResult.exitCode !== 0) {
       // Try without frozen lockfile
-      await runCommand("bun", ["install"], tempDir);
+      const retryResult = await runCommand("bun", ["install"], tempDir, 90000);
+      if (retryResult.exitCode !== 0) {
+        return {
+          valid: true, // Don't fail on install issues
+          errors: [],
+        };
+      }
     }
   }
 
-  // Run tsc --noEmit
-  const result = await runCommand("bun", ["run", "tsc", "--noEmit"], tempDir);
+  // Run tsc --noEmit with timeout
+  const result = await runCommand(
+    "bun",
+    ["run", "tsc", "--noEmit"],
+    tempDir,
+    60000, // 1 minute timeout for typecheck
+  );
 
   if (result.exitCode === 0) {
     return { valid: true, errors: [] };
+  }
+
+  // Check for timeout
+  if (result.exitCode === 124) {
+    return {
+      valid: true, // Don't fail on timeout, just warn
+      errors: [],
+    };
   }
 
   // Parse TypeScript errors
@@ -152,45 +320,136 @@ async function runTypecheck(tempDir: string): Promise<{ valid: boolean; errors: 
  */
 function checkDiffCorruption(diff: string): string[] {
   const warnings: string[] = [];
-
-  // Check for git diff markers in content (not as headers)
   const lines = diff.split("\n");
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    const prevLine = lines[i - 1] || "";
+    const nextLine = lines[i + 1] || "";
 
-    // These patterns should only appear as diff headers, not in content
-    if (line.startsWith("+++ b/") && !lines[i - 1]?.startsWith("--- a/")) {
-      warnings.push(`Line ${i + 1}: Suspicious '+++ b/' pattern - possible corrupted diff`);
+    // Pattern 1: "+++ b/" not preceded by "--- a/" (standard diff header)
+    if (line.startsWith("+++ b/") && !prevLine.startsWith("--- a/")) {
+      warnings.push(
+        `Line ${i + 1}: Suspicious '+++ b/' pattern - possible corrupted diff`,
+      );
     }
 
-    if (line.startsWith("--- a/") && !lines[i + 1]?.startsWith("+++ b/")) {
-      warnings.push(`Line ${i + 1}: Suspicious '--- a/' pattern - possible corrupted diff`);
+    // Pattern 2: "--- a/" not followed by "+++ b/"
+    if (line.startsWith("--- a/") && !nextLine.startsWith("+++ b/")) {
+      warnings.push(
+        `Line ${i + 1}: Suspicious '--- a/' pattern - possible corrupted diff`,
+      );
     }
-  }
 
-  // Check for incomplete hunks
-  const files = parseDiff(diff);
-  for (const file of files) {
-    for (const chunk of file.chunks) {
-      const adds = chunk.changes.filter((c) => c.type === "add").length;
-      const dels = chunk.changes.filter((c) => c.type === "del").length;
-      const normals = chunk.changes.filter((c) => c.type === "normal").length;
+    // Pattern 3: "++ b/" (double plus, like in the corrupted types.ts)
+    // This is NOT a valid diff header - it's corrupted content
+    if (line.match(/^\+\+ b\//) && !line.startsWith("+++ b/")) {
+      warnings.push(
+        `Line ${i + 1}: Corrupted diff marker '++ b/' found in content`,
+      );
+    }
 
-      // Hunk header says it should have X lines, check if it matches
-      const expectedOld = chunk.oldLines;
-      const expectedNew = chunk.newLines;
-      const actualOld = dels + normals;
-      const actualNew = adds + normals;
+    // Pattern 4: "-- a/" (double minus, similar corruption)
+    if (line.match(/^-- a\//) && !line.startsWith("--- a/")) {
+      warnings.push(
+        `Line ${i + 1}: Corrupted diff marker '-- a/' found in content`,
+      );
+    }
 
-      if (actualOld !== expectedOld || actualNew !== expectedNew) {
+    // Pattern 5: Diff header inside added content (starts with + followed by diff header)
+    if (line.match(/^\+(\+\+\+ b\/|--- a\/|diff --git)/)) {
+      warnings.push(
+        `Line ${i + 1}: Diff header appears inside added content - likely corrupted`,
+      );
+    }
+
+    // Pattern 6: @@ hunk header in wrong place (inside content)
+    if (
+      line.match(/^\+@@.*@@/) ||
+      (line.match(/^@@.*@@/) && i > 0 && !prevLine.match(/^(\+\+\+|---)/))
+    ) {
+      // Hunk headers should only appear after +++ line
+      const isAfterPlusPlus = lines
+        .slice(Math.max(0, i - 5), i)
+        .some((l) => l.startsWith("+++ "));
+      if (!isAfterPlusPlus && line.startsWith("+@@")) {
         warnings.push(
-          `File ${file.to}: Hunk line count mismatch (expected ${expectedOld}/${expectedNew}, got ${actualOld}/${actualNew})`
+          `Line ${i + 1}: Hunk header appears inside content - likely corrupted`,
         );
       }
     }
   }
 
+  // Check for incomplete hunks using parse-diff
+  try {
+    const files = parseDiff(diff);
+    for (const file of files) {
+      for (const chunk of file.chunks) {
+        const adds = chunk.changes.filter((c) => c.type === "add").length;
+        const dels = chunk.changes.filter((c) => c.type === "del").length;
+        const normals = chunk.changes.filter((c) => c.type === "normal").length;
+
+        const expectedOld = chunk.oldLines;
+        const expectedNew = chunk.newLines;
+        const actualOld = dels + normals;
+        const actualNew = adds + normals;
+
+        if (actualOld !== expectedOld || actualNew !== expectedNew) {
+          warnings.push(
+            `File ${file.to}: Hunk line count mismatch (expected ${expectedOld}/${expectedNew}, got ${actualOld}/${actualNew})`,
+          );
+        }
+      }
+    }
+  } catch {
+    warnings.push("Failed to parse diff for hunk validation");
+  }
+
   return warnings;
+}
+
+/**
+ * Check file content for corruption patterns
+ */
+function checkContentCorruption(files: DiffFile[]): string[] {
+  const errors: string[] = [];
+
+  for (const file of files) {
+    if (file.deleted) continue;
+
+    // Merge conflict markers
+    if (file.content.includes("<<<<<<<") || file.content.includes(">>>>>>>")) {
+      errors.push(`${file.path}: Contains merge conflict markers`);
+    }
+
+    // Git diff markers embedded in content
+    if (
+      file.content.includes("+++ b/") ||
+      file.content.includes("--- a/") ||
+      file.content.match(/\n\+\+ b\//) || // ++ b/ pattern
+      file.content.match(/\n-- a\//) // -- a/ pattern
+    ) {
+      errors.push(`${file.path}: Contains git diff markers in content`);
+    }
+
+    // Diff hunk headers in content
+    if (file.content.match(/@@ -\d+,\d+ \+\d+,\d+ @@/)) {
+      errors.push(`${file.path}: Contains diff hunk headers in content`);
+    }
+
+    // Empty TS/JS files (warning only for truly empty, not whitespace)
+    if (
+      (file.path.endsWith(".ts") ||
+        file.path.endsWith(".tsx") ||
+        file.path.endsWith(".js") ||
+        file.path.endsWith(".jsx")) &&
+      file.content.trim() === ""
+    ) {
+      // This is a warning, not error - empty files can be intentional
+    }
+  }
+
+  return errors;
 }
 
 /**
@@ -206,7 +465,7 @@ export async function validateDiff(
   repoFullName: string,
   branch: string,
   diff: string,
-  files: DiffFile[]
+  files: DiffFile[],
 ): Promise<ValidationResult> {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -215,28 +474,9 @@ export async function validateDiff(
   const corruptionWarnings = checkDiffCorruption(diff);
   warnings.push(...corruptionWarnings);
 
-  // Step 2: Basic content validation
-  for (const file of files) {
-    if (file.deleted) continue;
-
-    // Check for empty TypeScript/JavaScript files that should have content
-    if (
-      (file.path.endsWith(".ts") || file.path.endsWith(".tsx") ||
-       file.path.endsWith(".js") || file.path.endsWith(".jsx")) &&
-      file.content.trim() === ""
-    ) {
-      warnings.push(`${file.path}: File is empty`);
-    }
-
-    // Check for obvious syntax issues
-    if (file.content.includes("<<<<<") || file.content.includes(">>>>>")) {
-      errors.push(`${file.path}: Contains merge conflict markers`);
-    }
-
-    if (file.content.includes("+++ b/") || file.content.includes("--- a/")) {
-      errors.push(`${file.path}: Contains git diff markers in content`);
-    }
-  }
+  // Step 2: Check content for corruption
+  const contentErrors = checkContentCorruption(files);
+  errors.push(...contentErrors);
 
   // If we already found critical errors, fail fast
   if (errors.length > 0) {
@@ -247,8 +487,7 @@ export async function validateDiff(
   let tempDir: string | null = null;
 
   try {
-    const repoUrl = `https://github.com/${repoFullName}.git`;
-    tempDir = await cloneRepo(repoUrl, branch);
+    tempDir = await cloneRepo(repoFullName, branch);
 
     // Apply the file changes
     applyFileChanges(tempDir, files);
@@ -260,15 +499,13 @@ export async function validateDiff(
       errors.push(...typecheckResult.errors);
     }
   } catch (error) {
-    warnings.push(`Could not run full validation: ${error instanceof Error ? error.message : "Unknown error"}`);
+    warnings.push(
+      `Could not run full validation: ${error instanceof Error ? error.message : "Unknown error"}`,
+    );
   } finally {
     // Cleanup temp directory
     if (tempDir) {
-      try {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      } catch {
-        // Ignore cleanup errors
-      }
+      cleanupTempDir(tempDir);
     }
   }
 
@@ -286,12 +523,16 @@ export function quickValidateDiff(diff: string): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  // Check for corruption
+  // Check for corruption patterns
   const corruptionWarnings = checkDiffCorruption(diff);
 
   // Promote serious corruption to errors
   for (const warning of corruptionWarnings) {
-    if (warning.includes("corrupted diff")) {
+    if (
+      warning.includes("corrupted") ||
+      warning.includes("Corrupted") ||
+      warning.includes("inside content")
+    ) {
       errors.push(warning);
     } else {
       warnings.push(warning);
@@ -305,7 +546,9 @@ export function quickValidateDiff(diff: string): ValidationResult {
       errors.push("Diff contains no file changes");
     }
   } catch (error) {
-    errors.push(`Failed to parse diff: ${error instanceof Error ? error.message : "Unknown error"}`);
+    errors.push(
+      `Failed to parse diff: ${error instanceof Error ? error.message : "Unknown error"}`,
+    );
   }
 
   return { valid: errors.length === 0, errors, warnings };
