@@ -249,69 +249,129 @@ export class Orchestrator {
     task.updatedAt = new Date();
     console.error(`Task ${task.id} failed: ${reason}`);
     postGitHubComment(this.github, task, error);
-    return task;
+  autoDevLabel: string;
+}
+
+export class OrchestratorError extends Error {
+  constructor(
+    public code: string,
+    public message: string,
+    public taskId: string,
+    public recoverable: boolean = false,
+    public stack?: string
+  ) {
+    super(message);
+  }
+}
+
+export const defaultConfig: AutoDevConfig = {
+  maxAttempts: 3,
+  maxDiffLines: 300,
+++ b/src/core/orchestrator.ts
+  TaskStatus,
+  TaskEvent,
+  defaultConfig,
+  OrchestratorError,
+  type AutoDevConfig,
+} from "./types";
+import { transition, getNextAction, isTerminal } from "./state-machine";
+    }
   }
 
+  private validateTaskStatus(task: Task, expectedStatus: TaskStatus) {
+    if (task.status !== expectedStatus) {
+      throw new OrchestratorError(
+        "INVALID_STATUS",
+        `Task ${task.id} has invalid status ${task.status}, expected ${expectedStatus}`,
+        task.id,
+        false
+      );
+    }
+  }
+
+  private validateRequiredFields(task: Task, fields: string[]) {
+    for (const field of fields) {
+      if (!(field in task) || task[field as keyof Task] === undefined) {
+        throw new OrchestratorError(
+          "MISSING_FIELD",
+          `Task ${task.id} is missing required field: ${field}`,
+          task.id,
+          false
+        );
+      }
+    }
+  }
+
+  /**
+   * Processa uma task baseado no estado atual
+   */
+      }
+    } catch (error) {
+      console.error(`Error processing task ${task.id}:`, error);
+      return this.failTask(task, error instanceof Error ? error : new Error("Unknown error")
+      );
+    }
+  }
    * Step 1: Planning
    */
   private async runPlanning(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, TaskStatus.NEW);
+    this.validateTaskStatus(task, "NEW");
+
     task = this.updateStatus(task, "PLANNING");
     await this.logEvent(task, "PLANNED", "planner");
 
    * Step 2: Coding
    */
   private async runCoding(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, TaskStatus.PLANNING_DONE);
+    this.validateTaskStatus(task, "PLANNING_DONE");
     this.validateRequiredFields(task, ["definitionOfDone", "plan", "targetFiles"]);
+
     task = this.updateStatus(task, "CODING");
     await this.logEvent(task, "CODED", "coder");
 
    * Step 3: Testing (via GitHub Actions)
    */
   private async runTests(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, TaskStatus.CODING_DONE);
+    this.validateTaskStatus(task, "CODING_DONE");
     this.validateRequiredFields(task, ["branchName"]);
+
     task = this.updateStatus(task, "TESTING");
     await this.logEvent(task, "TESTED", "runner");
 
    * Step 4: Fix (quando testes falham)
    */
   private async runFix(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, TaskStatus.TESTS_FAILED);
-    this.validateRequiredFields(task, ["lastError", "branchName"]);
+    this.validateTaskStatus(task, "TESTS_FAILED");
+    this.validateRequiredFields(task, ["lastError"]);
+
     task = this.updateStatus(task, "FIXING");
     await this.logEvent(task, "FIXED", "fixer");
 
    * Step 5: Review
    */
   private async runReview(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, TaskStatus.TESTS_PASSED);
-    this.validateRequiredFields(task, ["branchName", "currentDiff"]);
+    this.validateTaskStatus(task, "TESTS_PASSED");
+    this.validateRequiredFields(task, ["branchName"]);
+
     task = this.updateStatus(task, "REVIEWING");
     await this.logEvent(task, "REVIEWED", "reviewer");
 
+    return task;
   }
 
-  private failTask(task: Task, reason: string): Task {
-    const error = reason instanceof OrchestratorError ? reason : new OrchestratorError(
-      "TASK_FAILED",
-      reason,
-      task.id
-    );
-
+  private failTask(task: Task, error: Error | OrchestratorError): Task {
     task.status = "FAILED";
-    task.lastError = `${error.code}: ${error.message}${error.stack ? `\n${error.stack}` : ''}`;
+    task.lastError = error.message;
     task.updatedAt = new Date();
-    console.error(`Task ${task.id} failed:`, error);
+    console.error(`Task ${task.id} failed: ${error.message}`);
 
-    // Add GitHub comment if enabled
-    if (process.env.COMMENT_ON_FAILURE === 'true') {
+    // Add error to GitHub issue if enabled
+    if (process.env.COMMENT_ON_FAILURE === "true") {
       this.github.addComment(
         task.githubRepo,
         task.githubIssueNumber,
-        `❌ AutoDev failed to process this issue\n\nError: ${error.message}${error.recoverable ? '\n\nThis error may be recoverable - retrying...' : ''}`
-      ).catch(e => console.error('Failed to add GitHub comment:', e));
+        `❌ Task failed: ${error.message}${error.stack ? `\n\nStack trace:\n\`\`\`\n${error.stack}\n\`\`\`` : ""}`
+      ).catch(e => console.error("Failed to add GitHub comment:", e));
     }
 
     return task;
@@ -321,9 +381,11 @@ export class Orchestrator {
 MAX_DIFF_LINES=300
 ALLOWED_REPOS=owner/repo1,owner/repo2
 
+# Comment on GitHub issue when task fails
 COMMENT_ON_FAILURE=false
+
 FLY_API_KEY=
-    task = this.updateStatus(task, "PLANNING");
+
     await this.logEvent(task, "PLANNED", "planner");
 
    * Step 2: Coding
