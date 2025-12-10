@@ -40,30 +40,119 @@ import {
    * Step 1: Planning
    */
   private async runPlanning(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, TaskStatus.NEW);
+    this.validateTaskStatus(task, "pending");
     this.validateRequiredFields(task, []);
 
-    task = this.updateStatus(task, "PLANNING");
-    await this.logEvent(task, "PLANNED", "planner");
+  task = this.updateStatus(task, "PLANNING");
+  await this.logEvent(task, "PLANNED", "planner");
 
   /**
    * Step 2: Coding
    */
   private async runCoding(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, TaskStatus.PLANNING_DONE);
+    this.validateTaskStatus(task, "planning_complete");
     this.validateRequiredFields(task, []);
 
-    task = this.updateStatus(task, "CODING");
-    await this.logEvent(task, "CODED", "coder");
+  task = this.updateStatus(task, "CODING");
+  await this.logEvent(task, "CODED", "coder");
 
   /**
    * Step 3: Testing (via GitHub Actions)
    */
   private async runTests(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, TaskStatus.CODING_DONE);
+    this.validateTaskStatus(task, "review_complete");
     this.validateRequiredFields(task, ["branchName"]);
 
-    task = this.updateStatus(task, "TESTING");
+  task = this.updateStatus(task, "TESTING");
+  await this.logEvent(task, "TESTED", "runner");
+
+  /**
+   * Step 4: Fix (quando testes falham)
+   */
+  private async runFix(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, "tests_failed");
+    this.validateRequiredFields(task, ["branchName"]);
+
+  task = this.updateStatus(task, "FIXING");
+  await this.logEvent(task, "FIXED", "fixer");
+
+  /**
+   * Step 5: Review
+   */
+  private async runReview(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, "coding_complete");
+    this.validateRequiredFields(task, ["branchName"]);
+
+  task = this.updateStatus(task, "REVIEWING");
+  await this.logEvent(task, "REVIEWED", "reviewer");
+
+  private updateStatus(task: Task, status: TaskStatus): Task {
+    task.status = transition(task.status, status);
+    task.updatedAt = new Date();
+    return task;
+  }
+
+  private async failTask(task: Task, reason: string): Promise<Task> {
+    const error = new Error(reason);
+    const stackTrace = error.stack || "No stack trace available";
+    task.status = "FAILED";
+    task.lastError = `${reason}\n\nStack Trace:\n${stackTrace}`;
+    task.updatedAt = new Date();
+    console.error(`Task ${task.id} failed: ${reason}`);
+
+    // Optional GitHub comment on failure
+    if (process.env.COMMENT_ON_FAILURE === "true") {
+      try {
+        await this.github.addComment(
+          task.githubRepo,
+          task.githubIssueNumber,
+          `❌ Task failed: ${reason}\n\nStack Trace:\n${stackTrace}`,
+        );
+      } catch (commentError) {
+        console.error(`Failed to comment on GitHub:`, commentError);
+      }
+    }
+
+    return task;
+  }
+
+  private validateTaskStatus(task: Task, expectedStatus: string): void {
+    if (task.status !== expectedStatus) {
+      throw new OrchestratorError(
+        "INVALID_STATUS",
+        `Expected status ${expectedStatus}, but got ${task.status}`,
+        task.id,
+        false,
+      );
+    }
+  }
+
+  private validateRequiredFields(task: Task, fields: (keyof Task)[]): void {
+    for (const field of fields) {
+      if (task[field] == null) {
+        throw new OrchestratorError(
+          "MISSING_FIELD",
+          `Required field '${field}' is missing or undefined`,
+          task.id,
+          false,
+        );
+      }
+    }
+  }
+
+  private async logEvent(
+    task: Task,
+    eventType: TaskEvent["eventType"],
+++ b/.env.example
+# Configurações do sistema
+MAX_ATTEMPTS=3
+MAX_DIFF_LINES=300
+ALLOWED_REPOS=owner/repo1,owner/repo2
+
+FLY_API_KEY=
+
+# Optional: Comment on GitHub issue when task fails
+COMMENT_ON_FAILURE=false
     await this.logEvent(task, "TESTED", "runner");
 
   /**
