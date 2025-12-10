@@ -88,7 +88,7 @@ export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
   constructor() {
     // DeepSeek V3.2 Speciale via OpenRouter
     super({
-      model: "deepseek/deepseek-v3.2-speciale",
+      model: "claude-sonnet-4-5-20250929",
       maxTokens: 8192,
       temperature: 0.2,
     });
