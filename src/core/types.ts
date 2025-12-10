@@ -1,8 +1,20 @@
-  Task,
-  type OrchestratorError,
-  TaskStatus,
-  TaskEvent,
-  defaultConfig,
+import { z } from "zod";
+
+// ============================================
+// Error Types
+// ============================================
+
+export interface OrchestratorError {
+  code: string;
+  message: string;
+  taskId: string;
+  recoverable: boolean;
+  stack?: string;
+}
+
+// ============================================
+// Task Status & State Machine
+// ============================================
     }
   code: string;
   message: string;
