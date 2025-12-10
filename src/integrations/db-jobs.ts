@@ -1,24 +1,5 @@
-import postgres from "postgres";
 import { Job, JobStatus, JobSummary, TaskEvent } from "../core/types";
-
-const connectionString = process.env.DATABASE_URL;
-
-// Lazy connection - reuse from main db module pattern
-let sql: ReturnType<typeof postgres> | null = null;
-
-function getDb() {
-  if (!sql) {
-    if (!connectionString) {
-      throw new Error("DATABASE_URL environment variable is required");
-    }
-    sql = postgres(connectionString, {
-      ssl: "require",
-      max: 10,
-      idle_timeout: 20,
-    });
-  }
-  return sql;
-}
+import { getDb } from "./db";
 
 export const dbJobs = {
   // ============================================
@@ -26,7 +7,7 @@ export const dbJobs = {
   // ============================================
 
   async createJob(
-    job: Omit<Job, "id" | "createdAt" | "updatedAt">
+    job: Omit<Job, "id" | "createdAt" | "updatedAt">,
   ): Promise<Job> {
     const sql = getDb();
     const [result] = await sql`
@@ -84,7 +65,7 @@ export const dbJobs = {
 
     const [result] = await sql.unsafe(
       `UPDATE jobs SET ${setClauses.join(", ")} WHERE id = $${values.length} RETURNING *`,
-      values
+      values,
     );
 
     return this.mapJob(result);

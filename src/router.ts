@@ -8,8 +8,21 @@ import { Orchestrator } from "./core/orchestrator";
 import { db } from "./integrations/db";
 import { dbJobs } from "./integrations/db-jobs";
 import { LinearService } from "./integrations/linear";
-import { GitHubClient } from "./integrations/github";
 import { createHmac, timingSafeEqual } from "crypto";
+import { Octokit } from "octokit";
+
+// Validation helpers
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const REPO_REGEX = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
+
+function isValidUUID(id: string): boolean {
+  return UUID_REGEX.test(id);
+}
+
+function isValidRepo(repo: string): boolean {
+  return REPO_REGEX.test(repo);
+}
 
 // Inicializa Linear (pode falhar se não configurado)
 let linear: LinearService | null = null;
@@ -317,9 +330,17 @@ route("POST", "/api/jobs", async (req) => {
     issueNumbers: number[];
   };
 
+  // Input validation
   if (!repo || !issueNumbers || !Array.isArray(issueNumbers)) {
     return Response.json(
       { error: "Missing required fields: repo, issueNumbers" },
+      { status: 400 },
+    );
+  }
+
+  if (!isValidRepo(repo)) {
+    return Response.json(
+      { error: "Invalid repo format. Expected: owner/repo" },
       { status: 400 },
     );
   }
@@ -338,8 +359,18 @@ route("POST", "/api/jobs", async (req) => {
     );
   }
 
-  // Fetch issue details from GitHub
-  const github = new GitHubClient();
+  // Validate all issue numbers are positive integers
+  if (!issueNumbers.every((n) => Number.isInteger(n) && n > 0)) {
+    return Response.json(
+      { error: "All issue numbers must be positive integers" },
+      { status: 400 },
+    );
+  }
+
+  // Use top-level Octokit instance
+  const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+  const [owner, repoName] = repo.split("/");
+
   const taskIds: string[] = [];
   const errors: Array<{ issueNumber: number; error: string }> = [];
 
@@ -353,10 +384,6 @@ route("POST", "/api/jobs", async (req) => {
       }
 
       // Fetch issue from GitHub
-      const [owner, repoName] = repo.split("/");
-      const { Octokit } = await import("octokit");
-      const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
-
       const { data: issue } = await octokit.rest.issues.get({
         owner,
         repo: repoName,
@@ -431,6 +458,10 @@ route("GET", "/api/jobs/:id", async (req) => {
   const url = new URL(req.url);
   const id = url.pathname.split("/").pop()!;
 
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid job ID format" }, { status: 400 });
+  }
+
   const result = await dbJobs.getJobWithTasks(id);
   if (!result) {
     return Response.json({ error: "Job not found" }, { status: 404 });
@@ -447,6 +478,10 @@ route("GET", "/api/jobs/:id/events", async (req) => {
   const pathParts = url.pathname.split("/");
   const id = pathParts[pathParts.length - 2]; // /api/jobs/:id/events
 
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid job ID format" }, { status: 400 });
+  }
+
   const job = await dbJobs.getJob(id);
   if (!job) {
     return Response.json({ error: "Job not found" }, { status: 404 });
@@ -458,11 +493,16 @@ route("GET", "/api/jobs/:id/events", async (req) => {
 
 /**
  * POST /api/jobs/:id/run - Start processing a pending job
+ * Returns immediately and processes tasks in background
  */
 route("POST", "/api/jobs/:id/run", async (req) => {
   const url = new URL(req.url);
   const pathParts = url.pathname.split("/");
   const id = pathParts[pathParts.length - 2]; // /api/jobs/:id/run
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid job ID format" }, { status: 400 });
+  }
 
   const job = await dbJobs.getJob(id);
   if (!job) {
@@ -479,12 +519,35 @@ route("POST", "/api/jobs/:id/run", async (req) => {
   // Update job to running
   await dbJobs.updateJob(id, { status: "running" });
 
-  // Process tasks sequentially (could be parallelized in future)
-  const results: Array<{ taskId: string; status: string; prUrl?: string }> = [];
+  // Start processing in background (non-blocking)
+  processJobInBackground(id, job.taskIds).catch((error) => {
+    console.error(`[Job] Background processing failed for ${id}:`, error);
+  });
 
-  for (const taskId of job.taskIds) {
+  // Return immediately
+  return Response.json({
+    ok: true,
+    message: "Job started processing",
+    jobId: id,
+    taskCount: job.taskIds.length,
+  });
+});
+
+/**
+ * Process job tasks in background
+ */
+async function processJobInBackground(
+  jobId: string,
+  taskIds: string[],
+): Promise<void> {
+  console.log(`[Job] Starting background processing for ${jobId}`);
+
+  for (const taskId of taskIds) {
     const task = await db.getTask(taskId);
-    if (!task) continue;
+    if (!task) {
+      console.warn(`[Job] Task ${taskId} not found, skipping`);
+      continue;
+    }
 
     try {
       let currentTask = task;
@@ -499,29 +562,23 @@ route("POST", "/api/jobs/:id/run", async (req) => {
         await db.updateTask(taskId, currentTask);
       }
 
-      results.push({
-        taskId,
-        status: currentTask.status,
-        prUrl: currentTask.prUrl,
-      });
+      console.log(
+        `[Job] Task ${taskId} finished with status: ${currentTask.status}`,
+      );
     } catch (error) {
       console.error(`[Job] Error processing task ${taskId}:`, error);
-      results.push({
-        taskId,
+      await db.updateTask(taskId, {
         status: "FAILED",
+        lastError: error instanceof Error ? error.message : "Unknown error",
       });
     }
+
+    // Update job summary after each task
+    await dbJobs.updateJobSummary(jobId);
   }
 
-  // Update job summary
-  const updatedJob = await dbJobs.updateJobSummary(id);
-
-  return Response.json({
-    ok: true,
-    job: updatedJob,
-    results,
-  });
-});
+  console.log(`[Job] Background processing completed for ${jobId}`);
+}
 
 // Endpoint para Claude Code: lista issues aguardando review
 route("GET", "/api/review/pending", async (req) => {

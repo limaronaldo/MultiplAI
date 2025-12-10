@@ -6,7 +6,7 @@ const connectionString = process.env.DATABASE_URL;
 // Conexão lazy - só conecta quando necessário
 let sql: ReturnType<typeof postgres> | null = null;
 
-function getDb() {
+export function getDb() {
   if (!sql) {
     if (!connectionString) {
       throw new Error("DATABASE_URL environment variable is required");
