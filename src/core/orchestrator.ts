@@ -1,6 +1,7 @@
 import {
   Task,
   TaskStatus,
+  type OrchestratorError,
   TaskEvent,
   defaultConfig,
   type AutoDevConfig,
@@ -56,36 +57,40 @@ export class Orchestrator {
   }
 
   /**
+    }
+  }
+
+  // ============================================
+  // Validation Helpers
+  // ============================================
+
+  private validateTaskStatus(task: Task, expectedStatus: TaskStatus): void {
+    if (task.status !== expectedStatus) {
+      throw {
+        code: "INVALID_STATUS",
+        message: `Expected status ${expectedStatus}, but got ${task.status}`,
+        taskId: task.id,
+        recoverable: false,
+      } as OrchestratorError;
+    }
+  }
+
+  private validateRequiredFields(task: Task, fields: (keyof Task)[]): void {
+    for (const field of fields) {
+      if (!task[field]) {
+        throw {
+          code: "MISSING_FIELD",
+          message: `Required field '${field}' is missing`,
+          taskId: task.id,
+          recoverable: false,
+        } as OrchestratorError;
+      }
+    }
+  }
+
+  /**
    * Processa uma task baseado no estado atual
    */
-  async process(task: Task): Promise<Task> {
-    if (isTerminal(task.status)) {
-      console.log(`Task ${task.id} is in terminal state: ${task.status}`);
-      return task;
-    }
-
-    const action = getNextAction(task.status);
-    console.log(`Task ${task.id}: ${task.status} -> action: ${action}`);
-
-    try {
-      switch (action) {
-        case "PLAN":
-          return await this.runPlanning(task);
-        case "CODE":
-          return await this.runCoding(task);
-        case "TEST":
-          return await this.runTests(task);
-        case "FIX":
-          return await this.runFix(task);
-        case "REVIEW":
-          return await this.runReview(task);
-        case "OPEN_PR":
-          return await this.openPR(task);
-        case "WAIT":
-          return task;
-        default:
-          return task;
-      }
     } catch (error) {
       console.error(`Error processing task ${task.id}:`, error);
       return this.failTask(
@@ -93,10 +98,6 @@ export class Orchestrator {
         error instanceof Error ? error.message : "Unknown error",
       );
     }
-  }
-
-  /**
-   * Step 1: Planning
    */
   private async runPlanning(task: Task): Promise<Task> {
     task = this.updateStatus(task, "PLANNING");
@@ -104,45 +105,121 @@ export class Orchestrator {
 
     // Busca contexto do repositório
     const repoContext = await this.github.getRepoContext(
-      task.githubRepo,
-      task.targetFiles || [],
-    );
-
-    // Chama o Planner Agent
-    const plannerOutput = await this.planner.run({
-      issueTitle: task.githubIssueTitle,
-      issueBody: task.githubIssueBody,
-      repoContext,
-    });
-
-    // Atualiza task com outputs do planner
-    task.definitionOfDone = plannerOutput.definitionOfDone;
-    task.plan = plannerOutput.plan;
-    task.targetFiles = plannerOutput.targetFiles;
-
-    // Valida complexidade
-    if (
       plannerOutput.estimatedComplexity === "L" ||
       plannerOutput.estimatedComplexity === "XL"
     ) {
-      return this.failTask(
+      throw {
+        code: "COMPLEXITY_TOO_HIGH",
+        message: `Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`,
+        taskId: task.id,
+        recoverable: false,
+      } as OrchestratorError;
         task,
         `Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`,
       );
-    }
-
-    return this.updateStatus(task, "PLANNING_DONE");
-  }
-
-  /**
    * Step 2: Coding
    */
   private async runCoding(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.PLANNING_DONE);
+    this.validateRequiredFields(task, ["definitionOfDone", "plan", "targetFiles"]);
+
     task = this.updateStatus(task, "CODING");
     await this.logEvent(task, "CODED", "coder");
 
-    // Cria branch se não existir
-    if (!task.branchName) {
+    // Valida tamanho do diff
+    const diffLines = coderOutput.diff.split("\n").length;
+    if (diffLines > this.config.maxDiffLines) {
+      throw {
+        code: "DIFF_TOO_LARGE",
+        message: `Diff muito grande (${diffLines} linhas). Máximo permitido: ${this.config.maxDiffLines}`,
+        taskId: task.id,
+        recoverable: false,
+      } as OrchestratorError;
+        task,
+        `Diff muito grande (${diffLines} linhas). Máximo permitido: ${this.config.maxDiffLines}`,
+      );
+   * Step 3: Testing (via GitHub Actions)
+   */
+  private async runTests(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.CODING_DONE);
+    this.validateRequiredFields(task, ["branchName"]);
+
+    task = this.updateStatus(task, "TESTING");
+    await this.logEvent(task, "TESTED", "runner");
+
+      task.attemptCount++;
+
+      if (task.attemptCount >= task.maxAttempts) {
+        throw {
+          code: "MAX_ATTEMPTS_EXCEEDED",
+          message: `Máximo de tentativas (${task.maxAttempts}) atingido`,
+          taskId: task.id,
+          recoverable: false,
+        } as OrchestratorError;
+        task,
+        `Máximo de tentativas (${task.maxAttempts}) atingido`,
+      );
+   * Step 4: Fix (quando testes falham)
+   */
+  private async runFix(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.TESTS_FAILED);
+    this.validateRequiredFields(task, ["branchName", "lastError"]);
+
+    task = this.updateStatus(task, "FIXING");
+    await this.logEvent(task, "FIXED", "fixer");
+
+   * Step 5: Review
+   */
+  private async runReview(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.TESTS_PASSED);
+    this.validateRequiredFields(task, ["branchName", "currentDiff"]);
+
+    task = this.updateStatus(task, "REVIEWING");
+    await this.logEvent(task, "REVIEWED", "reviewer");
+
+      task.attemptCount++;
+
+      if (task.attemptCount >= task.maxAttempts) {
+        throw {
+          code: "MAX_ATTEMPTS_EXCEEDED",
+          message: `Máximo de tentativas (${task.maxAttempts}) atingido após review`,
+          taskId: task.id,
+          recoverable: false,
+        } as OrchestratorError;
+        task,
+        `Máximo de tentativas (${task.maxAttempts}) atingido após review`,
+      );
+    return task;
+  }
+
+  private failTask(task: Task, error: string | OrchestratorError): Task {
+    const orchestratorError: OrchestratorError = typeof error === 'string' ? {
+      code: "UNKNOWN_ERROR",
+      message: error,
+      taskId: task.id,
+      recoverable: false,
+      stack: error instanceof Error ? error.stack : undefined
+    } : error;
+
+    task.status = "FAILED";
+    task.lastError = orchestratorError.message;
+    task.updatedAt = new Date();
+    console.error(`Task ${task.id} failed: ${orchestratorError.message}`);
+
+    // Optional GitHub comment on failure
+    if (process.env.COMMENT_ON_FAILURE === "true") {
+      this.github.addComment(task.githubRepo, task.githubIssueNumber, `❌ Task failed: ${orchestratorError.message}`).catch(err => console.error("Failed to comment on GitHub:", err));
+    }
+
+    return task;
+  }
+
+++ b/.env.example
+
+FLY_API_KEY=
+
+# Optional: Comment on GitHub issue when task fails
+COMMENT_ON_FAILURE=false
       task.branchName = `auto/${task.githubIssueNumber}-${this.slugify(task.githubIssueTitle)}`;
       await this.github.createBranch(task.githubRepo, task.branchName);
     }
