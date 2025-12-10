@@ -1,52 +1,17 @@
 import { z } from "zod";
 
 // ============================================
-// Orchestrator Error
+// Error Types
 // ============================================
-
-export class OrchestratorError extends Error {
-  code: string;
-  taskId: string;
-  recoverable: boolean;
-
-  constructor(
-    code: string,
-    message: string,
-    taskId: string,
-    recoverable: boolean = false
-  ) {
-    super(message);
-    this.name = "OrchestratorError";
-    this.code = code;
-    this.taskId = taskId;
-    this.recoverable = recoverable;
-
-    // Ensure proper stack trace
-    if (Error.captureStackTrace) {
-      Error.captureStackTrace(this, OrchestratorError);
-    }
-  }
-}
-
-// ============================================
-// Task Status & State Machine
-// ============================================
-
-export const ErrorCode = {
-  INVALID_STATUS: "INVALID_STATUS",
-  MISSING_FIELD: "MISSING_FIELD", 
-  VALIDATION_FAILED: "VALIDATION_FAILED"
-} as const;
 
 export class OrchestratorError extends Error {
   constructor(
     public code: string,
     message: string,
     public taskId: string,
-    public recoverable: boolean = false
+    public recoverable: boolean = false,
   ) {
     super(message);
-    this.name = "OrchestratorError";
   }
 }
 
@@ -54,14 +19,113 @@ export class OrchestratorError extends Error {
 // Task Status & State Machine
 // ============================================
 ++ b/src/core/orchestrator.ts
-  Task,
   TaskStatus,
   TaskEvent,
-  OrchestratorError,
-  ErrorCode,
   defaultConfig,
+  OrchestratorError,
   type AutoDevConfig,
 } from "./types";
+import { transition, getNextAction, isTerminal } from "./state-machine";
+import { ConsensusEngine, formatConsensusForComment } from "./consensus";
+
+export class Orchestrator {
+  private validateTaskStatus(task: Task, expectedStatus: TaskStatus) {
+    if (task.status !== expectedStatus) {
+      throw new OrchestratorError(
+        "INVALID_STATUS",
+        `Task ${task.id} has invalid status ${task.status}, expected ${expectedStatus}`,
+        task.id
+      );
+    }
+  }
+
+  private validateRequiredFields(task: Task, fields: string[]) {
+    for (const field of fields) {
+      if (!(field in task) || !task[field as keyof Task]) {
+        throw new OrchestratorError(
+          "MISSING_FIELD",
+          `Task ${task.id} is missing required field: ${field}`,
+          task.id
+        );
+      }
+    }
+  }
+
+  private config: AutoDevConfig;
+  private multiAgentConfig: MultiAgentConfig;
+  private github: GitHubClient;
+   * Step 1: Planning
+   */
+  private async runPlanning(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.NEW);
+    task = this.updateStatus(task, "PLANNING");
+    await this.logEvent(task, "PLANNED", "planner");
+
+   * Step 2: Coding
+   */
+  private async runCoding(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.PLANNING_DONE);
+    this.validateRequiredFields(task, ["definitionOfDone", "plan", "targetFiles"]);
+    task = this.updateStatus(task, "CODING");
+    await this.logEvent(task, "CODED", "coder");
+
+   * Step 3: Testing (via GitHub Actions)
+   */
+  private async runTests(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.CODING_DONE);
+    this.validateRequiredFields(task, ["branchName"]);
+    task = this.updateStatus(task, "TESTING");
+    await this.logEvent(task, "TESTED", "runner");
+
+   * Step 4: Fix (quando testes falham)
+   */
+  private async runFix(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.TESTS_FAILED);
+    this.validateRequiredFields(task, ["lastError", "branchName"]);
+    task = this.updateStatus(task, "FIXING");
+    await this.logEvent(task, "FIXED", "fixer");
+
+   * Step 5: Review
+   */
+  private async runReview(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.TESTS_PASSED);
+    this.validateRequiredFields(task, ["branchName", "currentDiff"]);
+    task = this.updateStatus(task, "REVIEWING");
+    await this.logEvent(task, "REVIEWED", "reviewer");
+
+  }
+
+  private failTask(task: Task, reason: string): Task {
+    const error = reason instanceof OrchestratorError ? reason : new OrchestratorError(
+      "TASK_FAILED",
+      reason,
+      task.id
+    );
+
+    task.status = "FAILED";
+    task.lastError = `${error.code}: ${error.message}${error.stack ? `\n${error.stack}` : ''}`;
+    task.updatedAt = new Date();
+    console.error(`Task ${task.id} failed:`, error);
+
+    // Add GitHub comment if enabled
+    if (process.env.COMMENT_ON_FAILURE === 'true') {
+      this.github.addComment(
+        task.githubRepo,
+        task.githubIssueNumber,
+        `❌ AutoDev failed to process this issue\n\nError: ${error.message}${error.recoverable ? '\n\nThis error may be recoverable - retrying...' : ''}`
+      ).catch(e => console.error('Failed to add GitHub comment:', e));
+    }
+
+    return task;
+  }
+
+++ b/.env.example
+MAX_DIFF_LINES=300
+ALLOWED_REPOS=owner/repo1,owner/repo2
+
+COMMENT_ON_FAILURE=false
+FLY_API_KEY=
+
     }
   }
 
