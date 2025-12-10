@@ -3,14 +3,8 @@ import { z } from "zod";
 // ============================================
 // Error Types
 // ============================================
-
 export class OrchestratorError extends Error {
-  constructor(
-    public code: string,
-    message: string,
-    public taskId: string,
-    public recoverable: boolean = false
-  ) {
+  constructor(public code: string, message: string, public taskId: string, public recoverable: boolean = false) {
     super(message);
   }
 }
@@ -19,21 +13,31 @@ export class OrchestratorError extends Error {
 // Task Status & State Machine
 // ============================================
 ++ b/src/core/orchestrator.ts
+import {
+  Task,
   TaskStatus,
+  OrchestratorError,
   TaskEvent,
   defaultConfig,
-  OrchestratorError,
   type AutoDevConfig,
-} from "./types";
-import { transition, getNextAction, isTerminal } from "./state-machine";
+  MultiAgentConfig,
+  MultiAgentMetadata,
+  loadMultiAgentConfig,
+} from "./multi-agent-types";
+import { MultiCoderRunner, MultiFixerRunner } from "./multi-runner";
 import { ConsensusEngine, formatConsensusForComment } from "./consensus";
+import { env } from "process";
 
 export class Orchestrator {
+  private config: AutoDevConfig;
+    }
+  }
+
   private validateTaskStatus(task: Task, expectedStatus: TaskStatus) {
     if (task.status !== expectedStatus) {
       throw new OrchestratorError(
         "INVALID_STATUS",
-        `Task ${task.id} has invalid status ${task.status}, expected ${expectedStatus}`,
+        `Task status must be ${expectedStatus}, but was ${task.status}`,
         task.id
       );
     }
@@ -44,32 +48,93 @@ export class Orchestrator {
       if (!(field in task) || !task[field as keyof Task]) {
         throw new OrchestratorError(
           "MISSING_FIELD",
-          `Task ${task.id} is missing required field: ${field}`,
+          `Required field '${field}' is missing or empty`,
           task.id
         );
       }
     }
   }
 
-  private config: AutoDevConfig;
-  private multiAgentConfig: MultiAgentConfig;
-  private github: GitHubClient;
+  /**
    * Step 1: Planning
    */
   private async runPlanning(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, TaskStatus.NEW);
+    this.validateTaskStatus(task, "NEW");
+
     task = this.updateStatus(task, "PLANNING");
     await this.logEvent(task, "PLANNED", "planner");
 
    * Step 2: Coding
    */
   private async runCoding(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, TaskStatus.PLANNING_DONE);
-    this.validateRequiredFields(task, ["definitionOfDone", "plan", "targetFiles"]);
+    this.validateTaskStatus(task, "PLANNING_DONE");
+    this.validateRequiredFields(task, ["plan"]);
+
     task = this.updateStatus(task, "CODING");
     await this.logEvent(task, "CODED", "coder");
 
    * Step 3: Testing (via GitHub Actions)
+   */
+  private async runTests(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, "CODING_DONE");
+    this.validateRequiredFields(task, ["branchName"]);
+
+    task = this.updateStatus(task, "TESTING");
+    await this.logEvent(task, "TESTED", "runner");
+
+   * Step 4: Fix (quando testes falham)
+   */
+  private async runFix(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, "TESTS_FAILED");
+    this.validateRequiredFields(task, ["branchName", "lastError"]);
+
+    task = this.updateStatus(task, "FIXING");
+    await this.logEvent(task, "FIXED", "fixer");
+
+   * Step 5: Review
+   */
+  private async runReview(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, "TESTS_PASSED");
+    this.validateRequiredFields(task, ["branchName"]);
+
+    task = this.updateStatus(task, "REVIEWING");
+    await this.logEvent(task, "REVIEWED", "reviewer");
+
+   * Step 6: Open PR
+   */
+  private async openPR(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, "REVIEW_APPROVED");
+    this.validateRequiredFields(task, ["branchName", "prNumber"]);
+
+    const prBody = this.buildPRBody(task);
+
+    const pr = await this.github.createPR(task.githubRepo, {
+    return task;
+  }
+
+  private async failTask(task: Task, error: string | OrchestratorError): Task {
+    const orchestratorError = error instanceof OrchestratorError 
+      ? error
+      : new OrchestratorError("UNKNOWN", error as string, task.id);
+
+    task.status = "FAILED";
+    task.lastError = orchestratorError.message;
+    task.updatedAt = new Date();
+    
+    console.error(`Task ${task.id} failed:`, {
+      code: orchestratorError.code,
+      message: orchestratorError.message,
+      stack: orchestratorError.stack
+    });
+
+    if (env.COMMENT_ON_FAILURE === "true") {
+      await this.github.addComment(task.githubRepo, task.githubIssueNumber,
+        `❌ Task failed: ${orchestratorError.message}`);
+    }
+
+    return task;
+  }
+
    */
   private async runTests(task: Task): Promise<Task> {
     this.validateTaskStatus(task, TaskStatus.CODING_DONE);
