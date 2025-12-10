@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 // ============================================
-// Error Types
+// Task Status & State Machine
 // ============================================
 export class OrchestratorError extends Error {
   constructor(public code: string, message: string, public taskId: string, public recoverable: boolean = false) {
@@ -28,20 +28,98 @@ export class OrchestratorError extends Error {
       throw new OrchestratorError(
         "INVALID_STATUS",
         `Task status must be ${expectedStatus}, but was ${task.status}`,
-        task.id
+export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
+
+// ============================================
+// Orchestrator Error
+// ============================================
+
+export class OrchestratorError extends Error {
+  code: string;
+  taskId: string;
+  recoverable: boolean;
+  originalError?: Error;
+
+  constructor(code: string, message: string, taskId: string, recoverable: boolean, originalError?: Error) {
+    super(message);
+    this.code = code;
+    this.taskId = taskId;
+    this.recoverable = recoverable;
+    this.originalError = originalError;
+  }
+}
+
+// ============================================
+// Task Definition
+// ============================================
+
+++ b/src/core/orchestrator.ts
+import {
+  Task,
+  TaskStatus,
+  OrchestratorError,
+  TaskEvent,
+  defaultConfig,
+  type AutoDevConfig,
+} from "./multi-agent-types";
+import { MultiCoderRunner, MultiFixerRunner } from "./multi-runner";
+import { ConsensusEngine, formatConsensusForComment } from "./consensus";
+import { config } from "dotenv";
+
+export class Orchestrator {
+  private config: AutoDevConfig;
+  // Multi-agent metadata for PR comments
+  private lastCoderConsensus?: string;
+  private lastFixerConsensus?: string;
+  private commentOnFailure: boolean;
+
+  constructor(config: Partial<AutoDevConfig> = {}) {
+    this.config = { ...defaultConfig, ...config };
+    this.reviewer = new ReviewerAgent();
+    this.consensus = new ConsensusEngine();
+
+    this.commentOnFailure = process.env.COMMENT_ON_FAILURE === "true";
+
+    if (this.multiAgentConfig.enabled) {
+      console.log(`[Orchestrator] Multi-agent mode ENABLED`);
+      console.log(
+      }
+    } catch (error) {
+      console.error(`Error processing task ${task.id}:`, error);
+      return await this.failTask(
+        task,
+        error instanceof Error ? error.message : "Unknown error",
+      );
+  }
+
+  /**
+   * Validation helpers
+   */
+  private validateTaskStatus(task: Task, expectedStatus: TaskStatus): void {
+    if (task.status !== expectedStatus) {
+      throw new OrchestratorError(
+        "INVALID_STATUS",
+        `Task ${task.id} is in status ${task.status}, expected ${expectedStatus}. Cannot proceed.`,
+        task.id,
+        false
       );
     }
   }
 
-  private validateRequiredFields(task: Task, fields: string[]) {
+  private validateRequiredFields(task: Task, fields: string[]): void {
+    const missingFields: string[] = [];
     for (const field of fields) {
-      if (!(field in task) || !task[field as keyof Task]) {
-        throw new OrchestratorError(
-          "MISSING_FIELD",
-          `Required field '${field}' is missing or empty`,
-          task.id
-        );
+      if (!(task as any)[field]) {
+        missingFields.push(field);
       }
+    }
+    if (missingFields.length > 0) {
+      throw new OrchestratorError(
+        "MISSING_REQUIRED_FIELDS",
+        `Task ${task.id} is missing required fields: ${missingFields.join(", ")}. Cannot proceed.`,
+        task.id,
+        false
+      );
     }
   }
 
@@ -54,6 +132,13 @@ export class OrchestratorError extends Error {
     task = this.updateStatus(task, "PLANNING");
     await this.logEvent(task, "PLANNED", "planner");
 
+    if (
+      plannerOutput.estimatedComplexity === "L" ||
+      plannerOutput.estimatedComplexity === "XL"
+    ) {
+      return this.failTask(
+        task,
+        `Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`,
    * Step 2: Coding
    */
   private async runCoding(task: Task): Promise<Task> {
@@ -76,7 +161,7 @@ export class OrchestratorError extends Error {
    */
   private async runFix(task: Task): Promise<Task> {
     this.validateTaskStatus(task, "TESTS_FAILED");
-    this.validateRequiredFields(task, ["branchName", "lastError"]);
+    this.validateRequiredFields(task, ["lastError"]);
 
     task = this.updateStatus(task, "FIXING");
     await this.logEvent(task, "FIXED", "fixer");
@@ -94,7 +179,7 @@ export class OrchestratorError extends Error {
    */
   private async openPR(task: Task): Promise<Task> {
     this.validateTaskStatus(task, "REVIEW_APPROVED");
-    this.validateRequiredFields(task, ["branchName"]);
+    this.validateRequiredFields(task, ["prNumber"]);
 
     const prBody = this.buildPRBody(task);
 
@@ -102,34 +187,40 @@ export class OrchestratorError extends Error {
     return task;
   }
 
-  private async failTask(task: Task, error: string | OrchestratorError): Task {
-    const orchestratorError = error instanceof OrchestratorError 
-      ? error
-      : new OrchestratorError("UNKNOWN", error as string, task.id);
-
+  private async failTask(task: Task, reason: string, originalError?: Error): Promise<Task> {
     task.status = "FAILED";
-    task.lastError = orchestratorError.message;
+    task.lastError = originalError?.stack ? `${reason}\n\nStack trace:\n${originalError.stack}` : reason;
     task.updatedAt = new Date();
-    
-    console.error(`Task ${task.id} failed:`, {
-      code: orchestratorError.code,
-      message: orchestratorError.message,
-      stack: orchestratorError.stack
-    });
+    console.error(`Task ${task.id} failed: ${reason}`);
 
-    if (process.env.COMMENT_ON_FAILURE === "true") {
-      await this.github.addComment(task.githubRepo, task.githubIssueNumber,
-        `❌ Task failed: ${orchestratorError.message}`);
+    // Post GitHub comment if enabled
+    if (this.commentOnFailure) {
+      try {
+        await this.github.addComment(
+          task.githubRepo,
+          task.githubIssueNumber,
+          `❌ AutoDev failed to process this issue:\n\n**Error:** ${reason}\n\nTask ID: ${task.id}\nAttempts: ${task.attemptCount}/${task.maxAttempts}`
+        );
+        console.log(`[Orchestrator] Posted failure comment to issue #${task.githubIssueNumber}`);
+      } catch (error) {
+        console.error(`[Orchestrator] Failed to post failure comment:`, error);
+      }
     }
 
+    await this.logEvent(task, "FAILED", "orchestrator");
     return task;
   }
 
-++ b/src/core/__tests__/orchestrator.test.ts
-import { Orchestrator } from "../orchestrator";
-import { Task, TaskStatus, OrchestratorError } from "../types";
+  private async logEvent(
+    task: Task,
+    eventType: TaskEvent["eventType"],
+++ b/.env.example
+MAX_DIFF_LINES=300
+ALLOWED_REPOS=owner/repo1,owner/repo2
 
-describe("Orchestrator validation", () => {
+FLY_API_KEY=
+
+COMMENT_ON_FAILURE=false
   let orchestrator: Orchestrator;
   let mockTask: Task;
 
