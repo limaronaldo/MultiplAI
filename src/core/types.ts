@@ -1,24 +1,30 @@
 import { z } from "zod";
 
 // ============================================
-// Error Types
+// Orchestrator Error
 // ============================================
 
-export const ErrorCode = {
-  INVALID_STATUS: "INVALID_STATUS",
-  MISSING_FIELD: "MISSING_FIELD",
-  VALIDATION_FAILED: "VALIDATION_FAILED"
-} as const;
-
 export class OrchestratorError extends Error {
+  code: string;
+  taskId: string;
+  recoverable: boolean;
+
   constructor(
-    public code: keyof typeof ErrorCode,
+    code: string,
     message: string,
-    public taskId: string,
-    public recoverable: boolean = false
+    taskId: string,
+    recoverable: boolean = false
   ) {
     super(message);
     this.name = "OrchestratorError";
+    this.code = code;
+    this.taskId = taskId;
+    this.recoverable = recoverable;
+
+    // Ensure proper stack trace
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, OrchestratorError);
+    }
   }
 }
 
@@ -26,59 +32,145 @@ export class OrchestratorError extends Error {
 // Task Status & State Machine
 // ============================================
 ++ b/src/core/orchestrator.ts
+import {
   Task,
   TaskStatus,
   TaskEvent,
-  OrchestratorError,
-  ErrorCode,
   defaultConfig,
+import {
+  Task,
+  TaskStatus,
+  TaskEvent,
+  defaultConfig,
+  OrchestratorError,
   type AutoDevConfig,
 } from "./types";
+import { transition, getNextAction, isTerminal } from "./state-machine";
     }
   }
 
-  /**
-   * Validates task status matches expected status
-   */
-  private validateTaskStatus(task: Task, expectedStatus: TaskStatus) {
+  // ============================================
+  // Validation Helpers
+  // ============================================
+
+  private validateTaskStatus(task: Task, expectedStatus: TaskStatus): void {
     if (task.status !== expectedStatus) {
       throw new OrchestratorError(
         "INVALID_STATUS",
-        `Task ${task.id} has invalid status ${task.status}. Expected ${expectedStatus}`,
-        task.id
+        `Task status is '${task.status}', expected '${expectedStatus}' to proceed.',
+        task.id,
+        true
       );
+    }
+  }
+
+  private validateRequiredFields(task: Task, fields: (keyof Task)[]): void {
+    for (const field of fields) {
+      if (!task[field]) {
+        throw new OrchestratorError(
+          "MISSING_FIELD",
+          `Required field '${field}' is missing from task.',
+          task.id,
+          false
+        );
+      }
     }
   }
 
   /**
-   * Validates required fields exist on task
+   * Processa uma task baseado no estado atual
    */
-  private validateRequiredFields(task: Task, fields: (keyof Task)[]) {
-    const missingFields = fields.filter(field => {
-      const value = task[field];
-      return value === undefined || value === null || value === "";
-    });
-
-    if (missingFields.length > 0) {
-      throw new OrchestratorError(
-        "MISSING_FIELD",
-        `Task ${task.id} is missing required fields: ${missingFields.join(", ")}`,
-        task.id
-      );
-    }
-  }
-
+  async process(task: Task): Promise<Task> {
   /**
    * Step 1: Planning
    */
   private async runPlanning(task: Task): Promise<Task> {
     this.validateTaskStatus(task, TaskStatus.NEW);
+    this.validateRequiredFields(task, []); // No specific fields required for planning
 
     task = this.updateStatus(task, "PLANNING");
     await this.logEvent(task, "PLANNED", "planner");
 
+  /**
    * Step 2: Coding
    */
+  private async runCoding(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.PLANNING_DONE);
+    this.validateRequiredFields(task, ["definitionOfDone", "plan", "targetFiles"]);
+
+    task = this.updateStatus(task, "CODING");
+    await this.logEvent(task, "CODED", "coder");
+
+  /**
+   * Step 3: Testing (via GitHub Actions)
+   */
+  private async runTests(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.CODING_DONE);
+    this.validateRequiredFields(task, ["branchName"]);
+
+    task = this.updateStatus(task, "TESTING");
+    await this.logEvent(task, "TESTED", "runner");
+
+  /**
+   * Step 4: Fix (quando testes falham)
+   */
+  private async runFix(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.TESTS_FAILED);
+    this.validateRequiredFields(task, ["lastError"]);
+
+    task = this.updateStatus(task, "FIXING");
+    await this.logEvent(task, "FIXED", "fixer");
+
+  /**
+   * Step 5: Review
+   */
+  private async runReview(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.TESTS_PASSED);
+    this.validateRequiredFields(task, ["currentDiff"]);
+
+    task = this.updateStatus(task, "REVIEWING");
+    await this.logEvent(task, "REVIEWED", "reviewer");
+
+  private failTask(task: Task, reason: string): Task {
+    task.status = "FAILED";
+    task.lastError = reason;
+    task.updatedAt = new Date();
+    console.error(`Task ${task.id} failed: ${reason}`);
+    return task;
+  }
+  private failTask(task: Task, error: OrchestratorError): Task {
+    task.status = "FAILED";
+    task.lastError = `${error.code}: ${error.message}`;
+    task.updatedAt = new Date();
+    console.error(`Task ${task.id} failed: ${error.message}`, error.stack);
+
+    // Optional GitHub comment on failure
+    if (process.env.COMMENT_ON_FAILURE === "true") {
+      this.github.addComment(
+        task.githubRepo,
+        task.githubIssueNumber,
+        `❌ AutoDev failed: ${error.message}\n\nStack trace: ${error.stack}`
+      ).catch(err => console.error("Failed to comment on GitHub:", err));
+    }
+
+    return task;
+  }
+
+  private async logEvent(
+    task: Task,
+    eventType: TaskEvent["eventType"],
+    agent?: string,
+  ) {
+++ b/.env.example
+# Configurações do sistema
+MAX_ATTEMPTS=3
+MAX_DIFF_LINES=300
+ALLOWED_REPOS=owner/repo1,owner/repo2
+
+FLY_API_KEY=
+
+# Optional: Comment on GitHub issue when task fails
+COMMENT_ON_FAILURE=false
   private async runCoding(task: Task): Promise<Task> {
     this.validateTaskStatus(task, TaskStatus.PLANNING_DONE);
     this.validateRequiredFields(task, ["plan"]);
