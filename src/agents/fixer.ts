@@ -34,9 +34,9 @@ Respond ONLY with valid JSON:
 
 export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
   constructor() {
-    // Use Opus 4.5 for better debugging and fix quality
+    // Using GLM-4.6V via OpenRouter for performance testing
     super({
-      model: "claude-opus-4-5-20251101",
+      model: "z-ai/glm-4.6v",
       maxTokens: 8192,
       temperature: 0.2,
     });
