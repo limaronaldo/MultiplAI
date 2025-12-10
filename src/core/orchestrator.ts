@@ -22,8 +22,10 @@ import {
 import { MultiCoderRunner, MultiFixerRunner } from "./multi-runner";
 import { ConsensusEngine, formatConsensusForComment } from "./consensus";
 import { createTaskLogger, createSystemLogger, Logger } from "./logger";
+import { validateDiff, quickValidateDiff, DiffFile } from "./diff-validator";
 
 const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
+const VALIDATE_DIFF = process.env.VALIDATE_DIFF !== "false"; // Default to true
 
 export class Orchestrator {
   private config: AutoDevConfig;
@@ -239,13 +241,26 @@ export class Orchestrator {
     task.currentDiff = coderOutput.diff;
     task.commitMessage = coderOutput.commitMessage;
 
-    // Aplica o diff no GitHub
-    await this.github.applyDiff(
-      task.githubRepo,
-      task.branchName,
-      coderOutput.diff,
-      coderOutput.commitMessage,
-    );
+    // Validate diff before applying
+    if (VALIDATE_DIFF) {
+      const validationResult = await this.validateAndApplyDiff(
+        task,
+        coderOutput.diff,
+        coderOutput.commitMessage,
+        logger,
+      );
+      if (!validationResult.success) {
+        return validationResult.task;
+      }
+    } else {
+      // Skip validation, apply directly
+      await this.github.applyDiff(
+        task.githubRepo,
+        task.branchName!,
+        coderOutput.diff,
+        coderOutput.commitMessage,
+      );
+    }
 
     return this.updateStatus(task, "CODING_DONE");
   }
@@ -360,12 +375,25 @@ export class Orchestrator {
     task.currentDiff = fixerOutput.diff;
     task.commitMessage = fixerOutput.commitMessage;
 
-    await this.github.applyDiff(
-      task.githubRepo,
-      task.branchName!,
-      fixerOutput.diff,
-      fixerOutput.commitMessage,
-    );
+    // Validate diff before applying
+    if (VALIDATE_DIFF) {
+      const validationResult = await this.validateAndApplyDiff(
+        task,
+        fixerOutput.diff,
+        fixerOutput.commitMessage,
+        logger,
+      );
+      if (!validationResult.success) {
+        return validationResult.task;
+      }
+    } else {
+      await this.github.applyDiff(
+        task.githubRepo,
+        task.branchName!,
+        fixerOutput.diff,
+        fixerOutput.commitMessage,
+      );
+    }
 
     return this.updateStatus(task, "CODING_DONE");
   }
@@ -541,6 +569,98 @@ export class Orchestrator {
       "taskId" in error &&
       "recoverable" in error
     );
+  }
+
+  /**
+   * Validate diff and apply if valid
+   * Returns success: false if validation fails (task will be failed)
+   */
+  private async validateAndApplyDiff(
+    task: Task,
+    diff: string,
+    commitMessage: string,
+    logger: Logger,
+  ): Promise<{ success: boolean; task: Task }> {
+    // Quick validation first (no network, fast)
+    const quickResult = quickValidateDiff(diff);
+
+    if (!quickResult.valid) {
+      logger.error(`Diff validation failed: ${quickResult.errors.join(", ")}`);
+      const failedTask = await this.failTask(
+        task,
+        createOrchestratorError(
+          "INVALID_DIFF",
+          `Diff validation failed: ${quickResult.errors.join("; ")}`,
+          task.id,
+          true, // Recoverable - can retry with fix
+        ),
+      );
+      return { success: false, task: failedTask };
+    }
+
+    // Log warnings
+    for (const warning of quickResult.warnings) {
+      logger.warn(`Diff warning: ${warning}`);
+    }
+
+    // Full validation with typecheck (clones repo, runs tsc)
+    try {
+      logger.info("Running full diff validation with typecheck...");
+
+      // Get the parsed files from GitHub client
+      const files = await this.github.parseDiffToFiles(
+        task.githubRepo,
+        task.branchName!,
+        diff,
+      );
+
+      const fullResult = await validateDiff(
+        task.githubRepo,
+        task.branchName!,
+        diff,
+        files,
+      );
+
+      if (!fullResult.valid) {
+        logger.error(`Typecheck failed: ${fullResult.errors.join(", ")}`);
+
+        // Store errors for fixer to use
+        task.lastError = `Typecheck errors:\n${fullResult.errors.join("\n")}`;
+
+        const failedTask = await this.failTask(
+          task,
+          createOrchestratorError(
+            "TYPECHECK_FAILED",
+            `Code does not compile: ${fullResult.errors.slice(0, 3).join("; ")}`,
+            task.id,
+            true, // Recoverable
+          ),
+        );
+        return { success: false, task: failedTask };
+      }
+
+      // Log warnings from full validation
+      for (const warning of fullResult.warnings) {
+        logger.warn(`Validation warning: ${warning}`);
+      }
+
+      logger.info("Diff validation passed, applying changes...");
+    } catch (validationError) {
+      // If validation itself fails, log warning but proceed
+      logger.warn(
+        `Could not run full validation: ${validationError instanceof Error ? validationError.message : "Unknown error"}`,
+      );
+    }
+
+    // Apply the validated diff
+    await this.github.applyDiff(
+      task.githubRepo,
+      task.branchName!,
+      diff,
+      commitMessage,
+    );
+
+    return { success: true, task };
   }
 
   private async failTask(task: Task, error: OrchestratorError): Promise<Task> {

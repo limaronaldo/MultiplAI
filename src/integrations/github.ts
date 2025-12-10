@@ -307,6 +307,17 @@ export class GitHubClient {
   }
 
   /**
+   * Parse diff and return file changes (public wrapper for validation)
+   */
+  async parseDiffToFiles(
+    fullName: string,
+    branch: string,
+    diff: string,
+  ): Promise<Array<{ path: string; content: string; deleted: boolean }>> {
+    return this.parseDiffWithContent(fullName, branch, diff);
+  }
+
+  /**
    * Parse unified diff and apply changes to get final file contents
    */
   private async parseDiffWithContent(
