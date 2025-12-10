@@ -5,6 +5,7 @@
  */
 import { Orchestrator } from "../src/core/orchestrator";
 import { Task } from "../src/core/types";
+import { db } from "../src/integrations/db";
 import { Octokit } from "octokit";
 
 const ISSUE_NUMBER = parseInt(process.argv[2] || "2");
@@ -30,31 +31,39 @@ async function main() {
   );
   console.log(`Body preview: ${issue.body?.slice(0, 200)}...`);
 
-  // Create task
-  const task: Task = {
-    id: crypto.randomUUID(),
-    githubRepo: REPO,
-    githubIssueNumber: ISSUE_NUMBER,
-    githubIssueTitle: issue.title,
-    githubIssueBody: issue.body || "",
-    status: "NEW",
-    attemptCount: 0,
-    maxAttempts: 3,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
+  // Check if task already exists for this issue
+  let task = await db.getTaskByIssue(REPO, ISSUE_NUMBER);
 
-  console.log(`\nTask ID: ${task.id}`);
+  if (task) {
+    console.log(`\nFound existing task: ${task.id} (status: ${task.status})`);
+  } else {
+    // Create task in database
+    task = await db.createTask({
+      githubRepo: REPO,
+      githubIssueNumber: ISSUE_NUMBER,
+      githubIssueTitle: issue.title,
+      githubIssueBody: issue.body || "",
+      status: "NEW",
+      attemptCount: 0,
+      maxAttempts: 3,
+    });
+    console.log(`\nCreated new task: ${task.id}`);
+  }
+
+  console.log(`Task ID: ${task.id}`);
   console.log(`Starting orchestrator...\n`);
 
   // Process until terminal state
   const orchestrator = new Orchestrator();
   let result = task;
-  const terminalStates = ["WAITING_HUMAN", "FAILED", "PR_CREATED"];
+  const terminalStates = ["WAITING_HUMAN", "FAILED", "PR_CREATED", "COMPLETED"];
 
   while (!terminalStates.includes(result.status)) {
     console.log(`[Step] Status: ${result.status}`);
     result = await orchestrator.process(result);
+
+    // Persist task state to database
+    await db.updateTask(result.id, result);
 
     // Safety: max 10 iterations
     if (result.attemptCount > 10) {
