@@ -1,15 +1,10 @@
 import { z } from "zod";
 
 // ============================================
-// Errors
+// Error Types
 // ============================================
 export class OrchestratorError extends Error {
-  constructor(
-    message: string,
-    public code: string,
-    public taskId: string,
-    public recoverable: boolean = true
-  ) {
+  constructor(public code: string, message: string, public taskId: string, public recoverable: boolean = false) {
     super(message);
   }
 }
@@ -18,49 +13,183 @@ export class OrchestratorError extends Error {
 // Task Status & State Machine
 // ============================================
 ++ b/src/core/orchestrator.ts
+import {
   Task,
   TaskStatus,
-  TaskEvent,
   OrchestratorError,
+  TaskEvent,
   defaultConfig,
   type AutoDevConfig,
-} from "./types";
-} from "./multi-agent-types";
-import { MultiCoderRunner, MultiFixerRunner } from "./multi-runner";
-import { ConsensusEngine, formatConsensusForComment } from "./consensus";
-
-// Validation helpers
-function validateTaskStatus(task: Task, expectedStatus: TaskStatus) {
-  if (task.status !== expectedStatus) {
-    throw new OrchestratorError(
-      `Invalid task status: ${task.status}, expected: ${expectedStatus}`,
-      "INVALID_STATUS",
-      task.id
-    );
+    }
   }
-}
 
-function validateRequiredFields(task: Task, fields: Array<keyof Task>) {
-  for (const field of fields) {
-    if (!(field in task) || !task[field]) {
+  private validateTaskStatus(task: Task, expectedStatus: TaskStatus) {
+    if (task.status !== expectedStatus) {
       throw new OrchestratorError(
-        `Missing required field: ${field}`,
-        "MISSING_FIELD",
+        "INVALID_STATUS",
+        `Task status must be ${expectedStatus}, but was ${task.status}`,
         task.id
       );
     }
   }
-}
 
-async function postGitHubComment(github: GitHubClient, task: Task, error: Error) {
-  if (process.env.COMMENT_ON_FAILURE === "true") {
-    const comment = `🚨 AutoDev encountered an error:\n\n\`\`\`\n${error.message}\n\`\`\`\n\nStack trace:\n\`\`\`\n${error.stack}\n\`\`\``;
-    try {
-      await github.addComment(task.githubRepo, task.githubIssueNumber, comment);
-    } catch (e) {
-      console.error("Failed to post error comment to GitHub:", e);
+  private validateRequiredFields(task: Task, fields: string[]) {
+    for (const field of fields) {
+      if (!(field in task) || !task[field as keyof Task]) {
+        throw new OrchestratorError(
+          "MISSING_FIELD",
+          `Required field '${field}' is missing or empty`,
+          task.id
+        );
+      }
     }
   }
+
+  /**
+   * Step 1: Planning
+   */
+  private async runPlanning(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.NEW);
+
+    task = this.updateStatus(task, "PLANNING");
+    await this.logEvent(task, "PLANNED", "planner");
+
+   * Step 2: Coding
+   */
+  private async runCoding(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.PLANNING_DONE);
+    this.validateRequiredFields(task, ["plan"]);
+
+    task = this.updateStatus(task, "CODING");
+    await this.logEvent(task, "CODED", "coder");
+
+   * Step 3: Testing (via GitHub Actions)
+   */
+  private async runTests(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.CODING_DONE);
+    this.validateRequiredFields(task, ["branchName"]);
+
+    task = this.updateStatus(task, "TESTING");
+    await this.logEvent(task, "TESTED", "runner");
+
+   * Step 4: Fix (quando testes falham)
+   */
+  private async runFix(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.TESTS_FAILED);
+    this.validateRequiredFields(task, ["branchName", "lastError"]);
+
+    task = this.updateStatus(task, "FIXING");
+    await this.logEvent(task, "FIXED", "fixer");
+
+   * Step 5: Review
+   */
+  private async runReview(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.TESTS_PASSED);
+    this.validateRequiredFields(task, ["branchName"]);
+
+    task = this.updateStatus(task, "REVIEWING");
+    await this.logEvent(task, "REVIEWED", "reviewer");
+
+   * Step 6: Open PR
+   */
+  private async openPR(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.REVIEW_APPROVED);
+    this.validateRequiredFields(task, ["branchName"]);
+
+    const prBody = this.buildPRBody(task);
+
+    const pr = await this.github.createPR(task.githubRepo, {
+    return task;
+  }
+
+  private async failTask(task: Task, error: string | OrchestratorError): Task {
+    const orchestratorError = error instanceof OrchestratorError 
+      ? error
+      : new OrchestratorError("UNKNOWN", error as string, task.id);
+
+    task.status = "FAILED";
+    task.lastError = orchestratorError.message;
+    task.updatedAt = new Date();
+    
+    console.error(`Task ${task.id} failed:`, {
+      code: orchestratorError.code,
+      message: orchestratorError.message,
+      stack: orchestratorError.stack
+    });
+
+    if (process.env.COMMENT_ON_FAILURE === "true") {
+      await this.github.addComment(task.githubRepo, task.githubIssueNumber,
+        `❌ Task failed: ${orchestratorError.message}`);
+    }
+
+    return task;
+  }
+++ b/src/core/__tests__/orchestrator.test.ts
+import { Orchestrator } from "../orchestrator";
+import { Task, TaskStatus, OrchestratorError } from "../types";
+
+describe("Orchestrator validation", () => {
+  let orchestrator: Orchestrator;
+  let mockTask: Task;
+
+  beforeEach(() => {
+    orchestrator = new Orchestrator();
+    mockTask = {
+      id: "test-123",
+      githubRepo: "test/repo",
+      githubIssueNumber: 1,
+      githubIssueTitle: "Test Issue",
+      githubIssueBody: "Test body",
+      status: TaskStatus.NEW,
+      attemptCount: 0,
+      maxAttempts: 3,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+  });
+
+  describe("runPlanning", () => {
+    it("should throw OrchestratorError if status is not NEW", async () => {
+      mockTask.status = TaskStatus.CODING;
+      
+      await expect(orchestrator.process(mockTask)).rejects.toThrow(
+        new OrchestratorError(
+          "INVALID_STATUS",
+          "Task status must be NEW, but was CODING",
+          mockTask.id
+        )
+      );
+    });
+  });
+
+  describe("runCoding", () => {
+    it("should throw OrchestratorError if plan is missing", async () => {
+      mockTask.status = TaskStatus.PLANNING_DONE;
+      
+      await expect(orchestrator.process(mockTask)).rejects.toThrow(
+        new OrchestratorError(
+          "MISSING_FIELD", 
+          "Required field 'plan' is missing or empty",
+          mockTask.id
+        )
+      );
+    });
+  });
+
+  describe("runTests", () => {
+    it("should throw OrchestratorError if branchName is missing", async () => {
+      mockTask.status = TaskStatus.CODING_DONE;
+      
+      await expect(orchestrator.process(mockTask)).rejects.toThrow(
+        new OrchestratorError(
+          "MISSING_FIELD",
+          "Required field 'branchName' is missing or empty", 
+          mockTask.id
+        )
+      );
+    });
+  });
+});
 }
 
 export class Orchestrator {
