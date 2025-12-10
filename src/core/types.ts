@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 // ============================================
-// Error Types
+// Task Status & State Machine
 // ============================================
 
 export const ErrorCode = {
@@ -177,9 +177,36 @@ export class Orchestrator {
     task.updatedAt = new Date();
     return task;
   }
+  autoDevLabel: "auto-dev",
+};
 
-  private async failTask(task: Task, reason: string): Promise<Task> {
-    const error = new Error(reason);
+// ============================================
+// Orchestrator Error
+// ============================================
+
+export class OrchestratorError extends Error {
+  code: string;
+  taskId: string;
+  recoverable: boolean;
+
+  constructor(
+    code: string,
+    message: string,
+    taskId: string,
+    recoverable: boolean = false
+  ) {
+    super(message);
+    this.name = "OrchestratorError";
+    this.code = code;
+    this.taskId = taskId;
+    this.recoverable = recoverable;
+
+    // Ensure proper stack trace
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, OrchestratorError);
+    }
+  }
+}
     const stackTrace = error.stack || "No stack trace available";
     task.status = "FAILED";
     task.lastError = `${reason}\n\nStack Trace:\n${stackTrace}`;
