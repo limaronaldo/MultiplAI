@@ -139,97 +139,6 @@ export class Orchestrator {
       return this.failTask(
         task,
         `Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`,
-   * Step 2: Coding
-   */
-  private async runCoding(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, "PLANNING_DONE");
-    this.validateRequiredFields(task, ["plan"]);
-
-    task = this.updateStatus(task, "CODING");
-    await this.logEvent(task, "CODED", "coder");
-
-   * Step 3: Testing (via GitHub Actions)
-   */
-  private async runTests(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, "CODING_DONE");
-    this.validateRequiredFields(task, ["branchName"]);
-
-    task = this.updateStatus(task, "TESTING");
-    await this.logEvent(task, "TESTED", "runner");
-
-   * Step 4: Fix (quando testes falham)
-   */
-  private async runFix(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, "TESTS_FAILED");
-    this.validateRequiredFields(task, ["lastError"]);
-
-    task = this.updateStatus(task, "FIXING");
-    await this.logEvent(task, "FIXED", "fixer");
-
-   * Step 5: Review
-   */
-  private async runReview(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, "TESTS_PASSED");
-    this.validateRequiredFields(task, ["branchName"]);
-
-    task = this.updateStatus(task, "REVIEWING");
-    await this.logEvent(task, "REVIEWED", "reviewer");
-
-   * Step 6: Open PR
-   */
-  private async openPR(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, "REVIEW_APPROVED");
-    this.validateRequiredFields(task, ["prNumber"]);
-
-    const prBody = this.buildPRBody(task);
-
-    const pr = await this.github.createPR(task.githubRepo, {
-    return task;
-  }
-
-  private async failTask(task: Task, reason: string, originalError?: Error): Promise<Task> {
-    task.status = "FAILED";
-    task.lastError = originalError?.stack ? `${reason}\n\nStack trace:\n${originalError.stack}` : reason;
-    task.updatedAt = new Date();
-    console.error(`Task ${task.id} failed: ${reason}`);
-
-    // Post GitHub comment if enabled
-    if (this.commentOnFailure) {
-      try {
-        await this.github.addComment(
-          task.githubRepo,
-          task.githubIssueNumber,
-          `❌ AutoDev failed to process this issue:\n\n**Error:** ${reason}\n\nTask ID: ${task.id}\nAttempts: ${task.attemptCount}/${task.maxAttempts}`
-        );
-        console.log(`[Orchestrator] Posted failure comment to issue #${task.githubIssueNumber}`);
-      } catch (error) {
-        console.error(`[Orchestrator] Failed to post failure comment:`, error);
-      }
-    }
-
-    await this.logEvent(task, "FAILED", "orchestrator");
-    return task;
-  }
-
-  private async logEvent(
-    task: Task,
-    eventType: TaskEvent["eventType"],
-++ b/.env.example
-MAX_DIFF_LINES=300
-ALLOWED_REPOS=owner/repo1,owner/repo2
-
-FLY_API_KEY=
-
-COMMENT_ON_FAILURE=false
-  let orchestrator: Orchestrator;
-  let mockTask: Task;
-
-  beforeEach(() => {
-    orchestrator = new Orchestrator();
-    mockTask = {
-      id: "test-123",
-      githubRepo: "test/repo",
-      githubIssueNumber: 1,
   allowedPaths: ["src/", "lib/", "tests/", "test/"],
   blockedPaths: [".env", "secrets/", ".github/workflows/"],
   autoDevLabel: "auto-dev",
@@ -240,6 +149,214 @@ COMMENT_ON_FAILURE=false
 // ============================================
 
 export class OrchestratorError extends Error {
+  code: string;
+  taskId: string;
+  recoverable: boolean;
+  originalError?: Error;
+
+  constructor(
+    code: string,
+    message: string,
+    taskId: string,
+    recoverable: boolean,
+    originalError?: Error
+  ) {
+    super(message);
+    this.name = "OrchestratorError";
+    this.code = code;
+    this.taskId = taskId;
+    this.recoverable = recoverable;
+    this.originalError = originalError;
+  }
+}
+++ b/src/core/orchestrator.ts
+  Task,
+  TaskStatus,
+  TaskEvent,
+  defaultConfig, OrchestratorError,
+  type AutoDevConfig,
+} from "./types";
+        default:
+          return task;
+      }
+    } catch (error: unknown) {
+      console.error(`Error processing task ${task.id}:`, error);
+      return this.failTask(task, error);
+    }
+  }
+
+  private async runPlanning(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.NEW);
+
+    task = this.updateStatus(task, "PLANNING");
+    await this.logEvent(task, "PLANNED", "planner");
+  private async runCoding(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.PLANNING_DONE);
+    this.validateRequiredFields(task, ["definitionOfDone", "plan", "targetFiles"]);
+
+    task = this.updateStatus(task, "CODING");
+    await this.logEvent(task, "CODED", "coder");
+  private async runTests(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.CODING_DONE);
+    this.validateRequiredFields(task, ["branchName"]);
+    task = this.updateStatus(task, "TESTING");
+    await this.logEvent(task, "TESTED", "runner");
+  private async runFix(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.TESTS_FAILED);
+    this.validateRequiredFields(task, ["lastError", "branchName"]);
+
+    task = this.updateStatus(task, "FIXING");
+    await this.logEvent(task, "FIXED", "fixer");
+  private async runReview(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.TESTS_PASSED);
+    this.validateRequiredFields(task, ["branchName"]);
+    task = this.updateStatus(task, "REVIEWING");
+    await this.logEvent(task, "REVIEWED", "reviewer");
+  private async openPR(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.REVIEW_APPROVED);
+    this.validateRequiredFields(task, ["branchName"]);
+    const prBody = this.buildPRBody(task);
+  }
+
+  // ============================================
+  // Helpers
+  // ============================================
+
+  private updateStatus(task: Task, status: TaskStatus): Task {
+    return task;
+  }
+
+  private validateTaskStatus(task: Task, expectedStatus: TaskStatus): void {
+    if (task.status !== expectedStatus) {
+      throw new OrchestratorError(
+        "INVALID_STATUS",
+        `Task deve estar em status '${expectedStatus}', mas está em '${task.status}'`,
+        task.id,
+        false
+      );
+    }
+  }
+
+  private validateRequiredFields(task: Task, requiredFields: (keyof Task)[]): void {
+    for (const field of requiredFields) {
+      const value = task[field];
+      let valid = false;
+      if (Array.isArray(value)) {
+        valid = (value as unknown[]).length > 0;
+      } else {
+        valid = !!value;
+      }
+      if (!valid) {
+        throw new OrchestratorError(
+          "MISSING_REQUIRED_DATA",
+          `Task ${task.id}: campo '${String(field)}' ausente ou vazio: ${JSON.stringify(value)}`,
+          task.id,
+          false
+        );
+      }
+    }
+  }
+
+  private failTask(task: Task, error: unknown): Task {
+    task.status = TaskStatus.FAILED;
+    let errorDetails: string;
+
+    if (typeof error === "string") {
+      errorDetails = error;
+    } else if (error instanceof Error) {
+      errorDetails = error.message;
+      if (error.stack) {
+        errorDetails += `\n\nStack trace:\n${error.stack}`;
+      }
+      if (error.name === "OrchestratorError") {
+        const oe = error as OrchestratorError;
+        errorDetails = `[${oe.code}] ${errorDetails}`;
+        if (oe.originalError) {
+          errorDetails += `\n\nErro original: ${oe.originalError instanceof Error ? oe.originalError.message : String(oe.originalError)}`;
+        }
+      }
+    } else {
+      errorDetails = String(error || "Unknown error");
+    }
+
+    task.lastError = errorDetails;
+    task.updatedAt = new Date();
+    console.error(`Task ${task.id} FAILED: ${errorDetails}`);
+
+    if (process.env.COMMENT_ON_FAILURE === "true") {
+      const comment = `❌ **AutoDev falhou!**\n\n**Detalhes:**\n${errorDetails}\n\n**Status:** FAILED\n**Tentativas:** ${task.attemptCount}/${task.maxAttempts}`;
+      this.github
+        .addComment(task.githubRepo, task.githubIssueNumber, comment)
+        .catch((err) => {
+          console.error(`Failed to post failure comment for task ${task.id}:`, err);
+        });
+    }
+
+    return task;
+  }
+
+    if (
+      plannerOutput.estimatedComplexity === "L" ||
+      plannerOutput.estimatedComplexity === "XL"
+    ) {
+      const complexityErr = new OrchestratorError(
+        "COMPLEXITY_TOO_HIGH",
+        `Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`,
+        task.id,
+        false
+      );
+      return this.failTask(task, complexityErr);
+    }
+
+    return this.updateStatus(task, "PLANNING_DONE");
+  }
+    const diffLines = coderOutput.diff.split("\n").length;
+    if (diffLines > this.config.maxDiffLines) {
+      const diffErr = new OrchestratorError(
+        "DIFF_TOO_LARGE",
+        `Diff muito grande (${diffLines} linhas). Máximo permitido: ${this.config.maxDiffLines}`,
+        task.id,
+        false
+      );
+      return this.failTask(task, diffErr);
+    }
+
+    task.currentDiff = coderOutput.diff;
+    task.commitMessage = coderOutput.commitMessage;
+      task.attemptCount++;
+
+      if (task.attemptCount >= task.maxAttempts) {
+        const attemptsErr = new OrchestratorError(
+          "MAX_ATTEMPTS_REACHED",
+          `Máximo de tentativas (${task.maxAttempts}) atingido`,
+          task.id,
+          false
+        );
+        return this.failTask(task, attemptsErr);
+      }
+
+      return this.updateStatus(task, "TESTS_FAILED");
+    }
+      task.attemptCount++;
+
+      if (task.attemptCount >= task.maxAttempts) {
+        const reviewAttemptsErr = new OrchestratorError(
+          "MAX_ATTEMPTS_REACHED",
+          `Máximo de tentativas (${task.maxAttempts}) atingido após review`,
+          task.id,
+          false
+        );
+        return this.failTask(task, reviewAttemptsErr);
+      }
+
+      return this.updateStatus(task, "REVIEW_REJECTED");
+    }
+++ b/.env.example
+
+FLY_API_KEY=
+
+# Comment on GitHub issue when task fails
+COMMENT_ON_FAILURE=false
   code: string;
   taskId: string;
   recoverable: boolean;
