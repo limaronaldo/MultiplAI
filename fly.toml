@@ -1,7 +1,7 @@
-# fly.toml - Configuração Fly.io para AutoDev
+# fly.toml - Configuração Fly.io para MultiplAI
 # Docs: https://fly.io/docs/reference/configuration/
 
-app = "autodev"
+app = "multiplai"
 primary_region = "gru"  # São Paulo, Brazil 🇧🇷
 
 [build]
