@@ -196,7 +196,8 @@ export const db = {
         input_summary,
         output_summary,
         tokens_used,
-        duration_ms
+        duration_ms,
+        metadata
       ) VALUES (
         ${event.taskId},
         ${event.eventType},
@@ -204,7 +205,8 @@ export const db = {
         ${event.inputSummary || null},
         ${event.outputSummary || null},
         ${event.tokensUsed || null},
-        ${event.durationMs || null}
+        ${event.durationMs || null},
+        ${event.metadata ? JSON.stringify(event.metadata) : null}
       )
       RETURNING *
     `;
@@ -263,6 +265,7 @@ export const db = {
       outputSummary: row.output_summary,
       tokensUsed: row.tokens_used,
       durationMs: row.duration_ms,
+      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
       createdAt: new Date(row.created_at),
     };
   },

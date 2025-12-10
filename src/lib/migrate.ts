@@ -116,6 +116,13 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_jobs_repo ON jobs(github_repo)`;
   console.log("✅ Created jobs table");
 
+  // Add metadata column to task_events (v0.4) - for consensus decisions
+  await sql`
+    ALTER TABLE task_events
+    ADD COLUMN IF NOT EXISTS metadata JSONB
+  `;
+  console.log("✅ Added metadata column to task_events");
+
   console.log("\n✨ Migrations complete!");
 
   await sql.end();
