@@ -86,7 +86,7 @@ Respond ONLY with valid JSON:
 
 export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
   constructor() {
-    // Using GLM-4.6V via OpenRouter for performance testing
+    // GLM-4.6V via OpenRouter - 90x cheaper than Opus with comparable quality
     super({
       model: "z-ai/glm-4.6v",
       maxTokens: 8192,
