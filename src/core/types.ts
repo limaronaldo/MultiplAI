@@ -1,7 +1,35 @@
 import { z } from "zod";
 
 // ============================================
-// Error Types
+// Orchestrator Error
+// ============================================
+
+export class OrchestratorError extends Error {
+  code: string;
+  taskId: string;
+  recoverable: boolean;
+
+  constructor(
+    code: string,
+    message: string,
+    taskId: string,
+    recoverable: boolean = false
+  ) {
+    super(message);
+    this.name = "OrchestratorError";
+    this.code = code;
+    this.taskId = taskId;
+    this.recoverable = recoverable;
+
+    // Ensure proper stack trace
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, OrchestratorError);
+    }
+  }
+}
+
+// ============================================
+// Task Status & State Machine
 // ============================================
 
 export const ErrorCode = {
