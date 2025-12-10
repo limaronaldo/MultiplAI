@@ -170,6 +170,28 @@ export class OrchestratorError extends Error {
   code: string;
   taskId: string;
   recoverable: boolean;
+  stack?: string;
+
+  constructor(
+    code: string,
+    message: string,
+    taskId: string,
+    recoverable: boolean = false,
+    stack?: string
+  ) {
+    super(message);
+    this.name = 'OrchestratorError';
+    this.code = code;
+    this.taskId = taskId;
+    this.recoverable = recoverable;
+// ============================================
+// Orchestrator Error
+// ============================================
+
+export class OrchestratorError extends Error {
+  code: string;
+  taskId: string;
+  recoverable: boolean;
 
   constructor(
     code: string,
