@@ -4,11 +4,12 @@ import {
   TaskEvent,
   defaultConfig,
   OrchestratorError,
-  type AutoDevConfig, 
+  type AutoDevConfig,
 } from "./types";
 import { transition, getNextAction, isTerminal } from "./state-machine";
 import { PlannerAgent } from "../agents/planner";
 import { CoderAgent } from "../agents/coder";
+import { FixerAgent } from "../agents/fixer";
 import { FixerAgent } from "../agents/fixer";
 import { FixerAgent } from "../agents/fixer";
 import { ReviewerAgent } from "../agents/reviewer";
@@ -73,7 +74,6 @@ export class Orchestrator {
         taskId: task.id,
         recoverable: false,
       } as OrchestratorError;
-    }
       }
     } catch (error) {
       return this.failTask(
@@ -82,6 +82,7 @@ export class Orchestrator {
       );
     }
   }
+
   private async runPlanning(task: Task): Promise<Task> {
     this.validateTaskStatus(task, TaskStatus.NEW);
 
@@ -92,7 +93,12 @@ export class Orchestrator {
     ) {
       return this.failTask(
         task,
-        new Error(`Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`),
+        new OrchestratorError(
+          "COMPLEXITY_TOO_HIGH",
+          `Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`,
+          task.id,
+          false
+        ),
       );
     }
 
@@ -107,7 +113,12 @@ export class Orchestrator {
     if (diffLines > this.config.maxDiffLines) {
       return this.failTask(
         task,
-        new Error(`Diff muito grande (${diffLines} linhas). Máximo permitido: ${this.config.maxDiffLines}`),
+        new OrchestratorError(
+          "DIFF_TOO_LARGE",
+          `Diff muito grande (${diffLines} linhas). Máximo permitido: ${this.config.maxDiffLines}`,
+          task.id,
+          false
+        ),
       );
     }
 
@@ -123,7 +134,12 @@ export class Orchestrator {
       if (task.attemptCount >= task.maxAttempts) {
         return this.failTask(
           task,
-          new Error(`Máximo de tentativas (${task.maxAttempts}) atingido`),
+          new OrchestratorError(
+            "MAX_ATTEMPTS_EXCEEDED",
+            `Máximo de tentativas (${task.maxAttempts}) atingido`,
+            task.id,
+            false
+          ),
         );
       }
 
@@ -146,7 +162,12 @@ export class Orchestrator {
       if (task.attemptCount >= task.maxAttempts) {
         return this.failTask(
           task,
-          new Error(`Máximo de tentativas (${task.maxAttempts}) atingido após review`),
+          new OrchestratorError(
+            "MAX_ATTEMPTS_EXCEEDED_AFTER_REVIEW",
+            `Máximo de tentativas (${task.maxAttempts}) atingido após review`,
+            task.id,
+            false
+          ),
         );
       }
 
@@ -156,6 +177,93 @@ export class Orchestrator {
     task.updatedAt = new Date();
     console.error(`Task ${task.id} failed: ${reason}`);
     return task;
+    let message: string;
+    let stack: string | undefined;
+
+    if (errorInput instanceof Error) {
+      message = errorInput.message;
+      stack = errorInput.stack;
+    } else {
+      message = String(errorInput);
+      const tempError = new Error(message);
+      stack = tempError.stack;
+    }
+
+    task.status = TaskStatus.FAILED;
+    task.lastError = message;
+    if (stack) {
+      task.lastError += `\n\nStack trace:\n${stack}`;
+    }
+    task.updatedAt = new Date();
+    console.error(`Task ${task.id} failed: ${message}`);
+    if (stack) {
+      console.error(stack);
+    }
+
+    if (process.env.COMMENT_ON_FAILURE === "true") {
+      this.postErrorComment(task, message, stack).catch((err) => {
+        console.error(`[failTask] Failed to post error comment:`, err);
+      });
+    }
+
+    return task;
+  }
+
+  private validateTaskStatus(task: Task, expectedStatus: TaskStatus): void {
+    if (task.status !== expectedStatus) {
+      throw new OrchestratorError(
+        "INVALID_STATUS_TRANSITION",
+        `Task ${task.id} has status ${task.status}, expected ${expectedStatus}. Cannot proceed.`,
+        task.id,
+        false
+      );
+    }
+  }
+
+  private validateRequiredFields(task: Task, fields: (keyof Task)[]): void {
+    const missingFields: string[] = [];
+
+    for (const field of fields) {
+      const value = task[field as keyof Task];
+      if (
+        value === undefined ||
+        value === null ||
+        (typeof value === "string" && value.trim() === "") ||
+        (Array.isArray(value) && value.length === 0)
+      ) {
+        missingFields.push(field as string);
+      }
+    }
+
+    if (missingFields.length > 0) {
+      throw new OrchestratorError(
+        "MISSING_REQUIRED_FIELDS",
+        `Task ${task.id} is missing required fields: ${missingFields.join(", ")}. Cannot proceed.`,
+        task.id,
+        false
+      );
+    }
+  }
+
+  private async postErrorComment(task: Task, message: string, stack?: string): Promise<void> {
+    const comment = `❌ Task ${task.id} failed: ${message}${stack ? `\n\n\`\`\`\n${stack}\n\`\`\`` : ""}`;
+    await this.github.addComment(task.githubRepo, task.githubIssueNumber, comment);
+  }
+
+  private async logEvent(
+    task: Task,
+    eventType: TaskEvent["eventType"],
+    agent?: string,
+++ b/.env.example
+
+FLY_API_KEY=
+
+# Post error comments to GitHub issues when tasks fail (set to true to enable)
+COMMENT_ON_FAILURE=false
+
+# Server
+PORT=3000
+NODE_ENV=development
     let message: string;
     let stack: string | undefined;
 
