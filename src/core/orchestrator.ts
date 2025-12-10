@@ -1,14 +1,15 @@
 import {
   Task,
   TaskStatus,
-  type OrchestratorError,
   TaskEvent,
   defaultConfig,
-  type AutoDevConfig,
+  OrchestratorError,
+  type AutoDevConfig, 
 } from "./types";
 import { transition, getNextAction, isTerminal } from "./state-machine";
 import { PlannerAgent } from "../agents/planner";
 import { CoderAgent } from "../agents/coder";
+import { FixerAgent } from "../agents/fixer";
 import { FixerAgent } from "../agents/fixer";
 import { ReviewerAgent } from "../agents/reviewer";
 import { GitHubClient } from "../integrations/github";
@@ -73,52 +74,28 @@ export class Orchestrator {
         recoverable: false,
       } as OrchestratorError;
     }
-  }
-
-  private validateRequiredFields(task: Task, fields: (keyof Task)[]): void {
-    for (const field of fields) {
-      if (!task[field]) {
-        throw {
-          code: "MISSING_FIELD",
-          message: `Required field '${field}' is missing`,
-          taskId: task.id,
-          recoverable: false,
-        } as OrchestratorError;
       }
-    }
-  }
-
-  /**
-   * Processa uma task baseado no estado atual
-   */
     } catch (error) {
-      console.error(`Error processing task ${task.id}:`, error);
       return this.failTask(
         task,
-        error instanceof Error ? error.message : "Unknown error",
+        error,
       );
     }
-   */
+  }
   private async runPlanning(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.NEW);
+
     task = this.updateStatus(task, "PLANNING");
     await this.logEvent(task, "PLANNED", "planner");
 
-    // Busca contexto do repositório
-    const repoContext = await this.github.getRepoContext(
-      plannerOutput.estimatedComplexity === "L" ||
       plannerOutput.estimatedComplexity === "XL"
     ) {
-      throw {
-        code: "COMPLEXITY_TOO_HIGH",
-        message: `Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`,
-        taskId: task.id,
-        recoverable: false,
-      } as OrchestratorError;
+      return this.failTask(
         task,
-        `Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`,
+        new Error(`Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`),
       );
-   * Step 2: Coding
-   */
+    }
+
   private async runCoding(task: Task): Promise<Task> {
     this.validateTaskStatus(task, TaskStatus.PLANNING_DONE);
     this.validateRequiredFields(task, ["definitionOfDone", "plan", "targetFiles"]);
@@ -126,20 +103,14 @@ export class Orchestrator {
     task = this.updateStatus(task, "CODING");
     await this.logEvent(task, "CODED", "coder");
 
-    // Valida tamanho do diff
     const diffLines = coderOutput.diff.split("\n").length;
     if (diffLines > this.config.maxDiffLines) {
-      throw {
-        code: "DIFF_TOO_LARGE",
-        message: `Diff muito grande (${diffLines} linhas). Máximo permitido: ${this.config.maxDiffLines}`,
-        taskId: task.id,
-        recoverable: false,
-      } as OrchestratorError;
+      return this.failTask(
         task,
-        `Diff muito grande (${diffLines} linhas). Máximo permitido: ${this.config.maxDiffLines}`,
+        new Error(`Diff muito grande (${diffLines} linhas). Máximo permitido: ${this.config.maxDiffLines}`),
       );
-   * Step 3: Testing (via GitHub Actions)
-   */
+    }
+
   private async runTests(task: Task): Promise<Task> {
     this.validateTaskStatus(task, TaskStatus.CODING_DONE);
     this.validateRequiredFields(task, ["branchName"]);
@@ -150,11 +121,128 @@ export class Orchestrator {
       task.attemptCount++;
 
       if (task.attemptCount >= task.maxAttempts) {
-        throw {
-          code: "MAX_ATTEMPTS_EXCEEDED",
-          message: `Máximo de tentativas (${task.maxAttempts}) atingido`,
-          taskId: task.id,
-          recoverable: false,
+        return this.failTask(
+          task,
+          new Error(`Máximo de tentativas (${task.maxAttempts}) atingido`),
+        );
+      }
+
+  private async runFix(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.TESTS_FAILED);
+    this.validateRequiredFields(task, ["branchName", "lastError"]);
+
+    task = this.updateStatus(task, "FIXING");
+    await this.logEvent(task, "FIXED", "fixer");
+
+  private async runReview(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.TESTS_PASSED);
+    this.validateRequiredFields(task, ["branchName"]);
+
+    task = this.updateStatus(task, "REVIEWING");
+    await this.logEvent(task, "REVIEWED", "reviewer");
+
+      task.attemptCount++;
+
+      if (task.attemptCount >= task.maxAttempts) {
+        return this.failTask(
+          task,
+          new Error(`Máximo de tentativas (${task.maxAttempts}) atingido após review`),
+        );
+      }
+
+  private failTask(task: Task, reason: string): Task {
+    task.status = "FAILED";
+    task.lastError = reason;
+    task.updatedAt = new Date();
+    console.error(`Task ${task.id} failed: ${reason}`);
+    return task;
+    let message: string;
+    let stack: string | undefined;
+
+    if (errorInput instanceof Error) {
+      message = errorInput.message;
+      stack = errorInput.stack;
+    } else {
+      message = String(errorInput);
+      const tempError = new Error(message);
+      stack = tempError.stack;
+    }
+
+    task.status = TaskStatus.FAILED;
+    task.lastError = message;
+    if (stack) {
+      task.lastError += `\n\nStack trace:\n${stack}`;
+    }
+    task.updatedAt = new Date();
+    console.error(`Task ${task.id} failed: ${message}`);
+    if (stack) {
+      console.error(stack);
+    }
+
+    if (process.env.COMMENT_ON_FAILURE === "true") {
+      this.postErrorComment(task, message, stack).catch((err) => {
+        console.error(`[failTask] Failed to post error comment:`, err);
+      });
+    }
+
+    return task;
+  }
+
+  private validateTaskStatus(task: Task, expectedStatus: TaskStatus): void {
+    if (task.status !== expectedStatus) {
+      throw new OrchestratorError(
+        "INVALID_STATUS_TRANSITION",
+        `Task ${task.id} has status ${task.status}, expected ${expectedStatus}. Cannot proceed.`,
+        task.id,
+        false
+      );
+    }
+  }
+
+  private validateRequiredFields(task: Task, fields: (keyof Task)[]): void {
+    const missingFields: string[] = [];
+
+    for (const field of fields) {
+      const value = task[field as keyof Task];
+      if (
+        value === undefined ||
+        value === null ||
+        (typeof value === "string" && value.trim() === "") ||
+        (Array.isArray(value) && value.length === 0)
+      ) {
+        missingFields.push(field as string);
+      }
+    }
+
+    if (missingFields.length > 0) {
+      throw new OrchestratorError(
+        "MISSING_REQUIRED_FIELDS",
+        `Task ${task.id} is missing required fields: ${missingFields.join(", ")}. Cannot proceed.`,
+        task.id,
+        false
+      );
+    }
+  }
+
+  private async postErrorComment(task: Task, message: string, stack?: string): Promise<void> {
+    const comment = `❌ Task ${task.id} failed: ${message}${stack ? `\n\n\`\`\`\n${stack}\n\`\`\`` : ""}`;
+    await this.github.addComment(task.githubRepo, task.githubIssueNumber, comment);
+  }
+
+  private async logEvent(
+    task: Task,
+    eventType: TaskEvent["eventType"],
+    agent?: string,
+++ b/.env.example
+
+FLY_API_KEY=
+
+# Post error comments to GitHub issues when tasks fail (set to true to enable)
+COMMENT_ON_FAILURE=false
+
+# Server
+PORT=3000
+NODE_ENV=development
         } as OrchestratorError;
         task,
         `Máximo de tentativas (${task.maxAttempts}) atingido`,
