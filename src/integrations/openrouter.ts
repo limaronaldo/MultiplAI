@@ -105,6 +105,9 @@ export const OPENROUTER_MODELS = {
   // Zhipu AI via OpenRouter
   "z-ai/glm-4.6v": "GLM-4.6V (Vision)",
 
+  // Moonshot AI via OpenRouter
+  "moonshotai/kimi-k2-thinking": "Kimi K2 Thinking (Reasoning)",
+
   // Mistral via OpenRouter
   "mistralai/mistral-large-2411": "Mistral Large",
   "mistralai/codestral-2501": "Codestral (Code)",
