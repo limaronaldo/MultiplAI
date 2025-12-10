@@ -159,9 +159,27 @@ import {
     return task;
   }
 
-  private failTask(task: Task, reason: string | OrchestratorError): Task {
-    let error: OrchestratorError;
-    
+  createdAt: Date;
+}
+
+// ============================================
+// Orchestrator Error
+// ============================================
+
+export class OrchestratorError extends Error {
+  code: string;
+  taskId: string;
+  recoverable: boolean;
+
+  constructor(
+    code: string,
+    message: string,
+    taskId: string,
+    recoverable: boolean = false
+  ) {
+    super(message);
+    this.name = 'OrchestratorError';
+    this.code = code;
     if (typeof reason === "string") {
       error = {
         code: "GENERIC_FAILURE",
