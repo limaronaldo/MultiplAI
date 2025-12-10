@@ -2,11 +2,27 @@ import {
   GitHubIssueEvent,
   GitHubCheckRunEvent,
   defaultConfig,
+  JobStatus,
 } from "./core/types";
 import { Orchestrator } from "./core/orchestrator";
 import { db } from "./integrations/db";
+import { dbJobs } from "./integrations/db-jobs";
 import { LinearService } from "./integrations/linear";
 import { createHmac, timingSafeEqual } from "crypto";
+import { Octokit } from "octokit";
+
+// Validation helpers
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const REPO_REGEX = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
+
+function isValidUUID(id: string): boolean {
+  return UUID_REGEX.test(id);
+}
+
+function isValidRepo(repo: string): boolean {
+  return REPO_REGEX.test(repo);
+}
 
 // Inicializa Linear (pode falhar se não configurado)
 let linear: LinearService | null = null;
@@ -298,6 +314,271 @@ route("POST", "/api/tasks/:id/process", async (req) => {
 
   return Response.json({ task: processedTask });
 });
+
+// ============================================
+// Jobs API
+// ============================================
+
+/**
+ * POST /api/jobs - Create a new job with multiple issues
+ * Body: { repo: string, issueNumbers: number[] }
+ */
+route("POST", "/api/jobs", async (req) => {
+  const body = await req.json();
+  const { repo, issueNumbers } = body as {
+    repo: string;
+    issueNumbers: number[];
+  };
+
+  // Input validation
+  if (!repo || !issueNumbers || !Array.isArray(issueNumbers)) {
+    return Response.json(
+      { error: "Missing required fields: repo, issueNumbers" },
+      { status: 400 },
+    );
+  }
+
+  if (!isValidRepo(repo)) {
+    return Response.json(
+      { error: "Invalid repo format. Expected: owner/repo" },
+      { status: 400 },
+    );
+  }
+
+  if (issueNumbers.length === 0) {
+    return Response.json(
+      { error: "issueNumbers array cannot be empty" },
+      { status: 400 },
+    );
+  }
+
+  if (issueNumbers.length > 10) {
+    return Response.json(
+      { error: "Maximum 10 issues per job" },
+      { status: 400 },
+    );
+  }
+
+  // Validate all issue numbers are positive integers
+  if (!issueNumbers.every((n) => Number.isInteger(n) && n > 0)) {
+    return Response.json(
+      { error: "All issue numbers must be positive integers" },
+      { status: 400 },
+    );
+  }
+
+  // Use top-level Octokit instance
+  const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+  const [owner, repoName] = repo.split("/");
+
+  const taskIds: string[] = [];
+  const errors: Array<{ issueNumber: number; error: string }> = [];
+
+  for (const issueNumber of issueNumbers) {
+    try {
+      // Check if task already exists for this issue
+      const existingTask = await db.getTaskByIssue(repo, issueNumber);
+      if (existingTask) {
+        taskIds.push(existingTask.id);
+        continue;
+      }
+
+      // Fetch issue from GitHub
+      const { data: issue } = await octokit.rest.issues.get({
+        owner,
+        repo: repoName,
+        issue_number: issueNumber,
+      });
+
+      // Create task
+      const task = await db.createTask({
+        githubRepo: repo,
+        githubIssueNumber: issueNumber,
+        githubIssueTitle: issue.title,
+        githubIssueBody: issue.body || "",
+        status: "NEW",
+        attemptCount: 0,
+        maxAttempts: defaultConfig.maxAttempts,
+      });
+
+      taskIds.push(task.id);
+    } catch (error) {
+      errors.push({
+        issueNumber,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  }
+
+  if (taskIds.length === 0) {
+    return Response.json(
+      { error: "Failed to create any tasks", details: errors },
+      { status: 400 },
+    );
+  }
+
+  // Create the job
+  const job = await dbJobs.createJob({
+    status: "pending",
+    taskIds,
+    githubRepo: repo,
+    summary: {
+      total: taskIds.length,
+      completed: 0,
+      failed: 0,
+      inProgress: 0,
+      prsCreated: [],
+    },
+  });
+
+  console.log(`[Job] Created job ${job.id} with ${taskIds.length} tasks`);
+
+  return Response.json({
+    ok: true,
+    job,
+    errors: errors.length > 0 ? errors : undefined,
+  });
+});
+
+/**
+ * GET /api/jobs - List recent jobs
+ */
+route("GET", "/api/jobs", async (req) => {
+  const url = new URL(req.url);
+  const limit = parseInt(url.searchParams.get("limit") || "20", 10);
+
+  const jobs = await dbJobs.listJobs(Math.min(limit, 100));
+  return Response.json({ jobs });
+});
+
+/**
+ * GET /api/jobs/:id - Get job details with task statuses
+ */
+route("GET", "/api/jobs/:id", async (req) => {
+  const url = new URL(req.url);
+  const id = url.pathname.split("/").pop()!;
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid job ID format" }, { status: 400 });
+  }
+
+  const result = await dbJobs.getJobWithTasks(id);
+  if (!result) {
+    return Response.json({ error: "Job not found" }, { status: 404 });
+  }
+
+  return Response.json(result);
+});
+
+/**
+ * GET /api/jobs/:id/events - Get aggregated events from all tasks in job
+ */
+route("GET", "/api/jobs/:id/events", async (req) => {
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const id = pathParts[pathParts.length - 2]; // /api/jobs/:id/events
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid job ID format" }, { status: 400 });
+  }
+
+  const job = await dbJobs.getJob(id);
+  if (!job) {
+    return Response.json({ error: "Job not found" }, { status: 404 });
+  }
+
+  const events = await dbJobs.getJobEvents(id);
+  return Response.json({ jobId: id, events });
+});
+
+/**
+ * POST /api/jobs/:id/run - Start processing a pending job
+ * Returns immediately and processes tasks in background
+ */
+route("POST", "/api/jobs/:id/run", async (req) => {
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const id = pathParts[pathParts.length - 2]; // /api/jobs/:id/run
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid job ID format" }, { status: 400 });
+  }
+
+  const job = await dbJobs.getJob(id);
+  if (!job) {
+    return Response.json({ error: "Job not found" }, { status: 404 });
+  }
+
+  if (job.status !== "pending") {
+    return Response.json(
+      { error: `Job is already ${job.status}` },
+      { status: 400 },
+    );
+  }
+
+  // Update job to running
+  await dbJobs.updateJob(id, { status: "running" });
+
+  // Start processing in background (non-blocking)
+  processJobInBackground(id, job.taskIds).catch((error) => {
+    console.error(`[Job] Background processing failed for ${id}:`, error);
+  });
+
+  // Return immediately
+  return Response.json({
+    ok: true,
+    message: "Job started processing",
+    jobId: id,
+    taskCount: job.taskIds.length,
+  });
+});
+
+/**
+ * Process job tasks in background
+ */
+async function processJobInBackground(
+  jobId: string,
+  taskIds: string[],
+): Promise<void> {
+  console.log(`[Job] Starting background processing for ${jobId}`);
+
+  for (const taskId of taskIds) {
+    const task = await db.getTask(taskId);
+    if (!task) {
+      console.warn(`[Job] Task ${taskId} not found, skipping`);
+      continue;
+    }
+
+    try {
+      let currentTask = task;
+
+      // Process until terminal state
+      while (
+        currentTask.status !== "COMPLETED" &&
+        currentTask.status !== "FAILED" &&
+        currentTask.status !== "WAITING_HUMAN"
+      ) {
+        currentTask = await orchestrator.process(currentTask);
+        await db.updateTask(taskId, currentTask);
+      }
+
+      console.log(
+        `[Job] Task ${taskId} finished with status: ${currentTask.status}`,
+      );
+    } catch (error) {
+      console.error(`[Job] Error processing task ${taskId}:`, error);
+      await db.updateTask(taskId, {
+        status: "FAILED",
+        lastError: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+
+    // Update job summary after each task
+    await dbJobs.updateJobSummary(jobId);
+  }
+
+  console.log(`[Job] Background processing completed for ${jobId}`);
+}
 
 // Endpoint para Claude Code: lista issues aguardando review
 route("GET", "/api/review/pending", async (req) => {

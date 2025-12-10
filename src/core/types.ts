@@ -207,13 +207,70 @@ export interface TaskEvent {
     | "REVIEWED"
     | "PR_OPENED"
     | "FAILED"
-    | "COMPLETED";
+    | "COMPLETED"
+    | "CONSENSUS_DECISION"; // Multi-agent selection decision
   agent?: string;
   inputSummary?: string;
   outputSummary?: string;
   tokensUsed?: number;
   durationMs?: number;
+  metadata?: Record<string, unknown>; // For structured data like consensus decisions
   createdAt: Date;
+}
+
+// ============================================
+// Consensus Decision (Issue #17)
+// ============================================
+
+export interface CandidateEvaluation {
+  model: string;
+  score: number;
+  verdict?: "APPROVE" | "REQUEST_CHANGES" | "NEEDS_DISCUSSION";
+  notes: string;
+}
+
+export interface ConsensusDecision {
+  stage: "coder" | "fixer";
+  selectedModel: string;
+  selectedScore: number;
+  reasoning: string;
+  candidates: CandidateEvaluation[];
+  reviewerUsed: boolean;
+  totalTokens: number;
+  totalDurationMs: number;
+}
+
+// ============================================
+// Job (Batch Processing)
+// ============================================
+
+export const JobStatus = {
+  PENDING: "pending",
+  RUNNING: "running",
+  COMPLETED: "completed",
+  FAILED: "failed",
+  PARTIAL: "partial", // Some tasks succeeded, some failed
+} as const;
+
+export type JobStatus = (typeof JobStatus)[keyof typeof JobStatus];
+
+export interface JobSummary {
+  total: number;
+  completed: number;
+  failed: number;
+  inProgress: number;
+  prsCreated: string[]; // PR URLs
+}
+
+export interface Job {
+  id: string;
+  status: JobStatus;
+  taskIds: string[];
+  githubRepo: string;
+  createdAt: Date;
+  updatedAt: Date;
+  summary?: JobSummary;
+  metadata?: Record<string, unknown>;
 }
 
 // ============================================

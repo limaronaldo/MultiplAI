@@ -6,6 +6,8 @@ import {
   createOrchestratorError,
   defaultConfig,
   type AutoDevConfig,
+  type ConsensusDecision,
+  type CandidateEvaluation,
 } from "./types";
 import { transition, getNextAction, isTerminal } from "./state-machine";
 import { PlannerAgent } from "../agents/planner";
@@ -219,6 +221,9 @@ export class Orchestrator {
       this.lastCoderConsensus = formatConsensusForComment(result);
 
       logger.info(`Coding winner: ${result.winner.model} (${result.reason})`);
+
+      // Log consensus decision (Issue #17)
+      await this.logConsensusDecision(task, "coder", result);
     } else {
       // Single agent mode (default)
       coderOutput = await this.coder.run(coderInput);
@@ -367,6 +372,9 @@ export class Orchestrator {
       this.lastFixerConsensus = formatConsensusForComment(result);
 
       logger.info(`Fixing winner: ${result.winner.model} (${result.reason})`);
+
+      // Log consensus decision (Issue #17)
+      await this.logConsensusDecision(task, "fixer", result);
     } else {
       // Single agent mode (default)
       fixerOutput = await this.fixer.run(fixerInput);
@@ -726,12 +734,14 @@ export class Orchestrator {
     task: Task,
     eventType: TaskEvent["eventType"],
     agent?: string,
+    metadata?: Record<string, unknown>,
   ) {
     const event: TaskEvent = {
       id: crypto.randomUUID(),
       taskId: task.id,
       eventType,
       agent,
+      metadata,
       createdAt: new Date(),
     };
 
@@ -747,6 +757,85 @@ export class Orchestrator {
     }
 
     logger.debug(`Event: ${eventType} by ${agent}`);
+  }
+
+  /**
+   * Log consensus decision for multi-agent runs (Issue #17)
+   */
+  private async logConsensusDecision<T>(
+    task: Task,
+    stage: "coder" | "fixer",
+    result: {
+      winner: { model: string; tokens: number; duration: number };
+      candidates: Array<{
+        id: string;
+        model: string;
+        tokens: number;
+        error?: string;
+      }>;
+      scores: Array<{ candidateId: string; model: string; score: number }>;
+      reviewerVotes?: Array<{
+        candidateId: string;
+        model: string;
+        verdict: string;
+        comments: string[];
+      }>;
+      reason: string;
+      totalTokens: number;
+      totalDuration: number;
+    },
+  ): Promise<void> {
+    const logger = this.getLogger(task);
+
+    // Build candidate evaluations
+    const candidates: CandidateEvaluation[] = result.candidates.map((c) => {
+      const score = result.scores.find((s) => s.candidateId === c.id);
+      const vote = result.reviewerVotes?.find((v) => v.candidateId === c.id);
+
+      return {
+        model: c.model,
+        score: score?.score || 0,
+        verdict: vote?.verdict as CandidateEvaluation["verdict"],
+        notes: c.error
+          ? `Failed: ${c.error}`
+          : vote?.comments?.join("; ") || "No issues found",
+      };
+    });
+
+    const decision: ConsensusDecision = {
+      stage,
+      selectedModel: result.winner.model,
+      selectedScore:
+        result.scores.find((s) => s.model === result.winner.model)?.score || 0,
+      reasoning: result.reason,
+      candidates,
+      reviewerUsed: !!result.reviewerVotes && result.reviewerVotes.length > 0,
+      totalTokens: result.totalTokens,
+      totalDurationMs: result.totalDuration,
+    };
+
+    // Log to database
+    await this.logEvent(task, "CONSENSUS_DECISION", `multi-${stage}`, {
+      consensusDecision: decision,
+    });
+
+    // Also log summary to console/file
+    logger.info(`[Consensus] Stage: ${stage}`);
+    logger.info(
+      `[Consensus] Selected: ${decision.selectedModel} (score: ${decision.selectedScore})`,
+    );
+    logger.info(`[Consensus] Reason: ${decision.reasoning}`);
+    logger.info(`[Consensus] Candidates evaluated: ${candidates.length}`);
+    for (const c of candidates) {
+      const marker = c.model === decision.selectedModel ? "✓" : " ";
+      logger.info(
+        `[Consensus]   ${marker} ${c.model}: ${c.score} - ${c.notes}`,
+      );
+    }
+    logger.info(`[Consensus] Reviewer used: ${decision.reviewerUsed}`);
+    logger.info(
+      `[Consensus] Total tokens: ${decision.totalTokens}, duration: ${decision.totalDurationMs}ms`,
+    );
   }
 
   private slugify(text: string): string {

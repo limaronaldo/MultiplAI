@@ -21,30 +21,30 @@ async function migrate() {
       github_issue_title TEXT NOT NULL,
       github_issue_body TEXT,
       status VARCHAR(50) NOT NULL DEFAULT 'NEW',
-      
+
       -- Planning outputs
       definition_of_done JSONB,
       plan JSONB,
       target_files TEXT[],
-      
+
       -- Coding outputs
       branch_name VARCHAR(255),
       current_diff TEXT,
       commit_message TEXT,
-      
+
       -- PR
       pr_number INT,
       pr_url TEXT,
-      
+
       -- Tracking
       attempt_count INT DEFAULT 0,
       max_attempts INT DEFAULT 3,
       last_error TEXT,
-      
+
       -- Timestamps
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW(),
-      
+
       -- Constraints
       UNIQUE(github_repo, github_issue_number)
     )
@@ -89,18 +89,42 @@ async function migrate() {
 
   // Add Linear integration columns (v0.2)
   await sql`
-    ALTER TABLE tasks 
+    ALTER TABLE tasks
     ADD COLUMN IF NOT EXISTS linear_issue_id VARCHAR(255)
   `;
   await sql`
-    ALTER TABLE tasks 
+    ALTER TABLE tasks
     ADD COLUMN IF NOT EXISTS pr_title TEXT
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_tasks_linear_id ON tasks(linear_issue_id)`;
   console.log("✅ Added Linear integration columns");
 
+  // Jobs table (v0.3) - batch processing
+  await sql`
+    CREATE TABLE IF NOT EXISTS jobs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      status VARCHAR(50) NOT NULL DEFAULT 'pending',
+      task_ids UUID[] NOT NULL DEFAULT '{}',
+      github_repo VARCHAR(255) NOT NULL,
+      summary JSONB,
+      metadata JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_jobs_repo ON jobs(github_repo)`;
+  console.log("✅ Created jobs table");
+
+  // Add metadata column to task_events (v0.4) - for consensus decisions
+  await sql`
+    ALTER TABLE task_events
+    ADD COLUMN IF NOT EXISTS metadata JSONB
+  `;
+  console.log("✅ Added metadata column to task_events");
+
   console.log("\n✨ Migrations complete!");
-  
+
   await sql.end();
 }
 
