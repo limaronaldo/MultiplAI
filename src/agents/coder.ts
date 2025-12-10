@@ -86,7 +86,7 @@ Respond ONLY with valid JSON:
 
 export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
   constructor(modelOverride?: string) {
-    // Default: DeepSeek V3.2 Speciale via OpenRouter
+    // Default: Claude Sonnet 4.5 via OpenRouter - reliable and high quality
     // Can be overridden for multi-agent mode
     super({
       model: modelOverride || "claude-sonnet-4-5-20250929",
