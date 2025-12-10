@@ -1,8 +1,20 @@
-import { z } from "zod";
+  Task,
+  type OrchestratorError,
+  TaskStatus,
+  TaskEvent,
+  defaultConfig,
+    }
+  code: string;
+  message: string;
+  taskId: string;
+  recoverable: boolean;
+  stack?: string;
+}
 
 // ============================================
 // Task Status & State Machine
 // ============================================
+++ b/src/core/orchestrator.ts
 
 export interface OrchestratorError extends Error {
   code: string;
@@ -55,85 +67,121 @@ export class OrchestratorError extends Error {
 import {
   Task,
   TaskStatus,
-  OrchestratorError,
-  TaskEvent,
-  defaultConfig,
-  type AutoDevConfig,
-  // Multi-agent metadata for PR comments
-  private lastCoderConsensus?: string;
-  private lastFixerConsensus?: string;
+    try {
+      switch (action) {
+        case "PLAN":
+          return await this.runPlanning(task);
+        case "CODE":
+          return await this.runCoding(task);
+        case "TEST":
   private commentOnFailure: boolean;
-
-  constructor(config: Partial<AutoDevConfig> = {}) {
-    this.config = { ...defaultConfig, ...config };
-    this.consensus = new ConsensusEngine();
-
-    this.commentOnFailure = process.env.COMMENT_ON_FAILURE === 'true';
-
+        case "FIX":
+          return await this.runFix(task);
+        case "REVIEW":
+          return await this.runReview(task);
+        case "OPEN_PR":
+          return await this.openPR(task);
+        case "WAIT":
     if (this.multiAgentConfig.enabled) {
-      console.log(`[Orchestrator] Multi-agent mode ENABLED`);
-      console.log(
+        default:
+          return task;
       }
-    } catch (error) {
-      console.error(`Error processing task ${task.id}:`, error);
-      return await this.failTask(
-        task,
-        error instanceof Error ? error.message : "Unknown error",
-        error instanceof Error ? error : undefined
-  }
-
-  /**
-   * Validation helpers
-   */
-  private validateTaskStatus(task: Task, expectedStatus: TaskStatus): void {
-    if (task.status !== expectedStatus) {
-      throw new OrchestratorError(
-        "INVALID_STATUS",
-        `Task ${task.id} is in status ${task.status}, expected ${expectedStatus}. Cannot proceed with this operation. Please ensure the task is in the correct state before retrying.`,
-        task.id,
-        false
-      );
+    } catch (error: unknown) {
+      return await this.handleError(task, error);
     }
   }
 
-  private validateRequiredFields(task: Task, fields: string[]): void {
-    const missingFields: string[] = [];
-    for (const field of fields) {
-      if (!(task as any)[field]) {
-        missingFields.push(field);
-      }
-    }
-    if (missingFields.length > 0) {
-      throw new OrchestratorError(
-        "MISSING_REQUIRED_FIELDS",
-        `Task ${task.id} is missing required fields: ${missingFields.join(", ")}. Cannot proceed without these fields. Please check the task setup and ensure all prerequisites are met.`,
-        task.id,
-        false
-      );
-    }
-  }
-
-  /**
    * Step 1: Planning
    */
   private async runPlanning(task: Task): Promise<Task> {
-    this.validateTaskStatus(task, "NEW");
+    this.validateTaskStatus(task, TaskStatus.NEW);
 
     task = this.updateStatus(task, "PLANNING");
     await this.logEvent(task, "PLANNED", "planner");
-    // Valida complexidade
-    if (
-      plannerOutput.estimatedComplexity === "L" ||
-      plannerOutput.estimatedComplexity === "XL"
-    ) {
-      throw new OrchestratorError(
-        "ISSUE_TOO_COMPLEX",
-        `Issue is too complex (${plannerOutput.estimatedComplexity}). Requires manual implementation. Please escalate to a human developer for handling.`,
-        task.id,
-        false
-      );
+
    * Step 2: Coding
    */
+  private async runCoding(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.PLANNING_DONE);
+    this.validateRequiredFields(task, ["definitionOfDone", "plan", "targetFiles"]);
+
+    task = this.updateStatus(task, "CODING");
+    await this.logEvent(task, "CODED", "coder");
+
+   * Step 3: Testing (via GitHub Actions)
+   */
+  private async runTests(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.CODING_DONE);
+    this.validateRequiredFields(task, ["branchName"]);
+
+    task = this.updateStatus(task, "TESTING");
+    await this.logEvent(task, "TESTED", "runner");
+
+   * Step 4: Fix (quando testes falham)
+   */
+  private async runFix(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.TESTS_FAILED);
+    this.validateRequiredFields(task, ["lastError"]);
+
+    task = this.updateStatus(task, "FIXING");
+    await this.logEvent(task, "FIXED", "fixer");
+
+   * Step 5: Review
+   */
+  private async runReview(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.TESTS_PASSED);
+    this.validateRequiredFields(task, ["branchName"]);
+
+    task = this.updateStatus(task, "REVIEWING");
+    await this.logEvent(task, "REVIEWED", "reviewer");
+
+   * Step 6: Open PR
+   */
+  private async openPR(task: Task): Promise<Task> {
+    this.validateTaskStatus(task, TaskStatus.REVIEW_APPROVED);
+    this.validateRequiredFields(task, ["branchName"]);
+
+    const prBody = this.buildPRBody(task);
+
+    const pr = await this.github.createPR(task.githubRepo, {
+    return task;
+  }
+
+  private failTask(task: Task, reason: string | OrchestratorError): Task {
+    let error: OrchestratorError;
+    
+    if (typeof reason === "string") {
+      error = {
+        code: "GENERIC_FAILURE",
+        message: reason,
+        taskId: task.id,
+        recoverable: false,
+      };
+    } else {
+      error = reason;
+    }
+
+    task.status = "FAILED";
+    task.lastError = `${error.code}: ${error.message}${error.stack ? `\n${error.stack}` : ""}`;
+    task.updatedAt = new Date();
+    console.error(`Task ${task.id} failed: ${error.message}`);
+
+    // Optional GitHub comment on failure
+    if (process.env.COMMENT_ON_FAILURE === "true") {
+      this.github.addComment(
+        task.githubRepo,
+        task.githubIssueNumber,
+        `❌ Task failed: ${error.message}`
+      ).catch(console.error);
+    }
+
+    return task;
+  }
+
+
+    return body.trim();
+  }
+}
   private async runCoding(task: Task): Promise<Task> {
     this.validateTaskStatus(task, "PLANNING_DONE");
     this.validateRequiredFields(task, ["plan"]);
