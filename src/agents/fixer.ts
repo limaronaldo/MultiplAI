@@ -34,9 +34,9 @@ Respond ONLY with valid JSON:
 
 export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
   constructor() {
-    // GLM-4.6V via OpenRouter - 90x cheaper than Opus with comparable quality
+    // DeepSeek V3.2 Speciale via OpenRouter for performance testing
     super({
-      model: "z-ai/glm-4.6v",
+      model: "deepseek/deepseek-v3.2-speciale",
       maxTokens: 8192,
       temperature: 0.2,
     });
