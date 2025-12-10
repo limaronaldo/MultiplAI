@@ -1,124 +1,263 @@
 import { z } from "zod";
 
 // ============================================
-// Task Status & State Machine
+// Error Types
 // ============================================
 
-export const TaskStatus = {
-  NEW: "NEW",
-  PLANNING: "PLANNING",
-  PLANNING_DONE: "PLANNING_DONE",
-  CODING: "CODING",
-  CODING_DONE: "CODING_DONE",
-  TESTING: "TESTING",
-  TESTS_PASSED: "TESTS_PASSED",
-  TESTS_FAILED: "TESTS_FAILED",
-  FIXING: "FIXING",
-  REVIEWING: "REVIEWING",
-  REVIEW_APPROVED: "REVIEW_APPROVED",
-  REVIEW_REJECTED: "REVIEW_REJECTED",
-  PR_CREATED: "PR_CREATED",
-  WAITING_HUMAN: "WAITING_HUMAN",
-  COMPLETED: "COMPLETED",
-  FAILED: "FAILED",
-} as const;
-
-export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
-
-// ============================================
-// Task Definition
-// ============================================
-
-export interface Task {
-  id: string;
-  githubRepo: string;
-  githubIssueNumber: number;
-  githubIssueTitle: string;
-  githubIssueBody: string;
-  status: TaskStatus;
-
-  // Linear integration
-  linearIssueId?: string;
-
-  // Planning outputs
-  definitionOfDone?: string[];
-  plan?: string[];
-  targetFiles?: string[];
-
-  // Coding outputs
-  branchName?: string;
-  currentDiff?: string;
-  commitMessage?: string;
-
-  // PR
-  prNumber?: number;
-  prUrl?: string;
-  prTitle?: string;
-
-  // Tracking
-  attemptCount: number;
-  maxAttempts: number;
-  lastError?: string;
-
-  // Timestamps
-  createdAt: Date;
-  updatedAt: Date;
+export interface OrchestratorError {
+  code: string;
+  message: string;
+  taskId: string;
+  recoverable: boolean;
+  stack?: string;
 }
 
 // ============================================
-// Agent Outputs
+// Task Status & State Machine
 // ============================================
+++ b/src/core/orchestrator.ts
+import {
+  Task,
+  TaskStatus,
+  TaskEvent,
+  defaultConfig,
+import { PlannerAgent } from "../agents/planner";
+import { CoderAgent } from "../agents/coder";
+import { FixerAgent } from "../agents/fixer";
+import { ReviewerAgent } from "../agents/reviewer";
+import { GitHubClient } from "../integrations/github";
+import { db } from "../integrations/db";
+import {
+} from "./multi-agent-types";
+import { MultiCoderRunner, MultiFixerRunner } from "./multi-runner";
+import { ConsensusEngine, formatConsensusForComment } from "./consensus";
+import { OrchestratorError } from "./types";
 
-export const PlannerOutputSchema = z.object({
-  definitionOfDone: z.array(z.string()),
-  plan: z.array(z.string()),
-  targetFiles: z.array(z.string()),
-  estimatedComplexity: z.enum(["XS", "S", "M", "L", "XL"]),
-  risks: z.array(z.string()).optional(),
+export class Orchestrator {
+  private config: AutoDevConfig;
+    } catch (error) {
+      console.error(`Error processing task ${task.id}:`, error);
+      return this.failTask(
+        task,
+        error instanceof Error ? error : new Error("Unknown error"),
+      );
+    }
+  }
+
+   * Step 1: Planning
+   */
+  private async runPlanning(task: Task): Promise<Task> {
+    this.validateTaskState(task, "pending");
+    task = this.updateStatus(task, "PLANNING");
+    await this.logEvent(task, "PLANNED", "planner");
+
+    // Busca contexto do repositório
+      task.githubRepo,
+      task.targetFiles || [],
+    );
+
+    // Chama o Planner Agent
+    const plannerOutput = await this.planner.run({
+      issueTitle: task.githubIssueTitle,
+      issueBody: task.githubIssueBody,
+    task.definitionOfDone = plannerOutput.definitionOfDone;
+    task.plan = plannerOutput.plan;
+    task.targetFiles = plannerOutput.targetFiles;
+
+    // Valida complexidade
+    if (
+      plannerOutput.estimatedComplexity === "L" ||
+      plannerOutput.estimatedComplexity === "XL"
+      return this.failTask(
+        task,
+        `Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`,
+      );
+    }
+
+    return this.updateStatus(task, "PLANNING_DONE");
+   * Step 2: Coding
+   */
+  private async runCoding(task: Task): Promise<Task> {
+    this.validateTaskState(task, "planning_complete");
+    this.validateRequiredFields(task, ["planningResult"]);
+    task = this.updateStatus(task, "CODING");
+    await this.logEvent(task, "CODED", "coder");
+
+    // Cria branch se não existir
+   * Step 3: Testing (via GitHub Actions)
+   */
+  private async runTests(task: Task): Promise<Task> {
+    this.validateTaskState(task, "review_complete");
+    this.validateRequiredFields(task, ["branchName"]);
+    task = this.updateStatus(task, "TESTING");
+    await this.logEvent(task, "TESTED", "runner");
+
+    // Dispara workflow de CI (se não for automático)
+   * Step 4: Fix (quando testes falham)
+   */
+  private async runFix(task: Task): Promise<Task> {
+    this.validateTaskState(task, "tests_failed");
+    this.validateRequiredFields(task, ["testResults"]);
+    task = this.updateStatus(task, "FIXING");
+    await this.logEvent(task, "FIXED", "fixer");
+
+    const fileContents = await this.github.getFilesContent(
+   * Step 5: Review
+   */
+  private async runReview(task: Task): Promise<Task> {
+    this.validateTaskState(task, "coding_complete");
+    this.validateRequiredFields(task, ["implementationResult"]);
+    task = this.updateStatus(task, "REVIEWING");
+    await this.logEvent(task, "REVIEWED", "reviewer");
+
+    const fileContents = await this.github.getFilesContent(
+   * Step 6: Open PR
+   */
+  private async openPR(task: Task): Promise<Task> {
+    this.validateTaskState(task, "tests_passed");
+    this.validateRequiredFields(task, ["branchName"]);
+    const prBody = this.buildPRBody(task);
+
+    const pr = await this.github.createPR(task.githubRepo, {
+  private failTask(task: Task, reason: string): Task {
+    task.status = "FAILED";
+    task.lastError = reason;
+    task.updatedAt = new Date();
+    console.error(`Task ${task.id} failed: ${reason}`);
+    return task;
+  }
+
+  private failTask(task: Task, error: Error): Task {
+    let orchestratorError: OrchestratorError;
+    if (error instanceof OrchestratorError) {
+      orchestratorError = error;
+    } else {
+      orchestratorError = {
+        code: "UNKNOWN_ERROR",
+        message: error.message,
+        taskId: task.id,
+        recoverable: false,
+        stack: error.stack,
+      };
+    }
+
+    task.status = "FAILED";
+    task.lastError = orchestratorError.message;
+    task.updatedAt = new Date();
+    console.error(`Task ${task.id} failed: ${orchestratorError.message}`, orchestratorError.stack);
+
+    // Optional GitHub comment on failure
+    if (process.env.COMMENT_ON_FAILURE === "true") {
+      this.github.addComment(
+        task.githubRepo,
+        task.githubIssueNumber,
+        `❌ AutoDev failed: ${orchestratorError.message}\n\nStack trace: ${orchestratorError.stack || "N/A"}`,
+      ).catch((commentError) => console.error("Failed to post comment:", commentError));
+    }
+
+    return task;
+  }
+
+  private async logEvent(
+    task: Task,
+    console.log(`[Event] Task ${task.id}: ${eventType} by ${agent}`);
+  }
+
+  private validateTaskState(task: Task, expectedStatus: TaskStatus): void {
+    if (task.status !== expectedStatus) {
+      throw new OrchestratorError({
+        code: "INVALID_TASK_STATUS",
+        message: `Task status is '${task.status}', expected '${expectedStatus}'`,
+        taskId: task.id,
+        recoverable: true,
+      });
+    }
+  }
+
+  private validateRequiredFields(task: Task, fields: string[]): void {
+    for (const field of fields) {
+      if (!(field in task) || task[field as keyof Task] === undefined) {
+        throw new OrchestratorError({
+          code: "MISSING_REQUIRED_FIELD",
+          message: `Required field '${field}' is missing or undefined`,
+          taskId: task.id,
+          recoverable: true,
+        });
+      }
+    }
+  }
+
+  private slugify(text: string): string {
+    return text
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 50);
+  }
+++ b/src/core/orchestrator.test.ts
+import { Orchestrator } from "./orchestrator";
+import { Task, TaskStatus, OrchestratorError } from "./types";
+
+describe("Orchestrator Validation", () => {
+  let orchestrator: Orchestrator;
+  let mockTask: Task;
+
+  beforeEach(() => {
+    orchestrator = new Orchestrator();
+    mockTask = {
+      id: "test-task",
+      githubRepo: "test/repo",
+      githubIssueNumber: 1,
+      githubIssueTitle: "Test Issue",
+      githubIssueBody: "Test body",
+      status: TaskStatus.NEW,
+      attemptCount: 0,
+      maxAttempts: 3,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as Task;
+  });
+
+  test("runPlanning throws OrchestratorError for invalid status", async () => {
+    mockTask.status = TaskStatus.CODING;
+    await expect(orchestrator["runPlanning"](mockTask)).rejects.toThrow(OrchestratorError);
+  });
+
+  test("runCoding throws OrchestratorError for invalid status", async () => {
+    mockTask.status = TaskStatus.NEW;
+    await expect(orchestrator["runCoding"](mockTask)).rejects.toThrow(OrchestratorError);
+  });
+
+  test("runReview throws OrchestratorError for missing required field", async () => {
+    mockTask.status = TaskStatus.CODING_DONE;
+    // implementationResult is not set
+    await expect(orchestrator["runReview"](mockTask)).rejects.toThrow(OrchestratorError);
+  });
+
+  test("runTests throws OrchestratorError for invalid status", async () => {
+    mockTask.status = TaskStatus.NEW;
+    await expect(orchestrator["runTests"](mockTask)).rejects.toThrow(OrchestratorError);
+  });
+
+  test("runFix throws OrchestratorError for missing required field", async () => {
+    mockTask.status = TaskStatus.TESTS_FAILED;
+    // testResults is not set
+    await expect(orchestrator["runFix"](mockTask)).rejects.toThrow(OrchestratorError);
+  });
+
+  test("runPR throws OrchestratorError for invalid status", async () => {
+    mockTask.status = TaskStatus.NEW;
+    await expect(orchestrator["runPR"](mockTask)).rejects.toThrow(OrchestratorError);
+  });
 });
+++ b/.env.example
+MAX_DIFF_LINES=300
+ALLOWED_REPOS=owner/repo1,owner/repo2
 
-export type PlannerOutput = z.infer<typeof PlannerOutputSchema>;
+FLY_API_KEY=
 
-export const CoderOutputSchema = z.object({
-  diff: z.string(),
-  commitMessage: z.string(),
-  filesModified: z.array(z.string()),
-  notes: z.string().optional(),
-});
-
-export type CoderOutput = z.infer<typeof CoderOutputSchema>;
-
-export const FixerOutputSchema = z.object({
-  diff: z.string(),
-  commitMessage: z.string(),
-  fixDescription: z.string(),
-  filesModified: z.array(z.string()),
-});
-
-export type FixerOutput = z.infer<typeof FixerOutputSchema>;
-
-export const ReviewerOutputSchema = z.object({
-  verdict: z.enum(["APPROVE", "REQUEST_CHANGES", "NEEDS_DISCUSSION"]),
-  summary: z.string(),
-  comments: z.array(
-    z.object({
-      file: z.string(),
-      line: z.number().optional(),
-      severity: z.enum(["critical", "major", "minor", "suggestion"]),
-      comment: z.string(),
-    }),
-  ),
-  suggestedChanges: z.array(z.string()).optional(),
-});
-
-export type ReviewerOutput = z.infer<typeof ReviewerOutputSchema>;
-
-// ============================================
-// Test Results
-// ============================================
-
-export interface TestResult {
-  success: boolean;
+# Optional: Post GitHub comment on task failure
+COMMENT_ON_FAILURE=true
   buildStatus: "success" | "failed" | "skipped";
   testStatus: "success" | "failed" | "skipped";
   lintStatus: "success" | "failed" | "skipped";
