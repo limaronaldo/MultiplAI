@@ -1,0 +1,384 @@
+import {
+  Task,
+  TaskStatus,
+  TaskEvent,
+  defaultConfig,
+  type AutoDevConfig,
+} from "./types";
+import { transition, getNextAction, isTerminal } from "./state-machine";
+import { PlannerAgent } from "../agents/planner";
+import { CoderAgent } from "../agents/coder";
+import { FixerAgent } from "../agents/fixer";
+import { ReviewerAgent } from "../agents/reviewer";
+import { GitHubClient } from "../integrations/github";
+import { db } from "../integrations/db";
+
+export class Orchestrator {
+  private config: AutoDevConfig;
+  private github: GitHubClient;
+  private planner: PlannerAgent;
+  private coder: CoderAgent;
+  private fixer: FixerAgent;
+  private reviewer: ReviewerAgent;
+
+  constructor(config: Partial<AutoDevConfig> = {}) {
+    this.config = { ...defaultConfig, ...config };
+    this.github = new GitHubClient();
+    this.planner = new PlannerAgent();
+    this.coder = new CoderAgent();
+    this.fixer = new FixerAgent();
+    this.reviewer = new ReviewerAgent();
+  }
+
+  /**
+   * Processa uma task baseado no estado atual
+   */
+  async process(task: Task): Promise<Task> {
+    if (isTerminal(task.status)) {
+      console.log(`Task ${task.id} is in terminal state: ${task.status}`);
+      return task;
+    }
+
+    const action = getNextAction(task.status);
+    console.log(`Task ${task.id}: ${task.status} -> action: ${action}`);
+
+    try {
+      switch (action) {
+        case "PLAN":
+          return await this.runPlanning(task);
+        case "CODE":
+          return await this.runCoding(task);
+        case "TEST":
+          return await this.runTests(task);
+        case "FIX":
+          return await this.runFix(task);
+        case "REVIEW":
+          return await this.runReview(task);
+        case "OPEN_PR":
+          return await this.openPR(task);
+        case "WAIT":
+          return task;
+        default:
+          return task;
+      }
+    } catch (error) {
+      console.error(`Error processing task ${task.id}:`, error);
+      return this.failTask(
+        task,
+        error instanceof Error ? error.message : "Unknown error",
+      );
+    }
+  }
+
+  /**
+   * Step 1: Planning
+   */
+  private async runPlanning(task: Task): Promise<Task> {
+    task = this.updateStatus(task, "PLANNING");
+    await this.logEvent(task, "PLANNED", "planner");
+
+    // Busca contexto do repositório
+    const repoContext = await this.github.getRepoContext(
+      task.githubRepo,
+      task.targetFiles || [],
+    );
+
+    // Chama o Planner Agent
+    const plannerOutput = await this.planner.run({
+      issueTitle: task.githubIssueTitle,
+      issueBody: task.githubIssueBody,
+      repoContext,
+    });
+
+    // Atualiza task com outputs do planner
+    task.definitionOfDone = plannerOutput.definitionOfDone;
+    task.plan = plannerOutput.plan;
+    task.targetFiles = plannerOutput.targetFiles;
+
+    // Valida complexidade
+    if (
+      plannerOutput.estimatedComplexity === "L" ||
+      plannerOutput.estimatedComplexity === "XL"
+    ) {
+      return this.failTask(
+        task,
+        `Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`,
+      );
+    }
+
+    return this.updateStatus(task, "PLANNING_DONE");
+  }
+
+  /**
+   * Step 2: Coding
+   */
+  private async runCoding(task: Task): Promise<Task> {
+    task = this.updateStatus(task, "CODING");
+    await this.logEvent(task, "CODED", "coder");
+
+    // Cria branch se não existir
+    if (!task.branchName) {
+      task.branchName = `auto/${task.githubIssueNumber}-${this.slugify(task.githubIssueTitle)}`;
+      await this.github.createBranch(task.githubRepo, task.branchName);
+    }
+
+    // Busca conteúdo dos arquivos alvo
+    const fileContents = await this.github.getFilesContent(
+      task.githubRepo,
+      task.targetFiles || [],
+    );
+
+    // Chama o Coder Agent
+    const coderOutput = await this.coder.run({
+      definitionOfDone: task.definitionOfDone || [],
+      plan: task.plan || [],
+      targetFiles: task.targetFiles || [],
+      fileContents,
+      previousDiff: task.currentDiff,
+      lastError: task.lastError,
+    });
+
+    // Valida tamanho do diff
+    const diffLines = coderOutput.diff.split("\n").length;
+    if (diffLines > this.config.maxDiffLines) {
+      return this.failTask(
+        task,
+        `Diff muito grande (${diffLines} linhas). Máximo permitido: ${this.config.maxDiffLines}`,
+      );
+    }
+
+    task.currentDiff = coderOutput.diff;
+    task.commitMessage = coderOutput.commitMessage;
+
+    // Aplica o diff no GitHub
+    await this.github.applyDiff(
+      task.githubRepo,
+      task.branchName,
+      coderOutput.diff,
+      coderOutput.commitMessage,
+    );
+
+    return this.updateStatus(task, "CODING_DONE");
+  }
+
+  /**
+   * Step 3: Testing (via GitHub Actions)
+   */
+  private async runTests(task: Task): Promise<Task> {
+    task = this.updateStatus(task, "TESTING");
+    await this.logEvent(task, "TESTED", "runner");
+
+    // Dispara workflow de CI (se não for automático)
+    // O resultado vem via webhook de check_run
+    // Por agora, assumimos que o CI roda automaticamente no push
+
+    // Em um MVP, podemos aguardar o webhook ou fazer polling
+    const checkResult = await this.github.waitForChecks(
+      task.githubRepo,
+      task.branchName!,
+      60000, // timeout 60s
+    );
+
+    if (checkResult.success) {
+      return this.updateStatus(task, "TESTS_PASSED");
+    } else {
+      task.lastError = checkResult.errorSummary;
+      task.attemptCount++;
+
+      if (task.attemptCount >= task.maxAttempts) {
+        return this.failTask(
+          task,
+          `Máximo de tentativas (${task.maxAttempts}) atingido`,
+        );
+      }
+
+      return this.updateStatus(task, "TESTS_FAILED");
+    }
+  }
+
+  /**
+   * Step 4: Fix (quando testes falham)
+   */
+  private async runFix(task: Task): Promise<Task> {
+    task = this.updateStatus(task, "FIXING");
+    await this.logEvent(task, "FIXED", "fixer");
+
+    const fileContents = await this.github.getFilesContent(
+      task.githubRepo,
+      task.targetFiles || [],
+      task.branchName,
+    );
+
+    const fixerOutput = await this.fixer.run({
+      definitionOfDone: task.definitionOfDone || [],
+      plan: task.plan || [],
+      currentDiff: task.currentDiff || "",
+      errorLogs: task.lastError || "",
+      fileContents,
+    });
+
+    task.currentDiff = fixerOutput.diff;
+    task.commitMessage = fixerOutput.commitMessage;
+
+    await this.github.applyDiff(
+      task.githubRepo,
+      task.branchName!,
+      fixerOutput.diff,
+      fixerOutput.commitMessage,
+    );
+
+    return this.updateStatus(task, "CODING_DONE");
+  }
+
+  /**
+   * Step 5: Review
+   */
+  private async runReview(task: Task): Promise<Task> {
+    task = this.updateStatus(task, "REVIEWING");
+    await this.logEvent(task, "REVIEWED", "reviewer");
+
+    const fileContents = await this.github.getFilesContent(
+      task.githubRepo,
+      task.targetFiles || [],
+      task.branchName,
+    );
+
+    // We're at TESTS_PASSED, so tests definitely passed
+    const reviewerOutput = await this.reviewer.run({
+      definitionOfDone: task.definitionOfDone || [],
+      plan: task.plan || [],
+      diff: task.currentDiff || "",
+      fileContents,
+      testsPassed: true, // We only get here if tests passed
+    });
+
+    if (reviewerOutput.verdict === "APPROVE") {
+      return this.updateStatus(task, "REVIEW_APPROVED");
+    } else if (reviewerOutput.verdict === "NEEDS_DISCUSSION") {
+      // Don't count NEEDS_DISCUSSION against attempts, go straight to PR
+      console.log(`[Review] Needs discussion - creating PR for human review`);
+      return this.updateStatus(task, "REVIEW_APPROVED");
+    } else {
+      task.lastError = reviewerOutput.summary;
+      task.attemptCount++;
+
+      if (task.attemptCount >= task.maxAttempts) {
+        return this.failTask(
+          task,
+          `Máximo de tentativas (${task.maxAttempts}) atingido após review`,
+        );
+      }
+
+      return this.updateStatus(task, "REVIEW_REJECTED");
+    }
+  }
+
+  /**
+   * Step 6: Open PR
+   */
+  private async openPR(task: Task): Promise<Task> {
+    const prBody = this.buildPRBody(task);
+
+    const pr = await this.github.createPR(task.githubRepo, {
+      title: `[AutoDev] ${task.githubIssueTitle}`,
+      body: prBody,
+      head: task.branchName!,
+      base: "main",
+    });
+
+    task.prNumber = pr.number;
+    task.prUrl = pr.url;
+
+    // Adiciona labels
+    await this.github.addLabels(task.githubRepo, pr.number, [
+      "auto-dev",
+      "ready-for-human-review",
+    ]);
+
+    // Linka com a issue original
+    await this.github.addComment(
+      task.githubRepo,
+      task.githubIssueNumber,
+      `🤖 AutoDev criou um PR para esta issue: ${pr.url}\n\nAguardando revisão humana.`,
+    );
+
+    await this.logEvent(task, "PR_OPENED", "orchestrator");
+
+    task = this.updateStatus(task, "PR_CREATED");
+    return this.updateStatus(task, "WAITING_HUMAN");
+  }
+
+  // ============================================
+  // Helpers
+  // ============================================
+
+  private updateStatus(task: Task, status: TaskStatus): Task {
+    task.status = transition(task.status, status);
+    task.updatedAt = new Date();
+    return task;
+  }
+
+  private failTask(task: Task, reason: string): Task {
+    task.status = "FAILED";
+    task.lastError = reason;
+    task.updatedAt = new Date();
+    console.error(`Task ${task.id} failed: ${reason}`);
+    return task;
+  }
+
+  private async logEvent(
+    task: Task,
+    eventType: TaskEvent["eventType"],
+    agent?: string,
+  ) {
+    const event: TaskEvent = {
+      id: crypto.randomUUID(),
+      taskId: task.id,
+      eventType,
+      agent,
+      createdAt: new Date(),
+    };
+
+    // Persist to database
+    try {
+      await db.createTaskEvent(event);
+    } catch (error) {
+      console.error(`[Event] Failed to persist event:`, error);
+    }
+
+    console.log(`[Event] Task ${task.id}: ${eventType} by ${agent}`);
+  }
+
+  private slugify(text: string): string {
+    return text
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 50);
+  }
+
+  private buildPRBody(task: Task): string {
+    return `
+## 🤖 AutoDev PR
+
+This PR was automatically generated to address issue #${task.githubIssueNumber}.
+
+### Definition of Done
+${task.definitionOfDone?.map((d) => `- [ ] ${d}`).join("\n")}
+
+### Implementation Plan
+${task.plan?.map((p, i) => `${i + 1}. ${p}`).join("\n")}
+
+### Files Modified
+${task.targetFiles?.map((f) => `- \`${f}\``).join("\n")}
+
+---
+
+### ⚠️ Human Review Required
+
+This PR was generated automatically. Please review carefully before merging.
+
+**Attempts:** ${task.attemptCount}/${task.maxAttempts}
+    `.trim();
+  }
+}

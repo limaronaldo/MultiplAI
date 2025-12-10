@@ -1,0 +1,35 @@
+{
+  "name": "multiplai",
+  "version": "0.1.0",
+  "description": "Autonomous development system for small issues",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "test": "bun test",
+    "db:migrate": "bun run src/lib/migrate.ts",
+    "typecheck": "tsc --noEmit",
+    "setup": "bun run setup.ts",
+    "menu": "bun run cli.ts",
+    "status": "curl -s http://localhost:3000/api/health && curl -s http://localhost:3000/api/tasks | head -20",
+    "tasks": "curl -s http://localhost:3000/api/tasks",
+    "test:setup": "bun run test-setup.ts",
+    "test:e2e": "bun run test-e2e.ts",
+    "test:webhook": "bun run test-webhook.ts",
+    "test:all": "./run-all-tests.sh",
+    "clean": "psql $DATABASE_URL -c 'DELETE FROM tasks WHERE github_issue_number IN (1, 999);'"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@linear/sdk": "^29.0.0",
+    "octokit": "^4.0.2",
+    "openai": "^6.10.0",
+    "parse-diff": "^0.11.1",
+    "postgres": "^3.4.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.14",
+    "typescript": "^5.7.2"
+  }
+}

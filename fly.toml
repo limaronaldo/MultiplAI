@@ -1,0 +1,42 @@
+# fly.toml - Configuração Fly.io para AutoDev
+# Docs: https://fly.io/docs/reference/configuration/
+
+app = "autodev"
+primary_region = "gru"  # São Paulo, Brazil 🇧🇷
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = false  # Mantém rodando para webhooks
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/api/health"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+# Secrets a configurar via CLI:
+# fly secrets set GITHUB_TOKEN=xxx
+# fly secrets set ANTHROPIC_API_KEY=xxx
+# fly secrets set DATABASE_URL=xxx
+# fly secrets set GITHUB_WEBHOOK_SECRET=xxx
