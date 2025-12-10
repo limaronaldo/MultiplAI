@@ -4,55 +4,163 @@ import { z } from "zod";
 // Task Status & State Machine
 // ============================================
 
-/**
- * Represents the possible states a task can be in during its lifecycle.
- */
-export const TaskStatus = {
-  /** Initial state when task is created */
+/** 
+ * Represents the possible states a task can be in during its lifecycle */
   NEW: "NEW",
-  /** Task is being analyzed and planned */
   PLANNING: "PLANNING",
-  /** Planning phase completed successfully */
-  PLANNING_DONE: "PLANNING_DONE",
-  /** Code implementation in progress */
-  CODING: "CODING",
-  /** Code implementation completed */
-  CODING_DONE: "CODING_DONE",
-  /** Running automated tests */
-  TESTING: "TESTING",
-  /** All tests passed successfully */
-  TESTS_PASSED: "TESTS_PASSED",
-  /** One or more tests failed */
-  TESTS_FAILED: "TESTS_FAILED",
-  /** Fixing failed tests or review feedback */
-  FIXING: "FIXING",
-  /** Code is being reviewed */
-  REVIEWING: "REVIEWING",
-  /** Code review approved */
-  REVIEW_APPROVED: "REVIEW_APPROVED",
-  /** Code review rejected with changes needed */
-  REVIEW_REJECTED: "REVIEW_REJECTED",
-  /** Pull request created and waiting for merge */
-  PR_CREATED: "PR_CREATED",
-  /** Waiting for human intervention */
-  WAITING_HUMAN: "WAITING_HUMAN",
-  /** Task completed successfully */
-  COMPLETED: "COMPLETED",
-  /** Task failed and cannot continue */
-  FAILED: "FAILED",
-} as const;
+/** 
+ * Describes each task status and its meaning:
+ * 
+ * NEW - Initial state when task is created
+ * PLANNING - AI is analyzing and creating implementation plan
+ * PLANNING_DONE - Implementation plan is complete
+ * CODING - AI is implementing the changes
+ * CODING_DONE - Implementation is complete
+ * TESTING - Running automated tests
+ * TESTS_PASSED - All tests passed successfully
+ * TESTS_FAILED - One or more tests failed
+ * FIXING - AI is fixing failed tests
+ * REVIEWING - AI is reviewing the changes
+ * REVIEW_APPROVED - Changes approved by AI review
+ * REVIEW_REJECTED - Changes rejected, needs updates
+ * PR_CREATED - Pull request opened on GitHub
+ * WAITING_HUMAN - Waiting for human review/approval
+ * COMPLETED - Task successfully completed
+ * FAILED - Task failed and cannot continue
+ */
 
-export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
+// ============================================
 // Task Definition
 // ============================================
-
-/**
- * Represents a task being processed by the system
- */
 export interface Task {
-  /** Unique identifier for the task */
   id: string;
-  /** GitHub repository in owner/repo format */
+  githubRepo: string;
+  /** GitHub issue number this task is linked to */
+  githubIssueNumber: number;
+  githubIssueTitle: string;
+  githubIssueBody: string;
+  linearIssueId?: string;
+  // Planning outputs
+  /** List of requirements that must be met for task completion */
+  definitionOfDone?: string[];
+  /** Step-by-step implementation plan */
+  plan?: string[];
+  /** Files that will be modified */
+  targetFiles?: string[];
+  // Coding outputs
+  /** Git branch name where changes are made */
+  branchName?: string;
+  /** Current git diff of changes */
+  currentDiff?: string;
+  /** Commit message for changes */
+  commitMessage?: string;
+  // PR
+  /** GitHub PR number if created */
+  prNumber?: number;
+  /** GitHub PR URL */
+  prUrl?: string;
+  /** GitHub PR title */
+  prTitle?: string;
+  // Tracking
+  /** Number of attempts made to complete task */
+  attemptCount: number;
+  /** Maximum allowed attempts before failing */
+  maxAttempts: number;
+  /** Last error message if failed */
+  lastError?: string;
+  // Timestamps
+++ b/src/core/state-machine.ts
+ * Define quais transições são válidas a partir de cada estado.
+ * Each state maps to an array of valid next states.
+ * Isso evita que o sistema entre em estados inconsistentes.
+ */
+  PLANNING: ["PLANNING_DONE", "FAILED"],
+  PLANNING_DONE: ["CODING", "FAILED"],
+  CODING: ["CODING_DONE", "FAILED"],
+  CODING_DONE: ["TESTING", "FAILED"],
+  TESTING: ["TESTS_PASSED", "TESTS_FAILED", "FAILED"],
+  TESTS_PASSED: ["REVIEWING", "FAILED"],
+  TESTS_FAILED: ["FIXING", "FAILED"],
+  FIXING: ["CODING_DONE", "FAILED"], // Return to testing flow after fixes
+  REVIEWING: ["REVIEW_APPROVED", "REVIEW_REJECTED", "FAILED"],
+  REVIEW_APPROVED: ["PR_CREATED", "FAILED"],
+  REVIEW_REJECTED: ["CODING", "FAILED"], // Return to coding after rejection
+  PR_CREATED: ["WAITING_HUMAN", "FAILED"],
+  WAITING_HUMAN: ["COMPLETED", "FAILED"],
+  COMPLETED: [], // Terminal state - success
+  FAILED: [], // Terminal state - failure
+};
+++ b/src/core/__tests__/state-machine.test.ts
+import { describe, test, expect } from "bun:test";
+import { TaskStatus } from "../types";
+import { canTransition, transition, getNextAction, isTerminal } from "../state-machine";
+
+describe("State Machine", () => {
+  // Valid transitions
+  test("allows valid NEW -> PLANNING transition", () => {
+    expect(canTransition("NEW", "PLANNING")).toBe(true);
+    expect(() => transition("NEW", "PLANNING")).not.toThrow();
+  });
+
+  test("allows valid PLANNING -> PLANNING_DONE transition", () => {
+    expect(canTransition("PLANNING", "PLANNING_DONE")).toBe(true);
+    expect(() => transition("PLANNING", "PLANNING_DONE")).not.toThrow();
+  });
+
+  test("allows valid CODING -> CODING_DONE transition", () => {
+    expect(canTransition("CODING", "CODING_DONE")).toBe(true);
+    expect(() => transition("CODING", "CODING_DONE")).not.toThrow();
+  });
+
+  test("allows valid TESTING -> TESTS_PASSED transition", () => {
+    expect(canTransition("TESTING", "TESTS_PASSED")).toBe(true);
+    expect(() => transition("TESTING", "TESTS_PASSED")).not.toThrow();
+  });
+
+  // Invalid transitions
+  test("prevents invalid NEW -> CODING transition", () => {
+    expect(canTransition("NEW", "CODING")).toBe(false);
+    expect(() => transition("NEW", "CODING")).toThrow();
+  });
+
+  test("prevents invalid PLANNING -> TESTING transition", () => {
+    expect(canTransition("PLANNING", "TESTING")).toBe(false);
+    expect(() => transition("PLANNING", "TESTING")).toThrow();
+  });
+
+  // Terminal states
+  test("identifies COMPLETED as terminal state", () => {
+    expect(isTerminal("COMPLETED")).toBe(true);
+  });
+
+  test("identifies FAILED as terminal state", () => {
+    expect(isTerminal("FAILED")).toBe(true);
+  });
+
+  test("identifies non-terminal states correctly", () => {
+    expect(isTerminal("CODING")).toBe(false);
+    expect(isTerminal("TESTING")).toBe(false);
+  });
+
+  // Next actions
+  test("returns correct next action for NEW state", () => {
+    expect(getNextAction("NEW")).toBe("PLAN");
+  });
+
+  test("returns correct next action for TESTS_FAILED state", () => {
+    expect(getNextAction("TESTS_FAILED")).toBe("FIX");
+  });
+
+  test("returns correct next action for REVIEW_APPROVED state", () => {
+    expect(getNextAction("REVIEW_APPROVED")).toBe("OPEN_PR");
+  });
+
+  test("returns WAIT for intermediate states", () => {
+    expect(getNextAction("PLANNING")).toBe("WAIT");
+    expect(getNextAction("CODING")).toBe("WAIT");
+  });
+});
+
   githubRepo: string;
   /** GitHub issue number */
   githubIssueNumber: number;
