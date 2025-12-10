@@ -34,10 +34,10 @@ Respond ONLY with valid JSON:
 
 export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
   constructor(modelOverride?: string) {
-    // Default: Claude Sonnet 4.5 via OpenRouter - reliable for fixes
+    // Default: Claude Opus 4.5 - highest quality for debugging complex issues
     // Can be overridden for multi-agent mode
     super({
-      model: modelOverride || "claude-sonnet-4-5-20250929",
+      model: modelOverride || "claude-opus-4-5-20251101",
       maxTokens: 8192,
       temperature: 0.2,
     });

@@ -59,8 +59,8 @@ Respond ONLY with valid JSON:
 
 export class ReviewerAgent extends BaseAgent<ReviewerInput, ReviewerOutput> {
   constructor() {
-    // Opus 4.5 for highest quality code reviews
-    super({ model: "claude-sonnet-4-5-20250929", temperature: 0.1 });
+    // GPT 5.1 Codex Max for code reviews - fast and code-focused
+    super({ model: "gpt-5.1-codex-max", temperature: 0.1 });
   }
 
   async run(input: ReviewerInput): Promise<ReviewerOutput> {

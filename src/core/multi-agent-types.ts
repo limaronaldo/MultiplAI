@@ -81,8 +81,8 @@ export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
     "o4-mini", // O4 Mini - OpenAI reasoning model
   ],
   fixerModels: [
-    "claude-sonnet-4-5-20250929", // Claude Sonnet 4.5 - best quality
-    "o4-mini", // O4 Mini - OpenAI reasoning model
+    "claude-opus-4-5-20251101", // Claude Opus 4.5 - highest quality for debugging
+    "google/gemini-3-pro-preview", // Gemini 3 Pro - Google's latest (via OpenRouter)
   ],
   consensusStrategy: "reviewer",
   timeout: 180000, // 3 minutes (increased for complex tasks)
