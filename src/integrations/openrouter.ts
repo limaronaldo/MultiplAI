@@ -22,7 +22,8 @@ export class OpenRouterClient {
       apiKey,
       baseURL: "https://openrouter.ai/api/v1",
       defaultHeaders: {
-        "HTTP-Referer": process.env.OPENROUTER_REFERER || "https://multiplai.fly.dev",
+        "HTTP-Referer":
+          process.env.OPENROUTER_REFERER || "https://multiplai.fly.dev",
         "X-Title": "MultiplAI",
       },
     });
@@ -54,7 +55,7 @@ export class OpenRouterClient {
         (response.usage?.completion_tokens || 0);
 
       console.log(
-        `[LLM] OpenRouter/${params.model} | ${tokensUsed} tokens | ${duration}ms`
+        `[LLM] OpenRouter/${params.model} | ${tokensUsed} tokens | ${duration}ms`,
       );
 
       const content = response.choices[0]?.message?.content;
@@ -83,6 +84,10 @@ export const OPENROUTER_MODELS = {
   "openai/o1-preview": "O1 Preview",
   "openai/o1-mini": "O1 Mini",
 
+  // xAI Grok via OpenRouter
+  "x-ai/grok-4.1-fast": "Grok 4.1 Fast",
+  "x-ai/grok-code-fast-1": "Grok Code Fast (Code)",
+
   // Google via OpenRouter
   "google/gemini-2.0-flash-exp": "Gemini 2.0 Flash",
   "google/gemini-exp-1206": "Gemini Exp 1206",
@@ -95,6 +100,10 @@ export const OPENROUTER_MODELS = {
   // DeepSeek via OpenRouter
   "deepseek/deepseek-chat": "DeepSeek Chat",
   "deepseek/deepseek-r1": "DeepSeek R1 (Reasoning)",
+  "deepseek/deepseek-v3.2-speciale": "DeepSeek V3.2 Speciale",
+
+  // Zhipu AI via OpenRouter
+  "z-ai/glm-4.6v": "GLM-4.6V (Vision)",
 
   // Mistral via OpenRouter
   "mistralai/mistral-large-2411": "Mistral Large",

@@ -139,12 +139,23 @@ export const AVAILABLE_MODELS = {
     // Use any model via OpenRouter with "provider/model" format
     "anthropic/claude-3.5-sonnet": "Claude 3.5 Sonnet via OpenRouter",
     "openai/gpt-4o": "GPT-4o via OpenRouter",
+    // xAI Grok
+    "x-ai/grok-4.1-fast": "Grok 4.1 Fast",
+    "x-ai/grok-code-fast-1": "Grok Code Fast (Code)",
+    // Google
     "google/gemini-2.0-flash-exp": "Gemini 2.0 Flash",
     "google/gemini-exp-1206": "Gemini Exp 1206",
+    // Meta
     "meta-llama/llama-3.3-70b-instruct": "Llama 3.3 70B",
+    // DeepSeek
     "deepseek/deepseek-chat": "DeepSeek Chat",
     "deepseek/deepseek-r1": "DeepSeek R1 (Reasoning)",
+    "deepseek/deepseek-v3.2-speciale": "DeepSeek V3.2 Speciale",
+    // Zhipu AI
+    "z-ai/glm-4.6v": "GLM-4.6V (Vision)",
+    // Mistral
     "mistralai/codestral-2501": "Codestral (Code specialist)",
+    // Qwen
     "qwen/qwen-2.5-coder-32b-instruct": "Qwen 2.5 Coder 32B",
     "qwen/qwq-32b-preview": "QwQ 32B (Reasoning)",
   },
