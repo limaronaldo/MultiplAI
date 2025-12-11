@@ -8,6 +8,34 @@ interface CompletionParams {
   userPrompt: string;
 }
 
+// Retry configuration
+const MAX_RETRIES = 3;
+const INITIAL_RETRY_DELAY_MS = 1000;
+
+// Errors that should trigger a retry
+const RETRYABLE_ERRORS = [
+  "No content in response",
+  "rate_limit",
+  "timeout",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "socket hang up",
+  "502",
+  "503",
+  "529",
+];
+
+function isRetryableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return RETRYABLE_ERRORS.some((e) =>
+    message.toLowerCase().includes(e.toLowerCase()),
+  );
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class OpenRouterClient {
   private client: OpenRouter;
 
@@ -24,65 +52,81 @@ export class OpenRouterClient {
 
   async complete(params: CompletionParams): Promise<string> {
     const startTime = Date.now();
+    let lastError: Error | null = null;
 
-    try {
-      // Use streaming to get usage info including reasoning tokens
-      const stream = await this.client.chat.send({
-        model: params.model,
-        messages: [
-          {
-            role: "system",
-            content: params.systemPrompt,
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        // Use streaming to get usage info including reasoning tokens
+        const stream = await this.client.chat.send({
+          model: params.model,
+          messages: [
+            {
+              role: "system",
+              content: params.systemPrompt,
+            },
+            {
+              role: "user",
+              content: params.userPrompt,
+            },
+          ],
+          maxTokens: params.maxTokens,
+          temperature: params.temperature,
+          stream: true,
+          streamOptions: {
+            includeUsage: true,
           },
-          {
-            role: "user",
-            content: params.userPrompt,
-          },
-        ],
-        maxTokens: params.maxTokens,
-        temperature: params.temperature,
-        stream: true,
-        streamOptions: {
-          includeUsage: true,
-        },
-      });
+        });
 
-      let content = "";
-      let tokensUsed = 0;
-      let reasoningTokens = 0;
+        let content = "";
+        let tokensUsed = 0;
+        let reasoningTokens = 0;
 
-      for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta?.content;
-        if (delta) {
-          content += delta;
+        for await (const chunk of stream) {
+          const delta = chunk.choices[0]?.delta?.content;
+          if (delta) {
+            content += delta;
+          }
+
+          // Usage information comes in the final chunk
+          if (chunk.usage) {
+            tokensUsed =
+              (chunk.usage.promptTokens || 0) +
+              (chunk.usage.completionTokens || 0);
+            reasoningTokens = (chunk.usage as any).reasoningTokens || 0;
+          }
         }
 
-        // Usage information comes in the final chunk
-        if (chunk.usage) {
-          tokensUsed =
-            (chunk.usage.promptTokens || 0) +
-            (chunk.usage.completionTokens || 0);
-          reasoningTokens = (chunk.usage as any).reasoningTokens || 0;
+        const duration = Date.now() - startTime;
+
+        let logMsg = `[LLM] OpenRouter/${params.model} | ${tokensUsed} tokens | ${duration}ms`;
+        if (reasoningTokens > 0) {
+          logMsg += ` | reasoning: ${reasoningTokens}`;
+        }
+        console.log(logMsg);
+
+        if (!content) {
+          throw new Error("No content in response");
+        }
+
+        return content;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        if (isRetryableError(error) && attempt < MAX_RETRIES) {
+          const delay = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+          console.warn(
+            `[LLM] OpenRouter/${params.model} attempt ${attempt}/${MAX_RETRIES} failed: ${lastError.message}. Retrying in ${delay}ms...`,
+          );
+          await sleep(delay);
+        } else {
+          console.error("[LLM] OpenRouter Error:", error);
+          throw error;
         }
       }
-
-      const duration = Date.now() - startTime;
-
-      let logMsg = `[LLM] OpenRouter/${params.model} | ${tokensUsed} tokens | ${duration}ms`;
-      if (reasoningTokens > 0) {
-        logMsg += ` | reasoning: ${reasoningTokens}`;
-      }
-      console.log(logMsg);
-
-      if (!content) {
-        throw new Error("No content in response");
-      }
-
-      return content;
-    } catch (error) {
-      console.error("[LLM] OpenRouter Error:", error);
-      throw error;
     }
+
+    // Should never reach here, but TypeScript needs it
+    throw lastError || new Error("Unknown error after retries");
   }
 
   // Non-streaming version for simpler use cases

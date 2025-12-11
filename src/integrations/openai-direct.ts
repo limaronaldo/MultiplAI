@@ -28,6 +28,32 @@ const REASONING_MODELS = [
   "o1-preview",
 ];
 
+// Retry configuration
+const MAX_RETRIES = 3;
+const INITIAL_RETRY_DELAY_MS = 1000;
+
+// Errors that should trigger a retry
+const RETRYABLE_ERRORS = [
+  "No content in responses API response",
+  "No content in chat response",
+  "rate_limit",
+  "timeout",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "socket hang up",
+];
+
+function isRetryableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return RETRYABLE_ERRORS.some((e) =>
+    message.toLowerCase().includes(e.toLowerCase()),
+  );
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class OpenAIDirectClient {
   private client: OpenAI;
 
@@ -50,33 +76,49 @@ export class OpenAIDirectClient {
 
   async complete(params: CompletionParams): Promise<string> {
     const startTime = Date.now();
+    let lastError: Error | null = null;
 
-    try {
-      let content: string;
-      let tokensUsed: number;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        let content: string;
+        let tokensUsed: number;
 
-      if (this.isResponsesModel(params.model)) {
-        // Use responses API for Codex models
-        const result = await this.completeWithResponses(params);
-        content = result.content;
-        tokensUsed = result.tokens;
-      } else {
-        // Use chat completions API for other models
-        const result = await this.completeWithChat(params);
-        content = result.content;
-        tokensUsed = result.tokens;
+        if (this.isResponsesModel(params.model)) {
+          // Use responses API for Codex models
+          const result = await this.completeWithResponses(params);
+          content = result.content;
+          tokensUsed = result.tokens;
+        } else {
+          // Use chat completions API for other models
+          const result = await this.completeWithChat(params);
+          content = result.content;
+          tokensUsed = result.tokens;
+        }
+
+        const duration = Date.now() - startTime;
+        console.log(
+          `[LLM] OpenAI/${params.model} | ${tokensUsed} tokens | ${duration}ms`,
+        );
+
+        return content;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        if (isRetryableError(error) && attempt < MAX_RETRIES) {
+          const delay = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+          console.warn(
+            `[LLM] OpenAI/${params.model} attempt ${attempt}/${MAX_RETRIES} failed: ${lastError.message}. Retrying in ${delay}ms...`,
+          );
+          await sleep(delay);
+        } else {
+          console.error("[LLM] OpenAI Error:", error);
+          throw error;
+        }
       }
-
-      const duration = Date.now() - startTime;
-      console.log(
-        `[LLM] OpenAI/${params.model} | ${tokensUsed} tokens | ${duration}ms`,
-      );
-
-      return content;
-    } catch (error) {
-      console.error("[LLM] OpenAI Error:", error);
-      throw error;
     }
+
+    // Should never reach here, but TypeScript needs it
+    throw lastError || new Error("Unknown error after retries");
   }
 
   private async completeWithChat(
