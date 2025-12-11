@@ -1,5 +1,11 @@
 import postgres from "postgres";
-import { Task, TaskStatus, TaskEvent } from "../core/types";
+import {
+  Task,
+  TaskStatus,
+  TaskEvent,
+  OrchestrationState,
+  OrchestrationStateSchema,
+} from "../core/types";
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -250,6 +256,10 @@ export const db = {
       attemptCount: row.attempt_count,
       maxAttempts: row.max_attempts,
       lastError: row.last_error,
+      // Parent-child hierarchy
+      parentTaskId: row.parent_task_id || null,
+      subtaskIndex: row.subtask_index ?? null,
+      isOrchestrated: row.is_orchestrated ?? false,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     };
@@ -268,5 +278,215 @@ export const db = {
       metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
       createdAt: new Date(row.created_at),
     };
+  },
+
+  // ============================================
+  // Task Hierarchy Operations
+  // ============================================
+
+  /**
+   * Create a child task linked to a parent
+   */
+  async createChildTask(
+    parentId: string,
+    childData: Omit<
+      Task,
+      "id" | "createdAt" | "updatedAt" | "parentTaskId" | "subtaskIndex"
+    >,
+    subtaskIndex: number,
+  ): Promise<Task> {
+    const sql = getDb();
+    const [result] = await sql`
+      INSERT INTO tasks (
+        github_repo,
+        github_issue_number,
+        github_issue_title,
+        github_issue_body,
+        linear_issue_id,
+        status,
+        attempt_count,
+        max_attempts,
+        parent_task_id,
+        subtask_index,
+        is_orchestrated
+      ) VALUES (
+        ${childData.githubRepo},
+        ${childData.githubIssueNumber},
+        ${childData.githubIssueTitle},
+        ${childData.githubIssueBody},
+        ${childData.linearIssueId || null},
+        ${childData.status},
+        ${childData.attemptCount},
+        ${childData.maxAttempts},
+        ${parentId},
+        ${subtaskIndex},
+        false
+      )
+      RETURNING *
+    `;
+    return this.mapTask(result);
+  },
+
+  /**
+   * Get all child tasks for a parent, ordered by subtask_index
+   */
+  async getChildTasks(parentId: string): Promise<Task[]> {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM tasks
+      WHERE parent_task_id = ${parentId}
+      ORDER BY subtask_index ASC
+    `;
+    return results.map(this.mapTask);
+  },
+
+  /**
+   * Get the parent task for a child task
+   */
+  async getParentTask(childId: string): Promise<Task | null> {
+    const sql = getDb();
+    const [result] = await sql`
+      SELECT p.* FROM tasks p
+      INNER JOIN tasks c ON c.parent_task_id = p.id
+      WHERE c.id = ${childId}
+    `;
+    return result ? this.mapTask(result) : null;
+  },
+
+  /**
+   * Mark a task as orchestrated (has subtasks)
+   */
+  async markAsOrchestrated(taskId: string): Promise<void> {
+    const sql = getDb();
+    await sql`
+      UPDATE tasks
+      SET is_orchestrated = true, updated_at = NOW()
+      WHERE id = ${taskId}
+    `;
+  },
+
+  /**
+   * Get orchestration state from session memory
+   */
+  async getOrchestrationState(
+    taskId: string,
+  ): Promise<OrchestrationState | null> {
+    const sql = getDb();
+    const [result] = await sql`
+      SELECT orchestration FROM session_memory
+      WHERE task_id = ${taskId}
+    `;
+    if (!result?.orchestration) return null;
+    return OrchestrationStateSchema.parse(result.orchestration);
+  },
+
+  /**
+   * Initialize orchestration state for a parent task
+   */
+  async initializeOrchestration(
+    taskId: string,
+    state: OrchestrationState,
+  ): Promise<void> {
+    const sql = getDb();
+    await sql`
+      UPDATE session_memory
+      SET orchestration = ${JSON.stringify(state)}::jsonb,
+          updated_at = NOW()
+      WHERE task_id = ${taskId}
+    `;
+  },
+
+  /**
+   * Update a specific subtask's status in orchestration
+   */
+  async updateSubtaskStatus(
+    parentTaskId: string,
+    subtaskId: string,
+    update: {
+      status?: string;
+      diff?: string | null;
+      childTaskId?: string;
+      attempts?: number;
+    },
+  ): Promise<void> {
+    const sql = getDb();
+
+    // Get current orchestration state
+    const state = await this.getOrchestrationState(parentTaskId);
+    if (!state) {
+      throw new Error(`No orchestration state found for task ${parentTaskId}`);
+    }
+
+    // Update the specific subtask
+    const subtaskIndex = state.subtasks.findIndex((s) => s.id === subtaskId);
+    if (subtaskIndex === -1) {
+      throw new Error(`Subtask ${subtaskId} not found in orchestration`);
+    }
+
+    if (update.status) {
+      state.subtasks[subtaskIndex].status = update.status as any;
+    }
+    if (update.diff !== undefined) {
+      state.subtasks[subtaskIndex].diff = update.diff;
+    }
+    if (update.childTaskId) {
+      state.subtasks[subtaskIndex].childTaskId = update.childTaskId;
+    }
+    if (update.attempts !== undefined) {
+      state.subtasks[subtaskIndex].attempts = update.attempts;
+    }
+
+    // Update current subtask tracking
+    if (update.status === "in_progress") {
+      state.currentSubtask = subtaskId;
+    } else if (update.status === "completed") {
+      state.completedSubtasks.push(subtaskId);
+      if (state.currentSubtask === subtaskId) {
+        state.currentSubtask = null;
+      }
+    }
+
+    // Save back
+    await sql`
+      UPDATE session_memory
+      SET orchestration = ${JSON.stringify(state)}::jsonb,
+          updated_at = NOW()
+      WHERE task_id = ${parentTaskId}
+    `;
+  },
+
+  /**
+   * Set the aggregated diff in orchestration state
+   */
+  async setAggregatedDiff(parentTaskId: string, diff: string): Promise<void> {
+    const sql = getDb();
+    await sql`
+      UPDATE session_memory
+      SET orchestration = jsonb_set(
+        COALESCE(orchestration, '{}'::jsonb),
+        '{aggregatedDiff}',
+        ${JSON.stringify(diff)}::jsonb
+      ),
+      updated_at = NOW()
+      WHERE task_id = ${parentTaskId}
+    `;
+  },
+
+  /**
+   * Get all completed child diffs for aggregation
+   */
+  async getCompletedChildDiffs(
+    parentTaskId: string,
+  ): Promise<Array<{ subtaskId: string; diff: string; order: number }>> {
+    const state = await this.getOrchestrationState(parentTaskId);
+    if (!state) return [];
+
+    return state.subtasks
+      .filter((s) => s.status === "completed" && s.diff)
+      .map((s, index) => ({
+        subtaskId: s.id,
+        diff: s.diff!,
+        order: index,
+      }));
   },
 };

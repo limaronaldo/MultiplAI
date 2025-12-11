@@ -73,28 +73,46 @@ export const TaskContextSchema = z.object({
   commitMessage: z.string().nullable().default(null),
 
   // Validation outputs
-  testResults: z.array(z.object({
-    name: z.string(),
-    passed: z.boolean(),
-    error: z.string().optional(),
-  })).nullable().default(null),
+  testResults: z
+    .array(
+      z.object({
+        name: z.string(),
+        passed: z.boolean(),
+        error: z.string().optional(),
+      }),
+    )
+    .nullable()
+    .default(null),
 
-  lintResults: z.array(z.object({
-    file: z.string(),
-    line: z.number(),
-    message: z.string(),
-    severity: z.enum(["error", "warning"]),
-  })).nullable().default(null),
+  lintResults: z
+    .array(
+      z.object({
+        file: z.string(),
+        line: z.number(),
+        message: z.string(),
+        severity: z.enum(["error", "warning"]),
+      }),
+    )
+    .nullable()
+    .default(null),
 
   // Review outputs
-  reviewComments: z.array(z.object({
-    file: z.string(),
-    line: z.number().optional(),
-    comment: z.string(),
-    severity: z.enum(["critical", "suggestion", "praise"]),
-  })).nullable().default(null),
+  reviewComments: z
+    .array(
+      z.object({
+        file: z.string(),
+        line: z.number().optional(),
+        comment: z.string(),
+        severity: z.enum(["critical", "suggestion", "praise"]),
+      }),
+    )
+    .nullable()
+    .default(null),
 
-  reviewVerdict: z.enum(["APPROVE", "REQUEST_CHANGES"]).nullable().default(null),
+  reviewVerdict: z
+    .enum(["APPROVE", "REQUEST_CHANGES"])
+    .nullable()
+    .default(null),
 });
 
 export type TaskContext = z.infer<typeof TaskContextSchema>;
@@ -196,11 +214,15 @@ export const ValidationEventDataSchema = z.object({
   passed: z.boolean(),
   errorCount: z.number().optional(),
   warningCount: z.number().optional(),
-  errors: z.array(z.object({
-    file: z.string(),
-    line: z.number().optional(),
-    message: z.string(),
-  })).optional(),
+  errors: z
+    .array(
+      z.object({
+        file: z.string(),
+        line: z.number().optional(),
+        message: z.string(),
+      }),
+    )
+    .optional(),
 });
 
 export type ValidationEventData = z.infer<typeof ValidationEventDataSchema>;
@@ -289,13 +311,15 @@ export const AttemptRecordSchema = z.object({
 
   // What went wrong (if failed)
   failureReason: z.string().optional(),
-  failureDetails: z.object({
-    errorCode: z.string().optional(),
-    errorMessages: z.array(z.string()).optional(),
-    failedFiles: z.array(z.string()).optional(),
-    testOutput: z.string().optional(),
-    reviewComments: z.array(z.string()).optional(),
-  }).optional(),
+  failureDetails: z
+    .object({
+      errorCode: z.string().optional(),
+      errorMessages: z.array(z.string()).optional(),
+      failedFiles: z.array(z.string()).optional(),
+      testOutput: z.string().optional(),
+      reviewComments: z.array(z.string()).optional(),
+    })
+    .optional(),
 
   // Token usage for cost tracking
   totalTokens: z.number().optional(),
@@ -310,11 +334,15 @@ export const AttemptHistorySchema = z.object({
   attempts: z.array(AttemptRecordSchema).default([]),
 
   // Quick access to failure patterns (helps fixer agent)
-  failurePatterns: z.array(z.object({
-    pattern: z.string(),
-    occurrences: z.number(),
-    lastSeen: z.string().datetime(),
-  })).default([]),
+  failurePatterns: z
+    .array(
+      z.object({
+        pattern: z.string(),
+        occurrences: z.number(),
+        lastSeen: z.string().datetime(),
+      }),
+    )
+    .default([]),
 });
 
 export type AttemptHistory = z.infer<typeof AttemptHistorySchema>;
@@ -350,12 +378,14 @@ export type FixerOutput = z.infer<typeof FixerOutputSchema>;
 
 export const ReviewerOutputSchema = z.object({
   verdict: z.enum(["APPROVE", "REQUEST_CHANGES"]),
-  comments: z.array(z.object({
-    file: z.string(),
-    line: z.number().optional(),
-    comment: z.string(),
-    severity: z.enum(["critical", "suggestion", "praise"]),
-  })),
+  comments: z.array(
+    z.object({
+      file: z.string(),
+      line: z.number().optional(),
+      comment: z.string(),
+      severity: z.enum(["critical", "suggestion", "praise"]),
+    }),
+  ),
   summary: z.string(),
 });
 
@@ -373,6 +403,37 @@ export type AgentOutputs = z.infer<typeof AgentOutputsSchema>;
 // =============================================================================
 // SESSION MEMORY (COMPLETE)
 // =============================================================================
+
+/**
+ * Orchestration state for parent sessions
+ * Imported from core/types.ts for consistency
+ */
+export const OrchestrationStateSchema = z.object({
+  subtasks: z.array(
+    z.object({
+      id: z.string(),
+      childTaskId: z.string().uuid().nullable(),
+      status: z.enum([
+        "pending",
+        "in_progress",
+        "completed",
+        "failed",
+        "blocked",
+      ]),
+      diff: z.string().nullable(),
+      attempts: z.number().int().min(0),
+      targetFiles: z.array(z.string()).optional(),
+      acceptanceCriteria: z.array(z.string()).optional(),
+    }),
+  ),
+  currentSubtask: z.string().nullable(),
+  completedSubtasks: z.array(z.string()),
+  aggregatedDiff: z.string().nullable(),
+  executionOrder: z.array(z.string()).optional(),
+  parallelGroups: z.array(z.array(z.string())).optional(),
+});
+
+export type OrchestrationState = z.infer<typeof OrchestrationStateSchema>;
 
 export const SessionMemorySchema = z.object({
   // Identification
@@ -395,9 +456,13 @@ export const SessionMemorySchema = z.object({
   // Agent outputs (immutable once set)
   outputs: AgentOutputsSchema,
 
-  // Parent reference (for subtasks)
+  // Parent reference (for child subtasks)
   parentTaskId: z.string().uuid().optional(),
+  parentSessionId: z.string().uuid().optional(),
   subtaskId: z.string().optional(),
+
+  // Orchestration state (for parent tasks only)
+  orchestration: OrchestrationStateSchema.optional(),
 });
 
 export type SessionMemory = z.infer<typeof SessionMemorySchema>;
@@ -413,7 +478,7 @@ export function createSessionMemory(
   taskId: string,
   issueTitle: string,
   issueBody: string,
-  issueNumber: number
+  issueNumber: number,
 ): SessionMemory {
   return SessionMemorySchema.parse({
     taskId,
@@ -452,7 +517,7 @@ export function createProgressEntry(
     validationData?: ValidationEventData;
     decisionData?: DecisionEventData;
     metadata?: Record<string, unknown>;
-  }
+  },
 ): ProgressEntry {
   return ProgressEntrySchema.parse({
     id: crypto.randomUUID(),
@@ -470,10 +535,10 @@ export function createProgressEntry(
  */
 export function getRecentErrors(
   progress: ProgressLog,
-  limit: number = 3
+  limit: number = 3,
 ): ProgressEntry[] {
   return progress.entries
-    .filter(e => e.errorData !== undefined)
+    .filter((e) => e.errorData !== undefined)
     .slice(-limit);
 }
 
@@ -486,7 +551,7 @@ export function getAttemptSummary(attempts: AttemptHistory): string {
   }
 
   return attempts.attempts
-    .map(a => {
+    .map((a) => {
       const outcome = a.outcome === "in_progress" ? "ongoing" : a.outcome;
       const reason = a.failureReason ? `: ${a.failureReason}` : "";
       return `Attempt ${a.attemptNumber}: ${outcome}${reason}`;
@@ -498,5 +563,5 @@ export function getAttemptSummary(attempts: AttemptHistory): string {
  * Get failure patterns for fixer agent
  */
 export function getFailurePatterns(attempts: AttemptHistory): string[] {
-  return attempts.failurePatterns.map(p => p.pattern);
+  return attempts.failurePatterns.map((p) => p.pattern);
 }

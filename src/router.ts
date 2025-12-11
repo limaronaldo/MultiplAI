@@ -174,6 +174,7 @@ async function handleIssueEvent(payload: GitHubIssueEvent): Promise<Response> {
       status: "NEW",
       attemptCount: 0,
       maxAttempts: defaultConfig.maxAttempts,
+      isOrchestrated: false, // Will be set to true if complexity is M/L/XL
     });
 
     console.log(`[Task] Created task ${task.id} for issue #${issue.number}`);
@@ -400,6 +401,7 @@ route("POST", "/api/jobs", async (req) => {
         status: "NEW",
         attemptCount: 0,
         maxAttempts: defaultConfig.maxAttempts,
+        isOrchestrated: false,
       });
 
       taskIds.push(task.id);

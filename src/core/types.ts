@@ -85,9 +85,138 @@ export interface Task {
   maxAttempts: number;
   lastError?: string;
 
+  // Parent-child relationship (for orchestrated tasks)
+  parentTaskId?: string | null;
+  subtaskIndex?: number | null;
+  isOrchestrated: boolean;
+
   // Timestamps
   createdAt: Date;
   updatedAt: Date;
+}
+
+// ============================================
+// Task Hierarchy Types
+// ============================================
+
+/**
+ * Status of a subtask within an orchestrated parent
+ */
+export const SubtaskStatusType = {
+  PENDING: "pending",
+  IN_PROGRESS: "in_progress",
+  COMPLETED: "completed",
+  FAILED: "failed",
+  BLOCKED: "blocked",
+} as const;
+
+export type SubtaskStatusType =
+  (typeof SubtaskStatusType)[keyof typeof SubtaskStatusType];
+
+export const SubtaskStatusTypeSchema = z.enum([
+  "pending",
+  "in_progress",
+  "completed",
+  "failed",
+  "blocked",
+]);
+
+/**
+ * Status tracking for a single subtask
+ */
+export const SubtaskStatusSchema = z.object({
+  id: z.string(),
+  childTaskId: z.string().uuid().nullable(),
+  status: SubtaskStatusTypeSchema,
+  diff: z.string().nullable(),
+  attempts: z.number().int().min(0),
+  targetFiles: z.array(z.string()).optional(),
+  acceptanceCriteria: z.array(z.string()).optional(),
+});
+
+export type SubtaskStatus = z.infer<typeof SubtaskStatusSchema>;
+
+/**
+ * Orchestration state stored in parent session memory
+ * Tracks all subtasks and their progress
+ */
+export const OrchestrationStateSchema = z.object({
+  subtasks: z.array(SubtaskStatusSchema),
+  currentSubtask: z.string().nullable(),
+  completedSubtasks: z.array(z.string()),
+  aggregatedDiff: z.string().nullable(),
+  executionOrder: z.array(z.string()).optional(),
+  parallelGroups: z.array(z.array(z.string())).optional(),
+});
+
+export type OrchestrationState = z.infer<typeof OrchestrationStateSchema>;
+
+/**
+ * Definition of a subtask created by the Orchestrator
+ */
+export const SubtaskDefinitionSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  description: z.string(),
+  targetFiles: z.array(z.string()),
+  dependencies: z.array(z.string()), // Other subtask IDs this depends on
+  acceptanceCriteria: z.array(z.string()),
+  estimatedComplexity: z.enum(["XS", "S"]), // Subtasks must be small
+});
+
+export type SubtaskDefinition = z.infer<typeof SubtaskDefinitionSchema>;
+
+/**
+ * Helper to create initial orchestration state
+ */
+export function createOrchestrationState(
+  subtasks: SubtaskDefinition[],
+  executionOrder: string[],
+  parallelGroups?: string[][],
+): OrchestrationState {
+  return {
+    subtasks: subtasks.map((s) => ({
+      id: s.id,
+      childTaskId: null,
+      status: "pending" as const,
+      diff: null,
+      attempts: 0,
+      targetFiles: s.targetFiles,
+      acceptanceCriteria: s.acceptanceCriteria,
+    })),
+    currentSubtask: null,
+    completedSubtasks: [],
+    aggregatedDiff: null,
+    executionOrder,
+    parallelGroups,
+  };
+}
+
+/**
+ * Helper to check if all subtasks are complete
+ */
+export function areAllSubtasksComplete(state: OrchestrationState): boolean {
+  return state.subtasks.every((s) => s.status === "completed");
+}
+
+/**
+ * Helper to get next pending subtask respecting dependencies
+ */
+export function getNextPendingSubtask(
+  state: OrchestrationState,
+): SubtaskStatus | null {
+  const completedIds = new Set(state.completedSubtasks);
+
+  for (const subtaskId of state.executionOrder || []) {
+    const subtask = state.subtasks.find((s) => s.id === subtaskId);
+    if (!subtask) continue;
+
+    if (subtask.status === "pending") {
+      return subtask;
+    }
+  }
+
+  return null;
 }
 
 // ============================================
