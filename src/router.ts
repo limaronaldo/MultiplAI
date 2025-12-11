@@ -1,5 +1,6 @@
 import {
   GitHubIssueEvent,
+  GitHubLabel,
   GitHubCheckRunEvent,
   defaultConfig,
   JobStatus,
@@ -105,22 +106,154 @@ route("POST", "/webhooks/github", async (req) => {
   const payload = JSON.parse(body);
 
   console.log(`[Webhook] Received ${event} event`);
+async function handleIssueEvent(payload: GitHubIssueEvent): Promise<Response> {
+  const { action, issue, repository } = payload;
 
-  if (event === "issues") {
-    return handleIssueEvent(payload as GitHubIssueEvent);
-  }
-
-  if (event === "check_run") {
+  // Handle auto-dev label
+  // Só processa se for labeled com auto-dev
+  if (action === "labeled") {
+    const hasAutoDevLabel = issue.labels.some(
     return handleCheckRunEvent(payload as GitHubCheckRunEvent);
   }
 
   return Response.json({ ok: true, message: "Event ignored" });
-});
+      return Response.json({ ok: true, message: "Not an auto-dev issue" });
+    }
 
-async function handleIssueEvent(payload: GitHubIssueEvent): Promise<Response> {
-  const { action, issue, repository } = payload;
+    // Check for batch labels (labels starting with "batch:")
+    const batchLabel = issue.labels.find(
+      (l: GitHubLabel) => l.name.startsWith("batch:")
+    );
 
-  // Só processa se for labeled com auto-dev
+    if (batchLabel) {
+      console.log(`[Batch] Detected batch label: ${batchLabel.name}`);
+
+      const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+      const [owner, repoName] = repository.full_name.split("/");
+
+      try {
+        // Fetch all issues with the batch label
+        const { data: labeledIssues } = await octokit.rest.issues.listForRepo({
+          owner,
+          repo: repoName,
+          labels: batchLabel.name,
+          state: "open",
+          per_page: 100,
+        });
+
+        console.log(`[Batch] Found ${labeledIssues.length} issues with label ${batchLabel.name}`);
+
+        // Filter out the triggering issue and pull requests
+        const otherIssues = labeledIssues.filter(
+          (i) => i.number !== issue.number && !i.pull_request
+        );
+
+        if (otherIssues.length === 0) {
+          // No other issues found - post error comment
+          await octokit.rest.issues.createComment({
+            owner,
+            repo: repoName,
+            issue_number: issue.number,
+            body: `⚠️ No other open issues found with label \`${batchLabel.name}\`. Batch job not created.`,
+          });
+          return Response.json({
+            ok: true,
+            message: "No other issues found with batch label",
+          });
+        }
+
+        // Extract issue numbers
+        const issueNumbers = otherIssues.map((i) => i.number);
+        console.log(`[Batch] Creating job with issues: ${issueNumbers.join(", ")}`);
+
+        // Create tasks for each issue (similar to /api/jobs endpoint)
+        const taskIds: string[] = [];
+        for (const batchIssue of otherIssues) {
+          const existingTask = await db.getTaskByIssue(repository.full_name, batchIssue.number);
+          if (existingTask) {
+            taskIds.push(existingTask.id);
+            continue;
+          }
+
+          const task = await db.createTask({
+            githubRepo: repository.full_name,
+            githubIssueNumber: batchIssue.number,
+            githubIssueTitle: batchIssue.title,
+            githubIssueBody: batchIssue.body || "",
+            status: "NEW",
+            attemptCount: 0,
+            maxAttempts: defaultConfig.maxAttempts,
+          });
+          taskIds.push(task.id);
+        }
+
+        // Create the job
+        const job = await dbJobs.createJob({
+          status: "pending",
+          taskIds,
+          githubRepo: repository.full_name,
+          summary: {
+            total: taskIds.length,
+            completed: 0,
+            failed: 0,
+            inProgress: 0,
+            prsCreated: [],
+          },
+        });
+
+        console.log(`[Batch] Created job ${job.id} with ${taskIds.length} tasks`);
+
+        // Post success comment on triggering issue
+        await octokit.rest.issues.createComment({
+          owner,
+          repo: repoName,
+          issue_number: issue.number,
+          body: `🚀 Job created with ${taskIds.length} issues: ${job.id}`,
+        });
+
+        // Start the job automatically using JobRunner
+        const runner = new JobRunner(orchestrator);
+        runner.run(job).catch((error) => {
+          console.error(`[Batch] JobRunner failed for ${job.id}:`, error);
+          // Post error comment if job fails to start
+          octokit.rest.issues.createComment({
+            owner,
+            repo: repoName,
+            issue_number: issue.number,
+            body: `❌ Job ${job.id} failed to start: ${error instanceof Error ? error.message : "Unknown error"}`,
+          }).catch(console.error);
+        });
+
+        return Response.json({
+          ok: true,
+          message: "Batch job created and started",
+          jobId: job.id,
+          taskCount: taskIds.length,
+          issueNumbers,
+        });
+      } catch (error) {
+        console.error(`[Batch] Error processing batch label:`, error);
+        // Try to post error comment
+        try {
+          await octokit.rest.issues.createComment({
+            owner,
+            repo: repoName,
+            issue_number: issue.number,
+            body: `❌ Failed to create batch job: ${error instanceof Error ? error.message : "Unknown error"}`,
+          });
+        } catch (commentError) {
+          console.error(`[Batch] Failed to post error comment:`, commentError);
+        }
+        return Response.json(
+          { error: "Failed to process batch label" },
+          { status: 500 }
+        );
+      }
+    }
+
+    // Verifica se já existe task para esta issue
+    const existingTask = await db.getTaskByIssue(
+      repository.full_name,
   if (action === "labeled") {
     const hasAutoDevLabel = issue.labels.some(
       (l) => l.name === defaultConfig.autoDevLabel,
