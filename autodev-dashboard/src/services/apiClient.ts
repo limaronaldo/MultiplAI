@@ -165,3 +165,6 @@ export const apiClient = {
     const response = await fetchWithTimeout(`${API_BASE_URL}/review/pending`);
     return handleResponse<PendingReviewsResponse>(response);
   },
+};
+
+export default apiClient;
