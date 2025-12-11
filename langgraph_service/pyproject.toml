@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "langgraph-service"
+version = "0.1.0"
+description = "Service for running LangGraph graphs"
+requires-python = ">=3.10"
+dependencies = [
+    "langgraph>=0.1.0",
+    "langchain>=0.2.0",
+    "langchain-core>=0.2.0",
+    "langchain-anthropic>=0.1.0",
+    "langchain-openai>=0.1.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+    "httpx>=0.25.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["langgraph_service"]
