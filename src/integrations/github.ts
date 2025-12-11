@@ -502,4 +502,27 @@ export class GitHubClient {
 
     return { success: false, errorSummary: "Timeout waiting for checks" };
   }
+
+  /**
+   * List open issues with a specific label
+   */
+  async listIssuesByLabel(
+    fullName: string,
+    label: string,
+  ): Promise<Array<{ number: number; title: string }>> {
+    const { owner, repo } = this.parseRepo(fullName);
+
+    const response = await this.octokit.rest.issues.listForRepo({
+      owner,
+      repo,
+      labels: label,
+      state: "open",
+      per_page: 100,
+    });
+
+    return response.data.map((issue) => ({
+      number: issue.number,
+      title: issue.title,
+    }));
+  }
 }
