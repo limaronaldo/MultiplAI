@@ -466,8 +466,41 @@ export class Orchestrator {
 
   /**
    * Step 6: Open PR
+   * If PR already exists (from previous attempt after review rejection), skip creation
    */
   private async openPR(task: Task): Promise<Task> {
+    const logger = this.getLogger(task);
+
+    // If PR already exists (e.g., after review rejection and re-coding), skip creation
+    if (task.prNumber && task.prUrl) {
+      logger.info(
+        `PR #${task.prNumber} already exists, skipping creation. Ready for re-review.`,
+      );
+
+      // Update PR body with latest info (attempt count, etc.)
+      try {
+        await this.github.updatePR(task.githubRepo, task.prNumber, {
+          body: this.buildPRBody(task),
+        });
+        logger.info(`Updated PR #${task.prNumber} body with latest info`);
+      } catch (updateError) {
+        logger.warn(
+          `Could not update PR body: ${updateError instanceof Error ? updateError.message : "Unknown error"}`,
+        );
+      }
+
+      // Add comment indicating new changes were pushed
+      await this.github.addComment(
+        task.githubRepo,
+        task.prNumber,
+        `🔄 **AutoDev pushed new changes** (attempt ${task.attemptCount}/${task.maxAttempts})\n\nThe code has been updated based on previous feedback. Ready for re-review.`,
+      );
+
+      task = this.updateStatus(task, "PR_CREATED");
+      return this.updateStatus(task, "WAITING_HUMAN");
+    }
+
+    // Create new PR
     const prBody = this.buildPRBody(task);
 
     const pr = await this.github.createPR(task.githubRepo, {
