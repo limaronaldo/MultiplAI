@@ -581,7 +581,7 @@ export class Orchestrator {
 
   /**
    * Validate diff and apply if valid
-   * Returns success: false if validation fails (task will be failed)
+   * Returns success: false if validation fails (will trigger retry via fixer)
    */
   private async validateAndApplyDiff(
     task: Task,
@@ -594,16 +594,31 @@ export class Orchestrator {
 
     if (!quickResult.valid) {
       logger.error(`Diff validation failed: ${quickResult.errors.join(", ")}`);
-      const failedTask = await this.failTask(
-        task,
-        createOrchestratorError(
-          "INVALID_DIFF",
-          `Diff validation failed: ${quickResult.errors.join("; ")}`,
-          task.id,
-          true, // Recoverable - can retry with fix
-        ),
+
+      // Store error for fixer and increment attempt count
+      task.lastError = `Diff validation errors:\n${quickResult.errors.join("\n")}`;
+      task.attemptCount = (task.attemptCount || 0) + 1;
+
+      // Check if we've exhausted retries
+      if (task.attemptCount >= task.maxAttempts) {
+        const failedTask = await this.failTask(
+          task,
+          createOrchestratorError(
+            "INVALID_DIFF",
+            `Diff validation failed after ${task.maxAttempts} attempts: ${quickResult.errors.join("; ")}`,
+            task.id,
+            false, // No more retries
+          ),
+        );
+        return { success: false, task: failedTask };
+      }
+
+      // Set status to trigger fixer on next process() call
+      task.status = "TESTS_FAILED";
+      logger.info(
+        `Validation failed, will retry with fixer (attempt ${task.attemptCount}/${task.maxAttempts})`,
       );
-      return { success: false, task: failedTask };
+      return { success: false, task };
     }
 
     // Log warnings
@@ -634,17 +649,28 @@ export class Orchestrator {
 
         // Store errors for fixer to use
         task.lastError = `Typecheck errors:\n${fullResult.errors.join("\n")}`;
+        task.attemptCount = (task.attemptCount || 0) + 1;
 
-        const failedTask = await this.failTask(
-          task,
-          createOrchestratorError(
-            "TYPECHECK_FAILED",
-            `Code does not compile: ${fullResult.errors.slice(0, 3).join("; ")}`,
-            task.id,
-            true, // Recoverable
-          ),
+        // Check if we've exhausted retries
+        if (task.attemptCount >= task.maxAttempts) {
+          const failedTask = await this.failTask(
+            task,
+            createOrchestratorError(
+              "TYPECHECK_FAILED",
+              `Code does not compile after ${task.maxAttempts} attempts: ${fullResult.errors.slice(0, 3).join("; ")}`,
+              task.id,
+              false, // No more retries
+            ),
+          );
+          return { success: false, task: failedTask };
+        }
+
+        // Set status to trigger fixer on next process() call
+        task.status = "TESTS_FAILED";
+        logger.info(
+          `Typecheck failed, will retry with fixer (attempt ${task.attemptCount}/${task.maxAttempts})`,
         );
-        return { success: false, task: failedTask };
+        return { success: false, task };
       }
 
       // Log warnings from full validation

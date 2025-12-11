@@ -331,10 +331,15 @@ export class GitHubClient {
 
     for (const file of files) {
       // Handle file path - prefer 'to' for the destination path
-      const filePath =
+      let filePath =
         file.to && file.to !== "/dev/null"
           ? file.to
           : file.from?.replace(/^a\//, "") || "";
+
+      // Sanitize path: remove "b/" prefix and leading slashes (common LLM mistakes)
+      filePath = filePath
+        .replace(/^b\//, "") // Remove "b/" prefix from git diff format
+        .replace(/^\/+/, ""); // Remove leading slashes
 
       if (!filePath || filePath === "/dev/null") {
         continue;
