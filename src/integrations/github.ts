@@ -414,6 +414,26 @@ export class GitHubClient {
   }
 
   /**
+   * Update an existing Pull Request
+   */
+  async updatePR(
+    fullName: string,
+    prNumber: number,
+    params: { title?: string; body?: string },
+  ): Promise<void> {
+    const { owner, repo } = this.parseRepo(fullName);
+
+    await this.octokit.rest.pulls.update({
+      owner,
+      repo,
+      pull_number: prNumber,
+      ...params,
+    });
+
+    console.log(`[GitHub] Updated PR #${prNumber}`);
+  }
+
+  /**
    * Adiciona labels a uma issue/PR
    */
   async addLabels(

@@ -320,6 +320,30 @@ export interface GitHubCheckRunEvent {
   };
 }
 
+export interface GitHubPullRequestReviewEvent {
+  action: "submitted" | "edited" | "dismissed";
+  review: {
+    state: "approved" | "changes_requested" | "commented" | "dismissed";
+    body: string | null;
+    user: {
+      login: string;
+    };
+  };
+  pull_request: {
+    number: number;
+    title: string;
+    head: {
+      ref: string; // branch name
+    };
+    base: {
+      ref: string;
+    };
+  };
+  repository: {
+    full_name: string;
+  };
+}
+
 // ============================================
 // Task Events (for audit log)
 // ============================================
