@@ -19,7 +19,7 @@ interface CheckResult {
 }
 
 export class GitHubClient {
-  private octokit: Octokit;
+  public octokit: Octokit;
 
   constructor() {
     const token = process.env.GITHUB_TOKEN;
@@ -29,7 +29,7 @@ export class GitHubClient {
     this.octokit = new Octokit({ auth: token });
   }
 
-  private parseRepo(fullName: string): { owner: string; repo: string } {
+  parseRepo(fullName: string): { owner: string; repo: string } {
     const [owner, repo] = fullName.split("/");
     if (!owner || !repo) {
       throw new Error(`Invalid repo format: ${fullName}. Expected: owner/repo`);
