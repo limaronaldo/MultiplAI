@@ -86,10 +86,10 @@ Respond ONLY with valid JSON:
 
 export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
   constructor(modelOverride?: string) {
-    // Default: Claude Sonnet 4.5 via OpenRouter - reliable and high quality
+    // Default: Claude Opus 4.5 - TESTING A/B comparison vs Sonnet
     // Can be overridden for multi-agent mode
     super({
-      model: modelOverride || "claude-sonnet-4-5-20250929",
+      model: modelOverride || "claude-opus-4-5-20251101",
       maxTokens: 8192,
       temperature: 0.2,
     });
