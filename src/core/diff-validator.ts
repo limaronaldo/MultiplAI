@@ -328,14 +328,14 @@ function checkDiffCorruption(diff: string): string[] {
     const nextLine = lines[i + 1] || "";
 
     // Pattern 1: "+++ b/" not preceded by "--- a/" (standard diff header)
-    if (line.startsWith("+++ b/") && !prevLine.startsWith("--- a/")) {
+    if (line.startsWith("+++ b/") && !prevLine.startsWith("--- a/") && !prevLine.startsWith("--- /dev/null")) {
       warnings.push(
         `Line ${i + 1}: Suspicious '+++ b/' pattern - possible corrupted diff`,
       );
     }
 
     // Pattern 2: "--- a/" not followed by "+++ b/"
-    if (line.startsWith("--- a/") && !nextLine.startsWith("+++ b/")) {
+    if (line.startsWith("--- a/") && !nextLine.startsWith("+++ b/") && !nextLine.startsWith("+++ /dev/null")) {
       warnings.push(
         `Line ${i + 1}: Suspicious '--- a/' pattern - possible corrupted diff`,
       );
