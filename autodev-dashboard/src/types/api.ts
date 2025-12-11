@@ -1,7 +1,7 @@
 // API Type Definitions - matching backend exactly
 
 // Task status enum matching backend TaskStatus
-export type TaskStatus = 
+export type TaskStatus =
   | 'pending'
   | 'in_progress'
   | 'completed'
@@ -54,3 +54,5 @@ export interface HealthStatus {
 // API error response
 export interface ApiError {
   error: string;
+  message: string;
+  status_code: number;
