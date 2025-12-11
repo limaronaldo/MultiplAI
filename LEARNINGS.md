@@ -1127,4 +1127,494 @@ coderModels: [
 
 ---
 
-_Última atualização: 2025-12-11 12:50 UTC_
+---
+
+## Sessão: 2025-12-11 (Dashboard Issues Breakdown & TypeScript Future-Proofing)
+
+### Dashboard Epic - Complete Issue Breakdown
+
+**Epic #57**: Complete Dashboard Implementation for MultiplAI
+
+**Problem**: Original M-complexity issues were too large for AutoDev to process reliably.
+
+**Solution**: Split ALL issues into XS complexity (~30-45 min each) with complete code implementations.
+
+#### Issue Statistics
+
+| Category | Count | Status |
+|----------|-------|--------|
+| **XS Implementation Issues** | 43 | Created |
+| **XS Verification Issues** | 12 | Created |
+| **Total Dashboard Issues** | 55 | Ready for AutoDev |
+
+#### XS Issues by Phase
+
+| Phase | Issues | Est. Time | Description |
+|-------|--------|-----------|-------------|
+| 1. API Client | #80, #81, #82 | ~1.5h | Types, fetch functions, React hooks |
+| 2. Task List | #83, #84, #85 | ~1.5h | Component, filters, sorting |
+| 3. Task Detail | #58, #59, #60, #86, #87 | ~2.5h | SlideOut, header, planning, diff viewer |
+| 4. Jobs | #88-94 | ~3.5h | Hooks, cards, list, modal, actions, polling |
+| 5. Analytics | #95-98 | ~2h | Hooks, KPI cards, pie chart, bar chart |
+| 6. Logs | #99-101 | ~1.5h | SSE endpoint, hook, UI component |
+| 7. Refactoring | #102-107 | ~3h | Structure, sidebar, UI components, Zustand, Router |
+| 8. Costs | #75, #108, #109 | ~1.5h | Service, backend endpoint, dashboard |
+| 9. Theme/Mobile | #110-113 | ~2h | Theme context, CSS vars, media query, mobile sidebar |
+| 10. Features | #114-118 | ~2.5h | Toast, keyboard shortcuts, trigger, settings, Linear |
+
+**Total Implementation Time**: ~21.5 hours
+
+#### Verification Issues Created
+
+| Issue | Title | Verifies | Original M Issue |
+|-------|-------|----------|------------------|
+| #119 | API Client Integration Complete | #80, #81, #82 | #42 |
+| #120 | Task List Feature Complete | #83, #84, #85 | #43 |
+| #121 | Task Detail View Complete | #58, #59, #60, #86, #87 | #44 |
+| #122 | Job Management Feature Complete | #88-94 | #45 |
+| #123 | Analytics Dashboard Complete | #95-98 | #46 |
+| #124 | Real-Time Logs Feature Complete | #99-101 | #47 |
+| #125 | Refactoring Complete | #102-107 | #48 |
+| #126 | Cost Tracking Feature Complete | #75, #108, #109 | #50 |
+| #127 | Theme Support Complete | #110, #111 | #52 |
+| #128 | Mobile Responsive Design Complete | #112, #113 | #55, #78, #79 |
+| #129 | Additional Features Complete | #114-118 | #49, #51, #53, #54, #56 |
+| #130 | Final Integration: E2E Verification | All | Complete system |
+
+**Total Verification Time**: ~5-6 hours
+
+#### Key Patterns in XS Issues
+
+Each XS issue includes:
+1. **Complete TypeScript/React code** - Ready to copy-paste
+2. **Exact file paths** - No ambiguity about where files go
+3. **Import statements** - All dependencies specified
+4. **Export statements** - Proper module exports
+5. **Definition of Done** - Checklist for validation
+6. **Dependencies** - Which issues must complete first
+7. **Time estimate** - 30-45 minutes per issue
+
+**Example XS Issue Structure**:
+```markdown
+## Context
+What this issue does and why
+
+## Prerequisites
+- #80 (Types) completed
+- #81 (Fetch) completed
+
+## Implementation
+
+### Step 1: Create the file
+Create `src/path/to/file.tsx`:
+\`\`\`tsx
+// Complete implementation here
+\`\`\`
+
+### Step 2: Update exports
+\`\`\`ts
+export { Component } from "./Component";
+\`\`\`
+
+## Target Files
+- `src/path/to/file.tsx` (create)
+- `src/path/to/index.ts` (update)
+
+## Definition of Done
+- [ ] Component renders correctly
+- [ ] Props typed correctly
+- [ ] Exports work
+```
+
+---
+
+### TypeScript Future-Proofing
+
+**Issue**: TypeScript announced deprecation of several compiler options:
+- `--strict` will be enabled by default
+- `--target es5` will be removed (es2015 is new minimum)
+- `--baseUrl` will be removed
+- `--moduleResolution node10` will be removed
+
+**Analysis of autodev project**:
+
+| Option | Our Config | Status |
+|--------|-----------|--------|
+| `strict` | `true` ✅ | Already enabled |
+| `target` | `ES2022` ✅ | Already modern |
+| `baseUrl` | `"."` ⚠️ | **Was using deprecated** |
+| `moduleResolution` | `"bundler"` ✅ | Already modern |
+
+**Fix Applied**:
+```diff
+// tsconfig.json
+{
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"]
+-   },
+-   "baseUrl": "."
++   }
+  }
+}
+```
+
+**Result**: ✅ Typecheck passes without `baseUrl`. The `moduleResolution: "bundler"` mode handles path aliases correctly.
+
+**Why This Works**:
+- `moduleResolution: "bundler"` is designed for modern bundlers (Vite, Bun, esbuild)
+- It doesn't require `baseUrl` for path aliases
+- Paths are resolved relative to `tsconfig.json` location
+
+---
+
+### Aprendizados desta Sessão
+
+#### 1. Issue Granularity Matters
+- **M issues**: ~50% success rate with AutoDev
+- **S issues**: ~70% success rate
+- **XS issues with code**: ~95%+ success rate
+
+**Lesson**: The more detailed the issue, the better the LLM performs. Include actual code when possible.
+
+#### 2. Verification Issues are Essential
+- XS issues can drift from original M intent
+- Verification issues ensure integration works
+- Each verification includes tests + visual checklist
+
+#### 3. Dependency Graphs Prevent Failures
+- Issues with unmet dependencies fail
+- Clear dependency documentation prevents this
+- Batch execution order matters
+
+#### 4. TypeScript Evolves - Stay Updated
+- Check compiler deprecations regularly
+- Modern options (`bundler`) are more flexible
+- Remove deprecated options proactively
+
+---
+
+### Repository Statistics After This Session
+
+**MultiplAI GitHub Issues**:
+- Open issues: 55+ (Dashboard XS + Verification)
+- Closed issues: 30+ (M issues split into XS)
+- Labels: `auto-dev`, `complexity-XS`, `wave-3`
+
+**Dashboard Ready for AutoDev**:
+- 43 XS implementation issues
+- 12 verification issues
+- Complete dependency graph
+- ~27 hours total estimated work
+- Can run in parallel batches
+
+---
+
+### Commands Used This Session
+
+```bash
+# Create XS issue with detailed body
+gh issue create --repo limaronaldo/MultiplAI \
+  --title "[Dashboard] 1.1 Create API Client - Types" \
+  --label "auto-dev,complexity-XS" \
+  --body "$(cat issue-body.md)"
+
+# Add label to existing issue
+gh issue edit 58 --repo limaronaldo/MultiplAI --add-label "complexity-XS"
+
+# Update issue body
+gh issue edit 57 --repo limaronaldo/MultiplAI --body-file epic-body.md
+
+# List all XS issues
+gh issue list --repo limaronaldo/MultiplAI --label "complexity-XS" --limit 100
+
+# Check tsconfig for deprecated options
+cat tsconfig.json | jq '.compilerOptions | {target, baseUrl, moduleResolution, strict}'
+
+# Test typecheck after changes
+bun run typecheck
+```
+
+---
+
+### Next Steps
+
+1. **Run AutoDev on Dashboard Issues**:
+   ```bash
+   # Start with Phase 1 (foundation)
+   curl -X POST https://multiplai.fly.dev/api/jobs \
+     -H "Content-Type: application/json" \
+     -d '{"repo": "limaronaldo/MultiplAI", "issueNumbers": [80, 81, 82, 102]}'
+   ```
+
+2. **After Each Phase**: Run corresponding verification issue
+
+3. **Final Integration**: Run #130 (E2E verification) after all phases complete
+
+4. **Monitor Progress**: Use Epic #57 as tracking hub
+
+---
+
+---
+
+## Sessão: 2025-12-11 (Domain Memory Architecture & Agentic Context Engineering)
+
+### Visão Geral
+
+Esta sessão focou na **refatoração arquitetural** do MultiplAI, incorporando insights de três papers/talks fundamentais:
+1. **Google ADK** - Tiered Memory as Architecture
+2. **Anthropic ACCE** - Agentic Context Engineering
+3. **Domain Memory Pattern** - "The harness is the product, not the model"
+
+### Documentos de Referência Criados
+
+Dois documentos extensos foram criados durante a sessão para guiar a arquitetura:
+
+1. **Agentic Context Engineering: O Tradecraft dos Agentes**
+   - 9 Princípios de Scaling
+   - 9 Pitfalls Comuns
+   - Blueprint Completo
+
+2. **Domain Memory: O Segredo dos Agentes que Funcionam**
+   - Initializer → Coder → Validator pattern
+   - Three Memory Layers: Static, Session, Dynamic
+   - "Stop trying to give the agent a soul. Give it a ledger."
+
+### Princípios Chave Aplicados
+
+| Princípio | Significado | Aplicação no MultiplAI |
+|-----------|-------------|------------------------|
+| **Context is Compiled** | Cada call = fresh projection | Memory Manager compila contexto |
+| **Default Context = Empty** | Pull on demand, não inherit | Agents recebem mínimo necessário |
+| **Schema-Driven Summarization** | Structured, não prose | Zod schemas para todos outputs |
+| **Offload Heavy State** | Pointers > blobs | Diffs como artifacts |
+| **Sub-agents = Scope Boundaries** | Não "employees" | Subtasks isoladas |
+| **Prefix Stability** | Cache system prompts | Stable prefix, variable suffix |
+| **Evolving Strategies** | Learn from doing | Future: Dynamic Memory |
+
+### Issues Criadas por Wave
+
+#### WAVE 0: Domain Memory Foundation (5 issues) - CRÍTICO
+
+| Issue | Título | Descrição |
+|-------|--------|-----------|
+| #136 | Static Memory Layer | Repo configs, blocked paths, constraints |
+| #137 | Session Memory Layer | Task context, progress logs, attempts |
+| #138 | Memory Manager Service | Context compiler, artifact storage |
+| #139 | Initializer Agent | Replaces Planner, bootstraps session |
+| #140 | Validator Agent | Replaces Fixer, test loop foundation |
+
+**Dependências**: Wave 0 DEVE ser completado antes de qualquer outro wave.
+
+#### WAVE 1: Orchestration Layer (3 issues)
+
+| Issue | Título | Descrição |
+|-------|--------|-----------|
+| #131 | OrchestratorAgent | Coordinates M/L/XL → XS breakdown |
+| #132 | Parent/Child Task Schema | Hierarchy support, memory isolation |
+| #133 | Result Aggregator | Combines subtask diffs into single PR |
+
+**Dependências**: Requer Wave 0 completo.
+
+#### WAVE 2: Issue Breakdown (1 issue)
+
+| Issue | Título | Descrição |
+|-------|--------|-----------|
+| #134 | IssueBreakdownAgent | Generates XS GitHub issues from M+ issues |
+
+**Dependências**: Requer Wave 0 + Wave 1 completos.
+
+#### WAVE 3: MCP Integration (1 issue) - LOW PRIORITY
+
+| Issue | Título | Descrição |
+|-------|--------|-----------|
+| #135 | MCP Server | Editor integration (Cursor, VS Code) |
+
+**Prioridade**: Nice-to-have, não crítico.
+
+### Arquitetura: Antes vs Depois
+
+#### ANTES (Flat Task Object)
+
+```
+Issue → PlannerAgent → Task Object (acumula tudo)
+             ↓
+        CoderAgent ← lê Task
+             ↓
+        FixerAgent ← lê Task
+             ↓
+        ReviewerAgent ← lê Task
+             ↓
+        PR Created
+```
+
+**Problemas**:
+- Task object vira "dump" de tudo
+- Sem isolamento entre fases
+- Context creep conforme task progride
+- Sem ability to resume/checkpoint
+
+#### DEPOIS (Domain Memory Pattern)
+
+```
+Issue
+  ↓
+STATIC MEMORY (immutable, per-repo)
+├── repo config
+├── blocked paths
+├── allowed paths
+└── constraints
+  ↓
+INITIALIZER AGENT
+├── Reads static memory
+├── Creates session memory
+├── Bootstraps structured context
+└── Validates constraints
+  ↓
+SESSION MEMORY (mutable, per-task)
+├── issue context
+├── plan (DoD, steps)
+├── progress log
+├── attempts history
+└── agent outputs
+  ↓
+MEMORY MANAGER (context compiler)
+├── Compiles minimal context per call
+├── Manages artifacts
+├── Handles checkpoints
+└── Enforces isolation
+  ↓
+CODER AGENT
+├── Receives compiled context (minimal)
+├── Reads only what's needed
+├── Writes to session memory
+└── Produces diff (artifact)
+  ↓
+VALIDATOR AGENT
+├── Runs validation checks
+├── Structures results
+├── Updates session memory
+└── Provides actionable feedback
+  ↓
+ORCHESTRATOR (for M+ issues)
+├── Reads parent session
+├── Creates child sessions (isolated)
+├── Coordinates execution
+└── Aggregates results
+  ↓
+PR Created
+```
+
+### Citações Fundamentais Incorporadas
+
+> "For agents, memory is the system. The prompt is not the agent. The LLM by itself is not the agent. The state is the agent."
+
+> "The agent is now just a policy that transforms one consistent memory state into another."
+
+> "Stop trying to give the agent a soul. Give it a ledger."
+
+> "Default context should contain nearly nothing. The agent must pull memory when it needs it."
+
+> "Sub-agents are scope boundaries, not little employees."
+
+> "The moat isn't a smarter AI agent. The moat is your domain memory and your harness."
+
+### Decisões Arquiteturais Tomadas
+
+#### ADR-004: Domain Memory as Foundation
+- **Data**: 2025-12-11
+- **Decisão**: Implementar Domain Memory antes de qualquer feature de orchestration
+- **Contexto**: Insights de Anthropic ACCE + Domain Memory talk
+- **Consequências**: Wave 0 é pré-requisito para tudo
+
+#### ADR-005: Initializer → Coder → Validator Pattern
+- **Data**: 2025-12-11
+- **Decisão**: Substituir Planner/Fixer por Initializer/Validator
+- **Contexto**: Pattern mais robusto com feedback loops estruturados
+- **Consequências**: Agents operam em session memory, não em task objects
+
+#### ADR-006: Context Compilation (Not Accumulation)
+- **Data**: 2025-12-11
+- **Decisão**: Memory Manager compila contexto fresh para cada call
+- **Contexto**: Evitar signal dilution e context rot
+- **Consequências**: Agents recebem minimal context, puxam mais se necessário
+
+#### ADR-007: Artifacts for Heavy State
+- **Data**: 2025-12-11
+- **Decisão**: Diffs, logs, test outputs são artifacts (referenciados por handle)
+- **Contexto**: Não inline blobs grandes no prompt
+- **Consequências**: Context window permanece pequeno e focado
+
+### Labels Criados
+
+| Label | Cor | Descrição |
+|-------|-----|-----------|
+| `wave-0` | #0E8A16 (verde) | Phase 0: Domain Memory Foundation |
+| `wave-1` | #1D76DB (azul) | Phase 1: Orchestration Layer |
+| `wave-2` | #A2EEEF (ciano) | Phase 2: Issue Breakdown |
+| `wave-3` | #D4C5F9 (roxo) | Phase 3: MCP & Editor Integration |
+
+### Roadmap Completo
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    MULTIPLAI ROADMAP 2025                   │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  WAVE 0: Domain Memory Foundation (CRITICAL PATH)          │
+│  ├── #136 Static Memory Layer                              │
+│  ├── #137 Session Memory Layer                             │
+│  ├── #138 Memory Manager Service                           │
+│  ├── #139 Initializer Agent                                │
+│  └── #140 Validator Agent                                  │
+│                     ↓                                       │
+│  WAVE 1: Orchestration Layer                               │
+│  ├── #131 OrchestratorAgent                                │
+│  ├── #132 Parent/Child Task Schema                         │
+│  └── #133 Result Aggregator                                │
+│                     ↓                                       │
+│  WAVE 2: Issue Breakdown                                   │
+│  └── #134 IssueBreakdownAgent                              │
+│                     ↓                                       │
+│  WAVE 3: MCP Integration (Optional)                        │
+│  └── #135 MCP Server                                       │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Próximos Passos
+
+1. **Break M issues into XS**: Cada issue #131-140 será quebrada em 3-5 XS issues
+2. **Implementar Wave 0 primeiro**: Foundation é pré-requisito
+3. **Teste A/B com Domain Memory**: Comparar performance com/sem
+4. **Dynamic Memory (futuro)**: Aprender patterns de PRs merged
+
+### Estatísticas da Sessão
+
+| Métrica | Valor |
+|---------|-------|
+| Issues criadas | 10 (M-sized) |
+| Issues atualizadas | 5 (com Domain Memory refs) |
+| Labels criados | 4 (wave-0 a wave-3) |
+| Documentos de referência | 2 (Agentic CE + Domain Memory) |
+| Commits | 1 (pending) |
+
+### Comandos Úteis
+
+```bash
+# Listar issues por wave
+gh issue list --repo limaronaldo/MultiplAI --label "wave-0" --json number,title
+
+# Ver dependências de um issue
+gh issue view 131 --repo limaronaldo/MultiplAI --json body | jq -r '.body' | grep -A5 "Dependencies"
+
+# Criar issue com label
+gh issue create --repo limaronaldo/MultiplAI \
+  --title "[XS] Static Memory - Define RepoConfig schema" \
+  --label "auto-dev,complexity-XS,wave-0" \
+  --body "$(cat issue-body.md)"
+```
+
+---
+
+_Última atualização: 2025-12-11 21:00 UTC_

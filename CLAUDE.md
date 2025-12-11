@@ -6,6 +6,50 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## Latest Session Summary (2025-12-11 Evening)
+
+### Domain Memory Architecture Refactoring
+
+Incorporated **Agentic Context Engineering** insights from:
+- Google ADK (Tiered Memory)
+- Anthropic ACCE (Adaptive Context)
+- Domain Memory Pattern ("The harness is the product")
+
+### New Architecture: Initializer → Coder → Validator
+
+**Key Principle**: "The agent is just a policy that transforms one consistent memory state into another."
+
+### Issues Created by Wave
+
+| Wave | Issues | Description |
+|------|--------|-------------|
+| **Wave 0** | #136-#140 | Domain Memory Foundation (CRITICAL PATH) |
+| **Wave 1** | #131-#133 | Orchestration Layer |
+| **Wave 2** | #134 | Issue Breakdown |
+| **Wave 3** | #135 | MCP Integration (low priority) |
+
+### Wave 0: Domain Memory Foundation (Must Complete First)
+- #136: Static Memory Layer (repo configs, constraints)
+- #137: Session Memory Layer (task context, progress)
+- #138: Memory Manager Service (context compiler)
+- #139: Initializer Agent (replaces Planner)
+- #140: Validator Agent (replaces Fixer)
+
+### Key Architectural Decisions
+- **ADR-004**: Domain Memory as foundation before orchestration
+- **ADR-005**: Initializer → Coder → Validator pattern
+- **ADR-006**: Context compilation, not accumulation
+- **ADR-007**: Artifacts for heavy state (diffs, logs)
+
+### Next Steps
+1. Break M issues (#131-140) into XS issues
+2. Implement Wave 0 first (foundation)
+3. Test with Domain Memory pattern
+
+See `LEARNINGS.md` for complete documentation.
+
+---
+
 ## Project Overview
 
 **AutoDev** is an autonomous development system that uses LLMs to resolve small, well-defined GitHub issues automatically. It receives issues via webhook, plans the implementation, generates code as unified diffs, creates PRs, and handles test failures with automatic fixes.

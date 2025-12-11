@@ -13,8 +13,7 @@
     "types": ["bun-types"],
     "paths": {
       "@/*": ["./src/*"]
-    },
-    "baseUrl": "."
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules"]
