@@ -10,10 +10,13 @@ import { dbJobs } from "./integrations/db-jobs";
 import { JobRunner } from "./core/job-runner";
 import { createHmac, timingSafeEqual } from "crypto";
 import { Octokit } from "octokit";
-import { Octokit } from "octokit";
 
+// Batch processing configuration
 const BATCH_LABEL = process.env.BATCH_LABEL || "batch-auto-dev";
 
+// Validation helpers
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Validation helpers
 const UUID_REGEX =
 // Validation helpers
@@ -115,12 +118,19 @@ route("POST", "/webhooks/github", async (req) => {
   if (action === "labeled") {
     const label = payload.label;
     
+
+  // Só processa se for labeled com auto-dev
+  if (action === "labeled") {
     // Check for batch label
+    const label = (payload as any).label;
     if (label && label.name === BATCH_LABEL) {
       console.log(`[Webhook] Batch label detected on issue #${issue.number}`);
-      // For now, just log - batch processing will be implemented later
-      return Response.json({ ok: true, message: "Batch label detected" });
+      // For now, just log and continue - batch processing will be implemented later
     }
+
+    const hasAutoDevLabel = issue.labels.some(
+      (l) => l.name === defaultConfig.autoDevLabel,
+    );
 
   if (action === "labeled") {
     const label = (payload as any).label;
