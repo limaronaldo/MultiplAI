@@ -12,7 +12,6 @@ import {
   Job,
   JobCreateRequest,
   JobCreateResponse,
-  PendingReview,
   PendingReviewsResponse,
 } from '../types/api';
 
@@ -165,3 +164,4 @@ export const apiClient = {
       method: 'POST',
       headers: defaultHeaders,
     });
+    return handleResponse<Job>(response);
