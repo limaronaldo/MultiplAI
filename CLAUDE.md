@@ -409,6 +409,25 @@ AutoDev expects these GitHub webhooks:
 | GET | `/api/tasks/:id` | Get task details |
 | POST | `/api/tasks/:id/process` | Manually trigger task processing |
 | GET | `/api/review/pending` | List Linear issues awaiting review |
+| POST | `/api/jobs` | Create a batch job for multiple issues |
+| GET | `/api/jobs/:id` | Get job status with task summaries |
+| POST | `/api/jobs/:id/run` | Manually start job processing |
+| POST | `/api/jobs/:id/cancel` | Cancel a running job |
+
+### Jobs API Examples
+
+```bash
+# Create a job for multiple issues
+curl -X POST https://multiplai.fly.dev/api/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"repo": "owner/repo", "issueNumbers": [21, 22, 23]}'
+
+# Check job status
+curl -s https://multiplai.fly.dev/api/jobs/<job-id> | jq
+
+# Start job processing
+curl -X POST https://multiplai.fly.dev/api/jobs/<job-id>/run
+```
 
 ---
 
@@ -618,4 +637,10 @@ PLANNING_DONE → (action: CODE) → CODING_DONE
 CODING_DONE → (action: TEST) → TESTING
 TESTING → (action: WAIT) → TESTS_PASSED or TESTS_FAILED
 TESTS_FAILED → (action: FIX) → FIXING → CODING_DONE (loop)
+TESTS_PASSED → (action: REVIEW) → REVIEWING
+REVIEWING → REVIEW_APPROVED or REVIEW_REJECTED
+REVIEW_REJECTED → (action: CODE) → re-coding with feedback
+REVIEW_APPROVED → (action: OPEN_PR) → PR_CREATED → WAITING_HUMAN
 ```
+
+**Review rejection loop:** When a review is rejected, the task goes back to coding phase with the reviewer's feedback in `lastError`. This allows the coder to fix issues identified by the reviewer.

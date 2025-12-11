@@ -227,4 +227,112 @@ Tipos: feat, fix, refactor, docs, test, chore
 
 ---
 
-_Última atualização: 2025-12-10 21:00 UTC_
+## Sessão: 2025-12-11 (JobRunner & Issue Breakdown)
+
+### Recursos Implementados
+
+#### 1. JobRunner - Processamento Paralelo de Tasks
+- **Arquivo**: `src/core/job-runner.ts`
+- **Funcionalidade**: Executa múltiplas tasks em paralelo com `maxParallel: 3`
+- **Endpoints**:
+  - `POST /api/jobs` - Cria job com array de issue numbers
+  - `GET /api/jobs/:id` - Status do job com resumo
+  - `POST /api/jobs/:id/run` - Inicia processamento manualmente
+  - `POST /api/jobs/:id/cancel` - Cancela job em andamento
+
+#### 2. Retry Logic para LLM APIs
+- **Arquivos modificados**: `anthropic.ts`, `openai-direct.ts`, `openrouter.ts`
+- **Configuração**: MAX_RETRIES=3 com exponential backoff
+- **Erros retryable**:
+  - "No content in response" (empty API responses)
+  - Rate limits (429)
+  - Timeouts (ECONNRESET, ETIMEDOUT)
+  - Overloaded (529)
+  - Server errors (502, 503)
+
+#### 3. REVIEW_REJECTED State Fix
+- **Arquivo**: `src/core/orchestrator.ts`
+- **Problema**: `runCoding()` só aceitava `PLANNING_DONE`, falhava após review rejection
+- **Solução**: `validateTaskState()` agora aceita array de status válidos
+- **Transição corrigida**: `REVIEW_REJECTED` → `CODING` agora funciona
+
+#### 4. Reset Tasks Script
+- **Arquivo**: `src/scripts/reset-tasks.ts`
+- **Uso**: `bun run src/scripts/reset-tasks.ts 22 23 24`
+- **Funcionalidade**: Reseta tasks failed para NEW para retry
+
+### Bugs Encontrados e Corrigidos
+
+| Bug | Causa | Solução | Commit |
+|-----|-------|---------|--------|
+| Job shows `failed` but PRs created | `WAITING_HUMAN` contado como failure | Tratar como success no JobRunner | PR #18 |
+| "path cannot start with slash" | LLM retorna `/src/file.ts` | Path sanitization no github.ts | e54fc49 |
+| Empty API response crashes task | Transient API issue sem retry | Retry logic em todos LLM clients | e54fc49 |
+| REVIEW_REJECTED não retenta | `runCoding()` só aceita PLANNING_DONE | validateTaskState aceita array | 03772ed |
+
+### Issue Breakdown - Wave 2/3
+
+#### Issue #6 → 4 XS Issues (#21-#24)
+| Issue | Título | Status |
+|-------|--------|--------|
+| #21 | Add `listIssuesByLabel` to GitHubClient | ✅ PR #34 |
+| #22 | Add batch label config to .env.example | ✅ PR #35 |
+| #23 | Detect batch-auto-dev label in webhook | ⏳ REVIEW_REJECTED (retrying) |
+| #24 | Create Job from batch label | ⏳ REVIEW_REJECTED (retrying) |
+
+#### Issue #7 → 4 XS Issues (#25-#28)
+| Issue | Título | Status |
+|-------|--------|--------|
+| #25 | Create langgraph_service/pyproject.toml | 🔜 Pending |
+| #26 | Create Pydantic schemas | 🔜 Pending |
+| #27 | Create config.py | 🔜 Pending |
+| #28 | Create README.md and Dockerfile | 🔜 Pending |
+
+#### Issue #8 → 5 XS Issues (#29-#33)
+| Issue | Título | Status |
+|-------|--------|--------|
+| #29 | Create load_context node | 🔜 Pending |
+| #30 | Create plan_issue node | 🔜 Pending |
+| #31 | Create execute_issue node | 🔜 Pending |
+| #32 | Create create_pr node | 🔜 Pending |
+| #33 | Create graph.py and test | 🔜 Pending |
+
+### Aprendizados desta Sessão
+
+1. **Empty API Responses são Comuns**: OpenAI Codex e Gemini 3 Pro frequentemente retornam empty. Retry logic é essencial.
+
+2. **REVIEW_REJECTED Precisa de Re-code**: O state machine estava correto mas o orchestrator não. Sempre verificar ambos.
+
+3. **XS Issues Funcionam Melhor**: Issues muito detalhadas (código exato no body) têm 100% success rate vs ~50% para issues mais abstratas.
+
+4. **JobRunner Auto-start**: Jobs criados via API não iniciam automaticamente - precisa chamar `/run` manualmente.
+
+5. **Production DB ≠ Local DB**: Scripts rodam no container via `fly ssh console -C "bun run script.ts"`.
+
+### Próximos Passos (Next Session)
+
+1. **Verificar status de #23 e #24** - Estavam em REVIEW_REJECTED retry cycle
+2. **Se #23/#24 completaram**: Processar #25-#28 (LangGraph boilerplate)
+3. **Se #23/#24 falharam**: Investigar review comments, ajustar issues
+4. **Depois**: Processar #29-#33 (LangGraph graph nodes)
+
+### Comandos Úteis
+
+```bash
+# Check job status
+curl -s https://multiplai.fly.dev/api/jobs/<job-id> | jq '{status: .job.status, tasks: [.tasks[] | {issue: .githubIssueNumber, status: .status, pr: .prUrl}]}'
+
+# Reset failed tasks
+fly ssh console -a multiplai -C "bun run src/scripts/reset-tasks.ts 23 24"
+
+# Create and run job
+curl -X POST https://multiplai.fly.dev/api/jobs -H "Content-Type: application/json" -d '{"repo": "limaronaldo/MultiplAI", "issueNumbers": [23, 24]}'
+curl -X POST https://multiplai.fly.dev/api/jobs/<job-id>/run
+
+# Check logs
+fly logs -a multiplai --no-tail | tail -50
+```
+
+---
+
+_Última atualização: 2025-12-11 05:10 UTC_
