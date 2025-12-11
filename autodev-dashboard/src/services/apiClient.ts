@@ -31,8 +31,6 @@ export class ApiClientError extends Error {
     this.name = 'ApiClientError';
     this.statusCode = statusCode;
     this.originalError = originalError;
-
-    // Maintains proper stack trace for where error was thrown (V8 engines)
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, ApiClientError);
     }
@@ -49,7 +47,6 @@ async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
-
   try {
     const response = await fetch(url, {
       ...options,
@@ -58,17 +55,9 @@ async function fetchWithTimeout(
     return response;
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new ApiClientError(
-        `Request timeout after ${timeout}ms`,
-        undefined,
-        error
-      );
+      throw new ApiClientError(`Request timeout after ${timeout}ms`, undefined, error);
     }
-    throw new ApiClientError(
-      'Network error occurred',
-      undefined,
-      error instanceof Error ? error : undefined
-    );
+    throw new ApiClientError('Network error occurred', undefined, error instanceof Error ? error : undefined);
   } finally {
     clearTimeout(timeoutId);
   }
@@ -92,15 +81,10 @@ async function handleResponse<T>(response: Response): Promise<T> {
     }
     throw new ApiClientError(errorMessage, response.status);
   }
-
   try {
     return await response.json();
   } catch (error) {
-    throw new ApiClientError(
-      'Failed to parse response JSON',
-      response.status,
-      error instanceof Error ? error : undefined
-    );
+    throw new ApiClientError('Failed to parse response JSON', response.status, error instanceof Error ? error : undefined);
   }
 }
 
@@ -165,3 +149,19 @@ export const apiClient = {
       headers: defaultHeaders,
     });
     return handleResponse<Job>(response);
+  },
+
+  /** Cancel a job */
+  async cancelJob(jobId: string): Promise<Job> {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/jobs/${jobId}/cancel`, {
+      method: 'POST',
+      headers: defaultHeaders,
+    });
+    return handleResponse<Job>(response);
+  },
+
+  /** Get all pending reviews */
+  async getPendingReviews(): Promise<PendingReviewsResponse> {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/review/pending`);
+    return handleResponse<PendingReviewsResponse>(response);
+  },
