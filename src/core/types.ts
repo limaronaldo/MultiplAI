@@ -250,6 +250,7 @@ export const JobStatus = {
   COMPLETED: "completed",
   FAILED: "failed",
   PARTIAL: "partial", // Some tasks succeeded, some failed
+  CANCELLED: "cancelled",
 } as const;
 
 export type JobStatus = (typeof JobStatus)[keyof typeof JobStatus];
@@ -293,4 +294,20 @@ export const defaultConfig: AutoDevConfig = {
   allowedPaths: ["src/", "lib/", "tests/", "test/"],
   blockedPaths: [".env", "secrets/", ".github/workflows/"],
   autoDevLabel: "auto-dev",
+};
+
+// ============================================
+// Job Runner Config
+// ============================================
+
+export interface JobRunnerConfig {
+  /** Maximum number of tasks to process in parallel */
+  maxParallel: number;
+  /** Whether to continue processing remaining tasks when one fails */
+  continueOnError: boolean;
+}
+
+export const defaultJobRunnerConfig: JobRunnerConfig = {
+  maxParallel: 3,
+  continueOnError: true,
 };

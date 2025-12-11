@@ -7,6 +7,7 @@ import {
 import { Orchestrator } from "./core/orchestrator";
 import { db } from "./integrations/db";
 import { dbJobs } from "./integrations/db-jobs";
+import { JobRunner } from "./core/job-runner";
 import { LinearService } from "./integrations/linear";
 import { createHmac, timingSafeEqual } from "crypto";
 import { Octokit } from "octokit";
@@ -493,7 +494,7 @@ route("GET", "/api/jobs/:id/events", async (req) => {
 
 /**
  * POST /api/jobs/:id/run - Start processing a pending job
- * Returns immediately and processes tasks in background
+ * Returns immediately and processes tasks in background using JobRunner
  */
 route("POST", "/api/jobs/:id/run", async (req) => {
   const url = new URL(req.url);
@@ -516,69 +517,56 @@ route("POST", "/api/jobs/:id/run", async (req) => {
     );
   }
 
-  // Update job to running
-  await dbJobs.updateJob(id, { status: "running" });
-
-  // Start processing in background (non-blocking)
-  processJobInBackground(id, job.taskIds).catch((error) => {
-    console.error(`[Job] Background processing failed for ${id}:`, error);
+  // Start processing in background using JobRunner (non-blocking)
+  const runner = new JobRunner(orchestrator);
+  runner.run(job).catch((error) => {
+    console.error(`[Job] JobRunner failed for ${id}:`, error);
   });
 
   // Return immediately
   return Response.json({
     ok: true,
-    message: "Job started processing",
+    message: "Job started processing with JobRunner",
     jobId: id,
     taskCount: job.taskIds.length,
   });
 });
 
 /**
- * Process job tasks in background
+ * POST /api/jobs/:id/cancel - Cancel a running job
  */
-async function processJobInBackground(
-  jobId: string,
-  taskIds: string[],
-): Promise<void> {
-  console.log(`[Job] Starting background processing for ${jobId}`);
+route("POST", "/api/jobs/:id/cancel", async (req) => {
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const id = pathParts[pathParts.length - 2]; // /api/jobs/:id/cancel
 
-  for (const taskId of taskIds) {
-    const task = await db.getTask(taskId);
-    if (!task) {
-      console.warn(`[Job] Task ${taskId} not found, skipping`);
-      continue;
-    }
-
-    try {
-      let currentTask = task;
-
-      // Process until terminal state
-      while (
-        currentTask.status !== "COMPLETED" &&
-        currentTask.status !== "FAILED" &&
-        currentTask.status !== "WAITING_HUMAN"
-      ) {
-        currentTask = await orchestrator.process(currentTask);
-        await db.updateTask(taskId, currentTask);
-      }
-
-      console.log(
-        `[Job] Task ${taskId} finished with status: ${currentTask.status}`,
-      );
-    } catch (error) {
-      console.error(`[Job] Error processing task ${taskId}:`, error);
-      await db.updateTask(taskId, {
-        status: "FAILED",
-        lastError: error instanceof Error ? error.message : "Unknown error",
-      });
-    }
-
-    // Update job summary after each task
-    await dbJobs.updateJobSummary(jobId);
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid job ID format" }, { status: 400 });
   }
 
-  console.log(`[Job] Background processing completed for ${jobId}`);
-}
+  const job = await dbJobs.getJob(id);
+  if (!job) {
+    return Response.json({ error: "Job not found" }, { status: 404 });
+  }
+
+  if (job.status !== "running" && job.status !== "pending") {
+    return Response.json(
+      { error: `Cannot cancel job with status: ${job.status}` },
+      { status: 400 },
+    );
+  }
+
+  // Update job status to cancelled
+  await dbJobs.updateJob(id, { status: "cancelled" });
+
+  console.log(`[Job] Job ${id} cancelled`);
+
+  return Response.json({
+    ok: true,
+    message: "Job cancelled",
+    jobId: id,
+  });
+});
 
 // Endpoint para Claude Code: lista issues aguardando review
 route("GET", "/api/review/pending", async (req) => {
