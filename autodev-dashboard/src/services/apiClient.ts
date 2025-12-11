@@ -3,7 +3,7 @@
  * Provides typed functions for communicating with the AutoDev backend API
  */
 
-import { API_BASE_URL, REQUEST_TIMEOUT } from '../config';
+import { API_BASE_URL, REQUEST_TIMEOUT } from "../config/api";
 import {
   HealthResponse,
   Task,
@@ -13,7 +13,7 @@ import {
   JobCreateRequest,
   JobCreateResponse,
   PendingReviewsResponse,
-} from '../types/api';
+} from "../types/api";
 
 /**
  * Custom error class for API client errors
@@ -22,13 +22,9 @@ export class ApiClientError extends Error {
   public readonly statusCode: number | undefined;
   public readonly originalError: Error | undefined;
 
-  constructor(
-    message: string,
-    statusCode?: number,
-    originalError?: Error
-  ) {
+  constructor(message: string, statusCode?: number, originalError?: Error) {
     super(message);
-    this.name = 'ApiClientError';
+    this.name = "ApiClientError";
     this.statusCode = statusCode;
     this.originalError = originalError;
     if (Error.captureStackTrace) {
@@ -43,7 +39,7 @@ export class ApiClientError extends Error {
 async function fetchWithTimeout(
   url: string,
   options: RequestInit = {},
-  timeout: number = REQUEST_TIMEOUT
+  timeout: number = REQUEST_TIMEOUT,
 ): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -54,10 +50,18 @@ async function fetchWithTimeout(
     });
     return response;
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new ApiClientError(`Request timeout after ${timeout}ms`, undefined, error);
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new ApiClientError(
+        `Request timeout after ${timeout}ms`,
+        undefined,
+        error,
+      );
     }
-    throw new ApiClientError('Network error occurred', undefined, error instanceof Error ? error : undefined);
+    throw new ApiClientError(
+      "Network error occurred",
+      undefined,
+      error instanceof Error ? error : undefined,
+    );
   } finally {
     clearTimeout(timeoutId);
   }
@@ -84,7 +88,11 @@ async function handleResponse<T>(response: Response): Promise<T> {
   try {
     return await response.json();
   } catch (error) {
-    throw new ApiClientError('Failed to parse response JSON', response.status, error instanceof Error ? error : undefined);
+    throw new ApiClientError(
+      "Failed to parse response JSON",
+      response.status,
+      error instanceof Error ? error : undefined,
+    );
   }
 }
 
@@ -92,7 +100,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
  * Default request headers
  */
 const defaultHeaders: HeadersInit = {
-  'Content-Type': 'application/json',
+  "Content-Type": "application/json",
 };
 
 /**
@@ -119,17 +127,20 @@ export const apiClient = {
 
   /** Process a task (trigger AI processing) */
   async processTask(taskId: string): Promise<TaskProcessResponse> {
-    const response = await fetchWithTimeout(`${API_BASE_URL}/tasks/${taskId}/process`, {
-      method: 'POST',
-      headers: defaultHeaders,
-    });
+    const response = await fetchWithTimeout(
+      `${API_BASE_URL}/tasks/${taskId}/process`,
+      {
+        method: "POST",
+        headers: defaultHeaders,
+      },
+    );
     return handleResponse<TaskProcessResponse>(response);
   },
 
   /** Create a new job */
   async createJob(request: JobCreateRequest): Promise<JobCreateResponse> {
     const response = await fetchWithTimeout(`${API_BASE_URL}/jobs`, {
-      method: 'POST',
+      method: "POST",
       headers: defaultHeaders,
       body: JSON.stringify(request),
     });
@@ -144,19 +155,25 @@ export const apiClient = {
 
   /** Start a job */
   async startJob(jobId: string): Promise<Job> {
-    const response = await fetchWithTimeout(`${API_BASE_URL}/jobs/${jobId}/start`, {
-      method: 'POST',
-      headers: defaultHeaders,
-    });
+    const response = await fetchWithTimeout(
+      `${API_BASE_URL}/jobs/${jobId}/start`,
+      {
+        method: "POST",
+        headers: defaultHeaders,
+      },
+    );
     return handleResponse<Job>(response);
   },
 
   /** Cancel a job */
   async cancelJob(jobId: string): Promise<Job> {
-    const response = await fetchWithTimeout(`${API_BASE_URL}/jobs/${jobId}/cancel`, {
-      method: 'POST',
-      headers: defaultHeaders,
-    });
+    const response = await fetchWithTimeout(
+      `${API_BASE_URL}/jobs/${jobId}/cancel`,
+      {
+        method: "POST",
+        headers: defaultHeaders,
+      },
+    );
     return handleResponse<Job>(response);
   },
 
