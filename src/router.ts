@@ -12,6 +12,7 @@ import { GitHubClient } from "./integrations/github";
 import { Octokit } from "octokit";
 
 // Validation helpers
+// Validation helpers
 import { Octokit } from "octokit";
 
 // Validation helpers
@@ -104,22 +105,169 @@ route("POST", "/webhooks/github", async (req) => {
     return Response.json({ error: "Invalid signature" }, { status: 401 });
   }
 
-  const payload = JSON.parse(body);
-
-  console.log(`[Webhook] Received ${event} event`);
+async function handleIssueEvent(payload: GitHubIssueEvent): Promise<Response> {
   const { action, issue, repository } = payload;
-
-  // Só processa se for labeled com auto-dev
+  
+  // Batch label prefix for processing multiple issues
   const BATCH_LABEL_PREFIX = "batch:";
 
+  // Only process if labeled with auto-dev
   if (action === "labeled") {
     const hasAutoDevLabel = issue.labels.some(
       (l) => l.name === defaultConfig.autoDevLabel,
+
+  if (action === "labeled") {
     const hasAutoDevLabel = issue.labels.some(
-    return handleCheckRunEvent(payload as GitHubCheckRunEvent);
-  }
       return Response.json({ ok: true, message: "Not an auto-dev issue" });
     }
+
+    // Check for batch label (format: "batch:label-name")
+    const batchLabel = issue.labels.find((l) =>
+      l.name.startsWith(BATCH_LABEL_PREFIX)
+    );
+
+    if (batchLabel) {
+      // Extract the actual label to search for (e.g., "batch:sprint-1" -> "sprint-1")
+      const targetLabel = batchLabel.name.substring(BATCH_LABEL_PREFIX.length);
+      console.log(
+        `[Batch] Detected batch label: ${batchLabel.name}, searching for issues with label: ${targetLabel}`
+      );
+
+      const github = new GitHubClient(repository.full_name);
+
+      try {
+        // Fetch all issues with the target label
+        const matchingIssues = await github.listIssuesByLabel(targetLabel);
+
+        // Filter out the triggering issue and extract issue numbers
+        const otherIssueNumbers = matchingIssues
+          .filter((i) => i.number !== issue.number)
+          .map((i) => i.number);
+
+        // Handle case where triggering issue is the only one with the batch label
+        if (otherIssueNumbers.length === 0) {
+          await github.postComment(
+            issue.number,
+            `⚠️ No other issues found with label \`${targetLabel}\`. Processing this issue individually.`
+          );
+          // Continue with normal single-issue processing below
+        } else {
+          // Include the triggering issue in the batch
+          const allIssueNumbers = [issue.number, ...otherIssueNumbers];
+
+          console.log(
+            `[Batch] Found ${allIssueNumbers.length} issues with label ${targetLabel}: ${allIssueNumbers.join(", ")}`
+          );
+
+          // Create tasks for all issues (similar to /api/jobs endpoint logic)
+          const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+          const [owner, repoName] = repository.full_name.split("/");
+          const taskIds: string[] = [];
+
+          for (const issueNumber of allIssueNumbers) {
+            try {
+              // Check if task already exists
+              const existingTask = await db.getTaskByIssue(
+                repository.full_name,
+                issueNumber
+              );
+              if (existingTask) {
+                taskIds.push(existingTask.id);
+                continue;
+              }
+
+              // Fetch issue details from GitHub
+              const { data: issueData } = await octokit.rest.issues.get({
+                owner,
+                repo: repoName,
+                issue_number: issueNumber,
+              });
+
+              // Create task
+              const task = await db.createTask({
+                githubRepo: repository.full_name,
+                githubIssueNumber: issueNumber,
+                githubIssueTitle: issueData.title,
+                githubIssueBody: issueData.body || "",
+                status: "NEW",
+                attemptCount: 0,
+                maxAttempts: defaultConfig.maxAttempts,
+              });
+
+              taskIds.push(task.id);
+            } catch (error) {
+              console.error(
+                `[Batch] Failed to create task for issue #${issueNumber}:`,
+                error
+              );
+            }
+          }
+
+          if (taskIds.length === 0) {
+            await github.postComment(
+              issue.number,
+              `❌ Failed to create tasks for batch job. Please check the logs.`
+            );
+            return Response.json(
+              { ok: false, error: "Failed to create any tasks for batch" },
+              { status: 500 }
+            );
+          }
+
+          // Create the job
+          const job = await dbJobs.createJob({
+            status: "pending",
+            taskIds,
+            githubRepo: repository.full_name,
+            summary: {
+              total: taskIds.length,
+              completed: 0,
+              failed: 0,
+              inProgress: 0,
+              prsCreated: [],
+            },
+          });
+
+          console.log(
+            `[Batch] Created job ${job.id} with ${taskIds.length} tasks`
+          );
+
+          // Start processing automatically using JobRunner
+          const runner = new JobRunner(orchestrator);
+          runner.run(job).catch((error) => {
+            console.error(`[Batch] JobRunner failed for ${job.id}:`, error);
+          });
+
+          // Post success comment on triggering issue
+          await github.postComment(
+            issue.number,
+            `🚀 Job created with ${taskIds.length} issues: ${job.id}`
+          );
+
+          return Response.json({
+            ok: true,
+            message: "Batch job created and started",
+            jobId: job.id,
+            taskCount: taskIds.length,
+            issueNumbers: allIssueNumbers,
+          });
+        }
+      } catch (error) {
+        console.error(`[Batch] GitHub API error:`, error);
+        await github.postComment(
+          issue.number,
+          `❌ Failed to fetch issues with label \`${targetLabel}\`: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+        return Response.json(
+          { ok: false, error: "GitHub API error during batch processing" },
+          { status: 500 }
+        );
+      }
+    }
+
+    // Verifica se já existe task para esta issue
+    const existingTask = await db.getTaskByIssue(
+      repository.full_name,
 
     // Check for batch label (format: "batch:label-name")
     const batchLabel = issue.labels.find((l) =>
