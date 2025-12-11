@@ -96,3 +96,9 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         {!isLoading && rightIcon && <span className={iconSizes[size]}>{rightIcon}</span>}
       </button>
     );
+  }
+);
+
+Button.displayName = 'Button';
+
+export default Button;
