@@ -145,7 +145,10 @@ export class JobRunner {
   /**
    * Process a single task to completion
    */
-  private async processTask(taskId: string, jobId: string): Promise<TaskResult> {
+  private async processTask(
+    taskId: string,
+    jobId: string,
+  ): Promise<TaskResult> {
     const task = await db.getTask(taskId);
     if (!task) {
       throw new Error(`Task ${taskId} not found`);
@@ -177,7 +180,10 @@ export class JobRunner {
         await db.updateTask(taskId, currentTask);
       }
 
-      const success = currentTask.status === "COMPLETED";
+      // WAITING_HUMAN means PR was created and awaiting human review - that's a success
+      const success =
+        currentTask.status === "COMPLETED" ||
+        currentTask.status === "WAITING_HUMAN";
       return {
         taskId,
         success,
