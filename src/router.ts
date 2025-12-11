@@ -423,6 +423,72 @@ route("POST", "/api/tasks/:id/process", async (req) => {
   return Response.json({ task: processedTask });
 });
 
+/**
+ * POST /api/tasks/:id/reject - Manually reject a PR and trigger fix loop
+ * Body: { feedback: string }
+ */
+route("POST", "/api/tasks/:id/reject", async (req) => {
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const id = pathParts[3];
+
+  const body = await req.json().catch(() => ({}));
+  const feedback = (body as any).feedback || "Changes requested";
+
+  const task = await db.getTask(id);
+  if (!task) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  if (task.status !== "WAITING_HUMAN") {
+    return Response.json(
+      { error: `Task not in WAITING_HUMAN state (current: ${task.status})` },
+      { status: 400 },
+    );
+  }
+
+  if (task.attemptCount >= task.maxAttempts) {
+    await db.updateTask(task.id, {
+      status: "FAILED",
+      lastError: `Max attempts (${task.maxAttempts}) exceeded. Feedback: ${feedback}`,
+    });
+    return Response.json({
+      ok: false,
+      message: "Task failed - max attempts exceeded",
+      taskId: task.id,
+    });
+  }
+
+  console.log(`[API] Manual rejection for task ${task.id}: ${feedback}`);
+
+  // Update task with feedback and transition to REVIEW_REJECTED
+  const updatedTask = await db.updateTask(task.id, {
+    status: "REVIEW_REJECTED",
+    lastError: feedback,
+    attemptCount: task.attemptCount + 1,
+  });
+
+  // Process the task - orchestrator will re-run coder with feedback
+  try {
+    const processedTask = await orchestrator.process(updatedTask);
+    await db.updateTask(task.id, processedTask);
+
+    return Response.json({
+      ok: true,
+      message: "Task reprocessing after rejection",
+      taskId: task.id,
+      newStatus: processedTask.status,
+      attempt: task.attemptCount + 1,
+    });
+  } catch (error) {
+    console.error(`[API] Error reprocessing task ${task.id}:`, error);
+    return Response.json(
+      { error: "Failed to reprocess task", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
 // ============================================
 // Jobs API
 // ============================================
