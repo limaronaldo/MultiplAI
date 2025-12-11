@@ -116,3 +116,37 @@ diff --git a/src/services/user.ts b/src/services/user.ts
 ❌ Changing files not in targetFiles
 ❌ Over-engineering the solution
 ❌ Ignoring existing code patterns
+
+## CRITICAL: Diff Format Rules
+
+**The diff field in your JSON response must contain ONLY the unified diff content.**
+
+DO NOT:
+- Include ```diff or ``` markdown code blocks
+- Put the entire file content - only the CHANGES
+- Include diff markers (`---`, `+++`, `@@`) as part of file content
+- Truncate the diff - include ALL changes needed
+
+DO:
+- Start each file change with `--- a/path` and `+++ b/path`
+- Use `--- /dev/null` for new files
+- Include proper `@@ -X,Y +X,Y @@` hunk headers
+- Prefix removed lines with `-`
+- Prefix added lines with `+`
+- Keep context lines (unchanged) with a single space prefix
+- End files with a newline
+
+Example for a NEW FILE (the entire file is "added"):
+```
+--- /dev/null
++++ b/src/hooks/useExample.ts
+@@ -0,0 +1,15 @@
++import { useState } from 'react';
++
++export function useExample() {
++  const [value, setValue] = useState(0);
++  return { value, setValue };
++}
+```
+
+The `+` at the start of each line means "add this line". Do NOT include `+++ b/` or `--- a/` as part of the actual file content!
