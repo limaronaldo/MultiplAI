@@ -12,6 +12,9 @@ import { LinearService } from "./integrations/linear";
 import { createHmac, timingSafeEqual } from "crypto";
 import { Octokit } from "octokit";
 
+// Batch processing label - configurable via environment variable
+const BATCH_LABEL = process.env.BATCH_LABEL || "batch-auto-dev";
+
 // Validation helpers
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -104,12 +107,20 @@ route("POST", "/webhooks/github", async (req) => {
 
   const payload = JSON.parse(body);
 
-  console.log(`[Webhook] Received ${event} event`);
 
-  if (event === "issues") {
-    return handleIssueEvent(payload as GitHubIssueEvent);
-  }
+  // Só processa se for labeled com auto-dev
+  if (action === "labeled") {
+    const label = payload.label;
+    
+    // Check for batch label
+    if (label && label.name === BATCH_LABEL) {
+      console.log(`[Webhook] Batch label detected on issue #${issue.number}`);
+      return Response.json({ ok: true, message: "Batch label detected" });
+    }
 
+    const hasAutoDevLabel = issue.labels.some(
+      (l) => l.name === defaultConfig.autoDevLabel,
+    );
   if (event === "check_run") {
     return handleCheckRunEvent(payload as GitHubCheckRunEvent);
   }
