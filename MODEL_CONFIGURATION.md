@@ -637,6 +637,190 @@ WHERE status = 'WAITING_HUMAN';
 
 ---
 
+## Future A/B Testing Roadmap
+
+### Pending Tests (Not Yet Conducted)
+
+#### Test 1: Gemini 3 Pro vs Claude Opus 4.5 (Coder Role)
+
+**Objective**: Validate if Gemini 3 Pro can match Opus quality at lower cost
+
+**Current Data**:
+- Gemini in multi-mode: 63.5s, 152 tokens, Score: 200 (Issue #25)
+- Opus in single-mode: 8.57s, 1,671 tokens, Excellent quality (Issue #27)
+
+**Test Plan**:
+```
+1. Select similar complexity issue (XS or S)
+2. Test A: Process with Gemini 3 Pro in single mode
+3. Test B: Process with Opus 4.5 in single mode
+4. Compare:
+   - Speed (execution time)
+   - Tokens used
+   - Code quality (documentation, structure)
+   - Test pass rate
+   - Review verdict
+   - Cost per task
+```
+
+**Hypothesis**:
+- Gemini may be competitive at lower cost
+- But likely slower and lower quality based on multi-mode data
+- Worthwhile to test given 63.5s vs 8.57s gap
+
+**Decision Criteria**:
+- If Gemini quality ≥ Opus quality AND cost < 50% → Consider as alternative
+- If Gemini speed > 3x slower → Not viable for production
+- If code quality significantly lower → Keep Opus as primary
+
+**Expected Outcome**: Opus remains superior, but quantify the gap
+
+---
+
+#### Test 2: GPT-5.1 Codex Max vs Claude Opus 4.5 (Coder Role)
+
+**Objective**: Determine if OpenAI's code-specialist model can match Opus for generation
+
+**Current Data**:
+- Codex in multi-mode: 18.3s, 109 tokens, Score: 200 (Issue #25)
+- Codex as reviewer: Excellent, pragmatic (current production)
+- Opus in single-mode: 8.57s, 1,671 tokens, Excellent quality (Issue #27)
+
+**Test Plan**:
+```
+1. Select similar complexity issue (XS or S)
+2. Test A: Process with Codex Max in single mode (modify CoderAgent)
+3. Test B: Process with Opus 4.5 in single mode
+4. Compare:
+   - Speed (execution time)
+   - Tokens used
+   - Code quality (documentation, structure)
+   - Following specifications precisely
+   - Test pass rate
+   - Review verdict
+   - Cost per task
+```
+
+**Hypothesis**:
+- Codex is code-specialized, may generate cleaner code
+- Codex may be faster (18.3s vs 8.57s in multi-mode, but different context)
+- Codex cost via Responses API is unknown (need to measure)
+- Opus likely has better documentation based on Test B results
+
+**Decision Criteria**:
+- If Codex speed ≥ Opus speed AND quality ≥ Opus quality → Consider switch
+- If Codex follows specs more precisely → Major advantage
+- If cost is significantly lower → Strong consideration
+- If documentation quality is lower → Factor into decision
+
+**Expected Outcome**: Close competition, decision may depend on cost
+
+**Why This Test Matters**:
+- Codex is already proven as excellent Reviewer
+- Using same model for Coder + Reviewer could simplify stack
+- OpenAI's code-specialist may have advantages over general Opus
+- Need empirical data, not assumptions
+
+---
+
+### Test Execution Template
+
+For consistency across all future A/B tests:
+
+```markdown
+## A/B Test: [Model A] vs [Model B] - [Role]
+
+**Date**: YYYY-MM-DD  
+**Configuration**: SINGLE mode (MULTI_AGENT_MODE=false)  
+**Test Issues**: #XX (Model A), #YY (Model B) - Similar complexity
+
+### Test A: [Model A Name]
+
+**Task**: [Brief description]  
+**Result**: ✅/❌ SUCCESS/FAILED - PR #XX created
+
+**Metrics**:
+- Duration: Xs
+- Tokens: X,XXX
+- Input tokens: ~X,XXX
+- Output tokens: ~XXX
+- Cost: ~$X.XXX
+- Files: X files, XX lines
+- Tests: ✅/❌ PASSED/FAILED
+- Review: ✅/❌ APPROVED/REJECTED
+
+**Code Quality**:
+- [Observation 1]
+- [Observation 2]
+- [Observation 3]
+
+### Test B: [Model B Name]
+
+[Same structure as Test A]
+
+### Comparative Analysis
+
+| Metric | Model A | Model B | Winner | Difference |
+|--------|---------|---------|--------|------------|
+| Speed | Xs | Xs | ⭐ [Model] | +/-X% |
+| Tokens | X,XXX | X,XXX | ⭐ [Model] | +/-X% |
+| Cost | $X.XXX | $X.XXX | ⭐ [Model] | +/-X% |
+| Quality | [Rating] | [Rating] | ⭐ [Model] | [Notes] |
+| [Other] | ... | ... | ... | ... |
+
+### Key Findings
+
+1. [Finding 1]
+2. [Finding 2]
+3. [Finding 3]
+
+### Verdict & Recommendation
+
+**WINNER**: [Model Name] ⭐
+
+**Reasoning**:
+1. [Reason 1]
+2. [Reason 2]
+3. [Reason 3]
+
+**RECOMMENDATION**: [Action to take]
+
+**Impact**:
+- Cost: [Impact]
+- Speed: [Impact]
+- Quality: [Impact]
+```
+
+---
+
+### Testing Schedule (Proposed)
+
+| Priority | Test | Estimated Date | Complexity | Expected Duration |
+|----------|------|----------------|------------|-------------------|
+| 🔴 High | Codex vs Opus (Coder) | Next session | XS-S | 30 minutes |
+| 🟡 Medium | Gemini vs Opus (Coder) | After Codex test | XS-S | 30 minutes |
+| 🟢 Low | Sonnet vs Opus (Planner) | Future | S-M | 45 minutes |
+| 🟢 Low | Haiku vs Sonnet (Planner) | Future | XS | 20 minutes |
+
+**Rationale for Priority**:
+1. **Codex test is HIGH priority** because:
+   - Already using Codex successfully as Reviewer
+   - Code-specialist model may excel at generation
+   - Could simplify stack (one model for Coder + Reviewer)
+   - Unknown cost needs to be measured
+
+2. **Gemini test is MEDIUM priority** because:
+   - Already slow in multi-mode (63.5s)
+   - Lower expected quality based on observations
+   - But worth validating for cost-conscious scenarios
+
+3. **Planner tests are LOW priority** because:
+   - Sonnet already performs well for planning
+   - Planning cost is low ($0.020/task)
+   - Less impact on overall performance
+
+---
+
 ## References
 
 - [LEARNINGS.md](./LEARNINGS.md) - Comprehensive learnings and model performance data
