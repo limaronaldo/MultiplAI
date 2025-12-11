@@ -164,9 +164,10 @@ export class Orchestrator {
    * Step 2: Coding
    */
   private async runCoding(task: Task): Promise<Task> {
+    // Accept both PLANNING_DONE (first coding) and REVIEW_REJECTED (re-coding after review)
     this.validateTaskState(
       task,
-      "PLANNING_DONE",
+      ["PLANNING_DONE", "REVIEW_REJECTED"],
       ["definitionOfDone", "plan", "targetFiles"],
       "Cannot run coding",
     );
@@ -510,15 +511,18 @@ export class Orchestrator {
 
   private validateTaskState(
     task: Task,
-    expectedStatus: TaskStatus,
+    expectedStatus: TaskStatus | TaskStatus[],
     requiredFields: string[],
     contextMessage: string,
   ): void {
-    // Validate status
-    if (task.status !== expectedStatus) {
+    // Validate status - accept single status or array of valid statuses
+    const validStatuses = Array.isArray(expectedStatus)
+      ? expectedStatus
+      : [expectedStatus];
+    if (!validStatuses.includes(task.status)) {
       throw createOrchestratorError(
         "INVALID_STATE",
-        `${contextMessage}: task status is '${task.status}', expected '${expectedStatus}'`,
+        `${contextMessage}: task status is '${task.status}', expected '${validStatuses.join("' or '")}'`,
         task.id,
         false,
       );
