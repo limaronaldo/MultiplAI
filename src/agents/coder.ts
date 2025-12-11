@@ -84,13 +84,18 @@ Respond ONLY with valid JSON:
   "notes": "optional implementation notes"
 }`;
 
+// Default coder model - can be overridden via env var or constructor
+const DEFAULT_CODER_MODEL =
+  process.env.CODER_MODEL ||
+  process.env.DEFAULT_LLM_MODEL ||
+  "claude-sonnet-4-5-20250929";
+
 export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
   constructor(modelOverride?: string) {
-    // Default: Claude Sonnet 4.5 - reliable and high quality
     // A/B tested: Opus is faster but Sonnet is cost-effective
-    // Can be overridden for multi-agent mode
+    // Can be overridden via CODER_MODEL env var or constructor param
     super({
-      model: modelOverride || "claude-sonnet-4-5-20250929",
+      model: modelOverride || DEFAULT_CODER_MODEL,
       maxTokens: 8192,
       temperature: 0.2,
     });

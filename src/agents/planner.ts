@@ -1,6 +1,12 @@
 import { BaseAgent } from "./base";
 import { PlannerOutput, PlannerOutputSchema } from "../core/types";
 
+// Default planner model - can be overridden via env var
+const DEFAULT_PLANNER_MODEL =
+  process.env.PLANNER_MODEL ||
+  process.env.DEFAULT_LLM_MODEL ||
+  "claude-sonnet-4-5-20250929";
+
 interface PlannerInput {
   issueTitle: string;
   issueBody: string;
@@ -40,6 +46,11 @@ Complexity guide:
 - XL: Major feature, architectural changes`;
 
 export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
+  constructor() {
+    // Sonnet for planning - can be overridden via PLANNER_MODEL env var
+    super({ model: DEFAULT_PLANNER_MODEL, temperature: 0.3 });
+  }
+
   async run(input: PlannerInput): Promise<PlannerOutput> {
     const userPrompt = `
 ## Issue Title

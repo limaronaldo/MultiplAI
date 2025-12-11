@@ -9,6 +9,12 @@ interface FixerInput {
   fileContents: Record<string, string>;
 }
 
+// Default fixer model - can be overridden via env var or constructor
+const DEFAULT_FIXER_MODEL =
+  process.env.FIXER_MODEL ||
+  process.env.DEFAULT_LLM_MODEL ||
+  "claude-opus-4-5-20251101";
+
 const SYSTEM_PROMPT = `You are an expert debugger fixing failing code.
 
 Your job is to:
@@ -34,10 +40,9 @@ Respond ONLY with valid JSON:
 
 export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
   constructor(modelOverride?: string) {
-    // Default: Claude Opus 4.5 - highest quality for debugging complex issues
-    // Can be overridden for multi-agent mode
+    // Opus recommended for debugging - can be overridden via FIXER_MODEL env var
     super({
-      model: modelOverride || "claude-opus-4-5-20251101",
+      model: modelOverride || DEFAULT_FIXER_MODEL,
       maxTokens: 8192,
       temperature: 0.2,
     });

@@ -1,6 +1,10 @@
 import { BaseAgent } from "./base";
 import { ReviewerOutput, ReviewerOutputSchema } from "../core/types";
 
+// Default reviewer model - can be overridden via env var
+const DEFAULT_REVIEWER_MODEL =
+  process.env.REVIEWER_MODEL || "gpt-5.1-codex-max";
+
 interface ReviewerInput {
   definitionOfDone: string[];
   plan: string[];
@@ -59,8 +63,8 @@ Respond ONLY with valid JSON:
 
 export class ReviewerAgent extends BaseAgent<ReviewerInput, ReviewerOutput> {
   constructor() {
-    // GPT 5.1 Codex Max for code reviews - fast and code-focused
-    super({ model: "gpt-5.1-codex-max", temperature: 0.1 });
+    // Codex Max for code reviews - can be overridden via REVIEWER_MODEL env var
+    super({ model: DEFAULT_REVIEWER_MODEL, temperature: 0.1 });
   }
 
   async run(input: ReviewerInput): Promise<ReviewerOutput> {
