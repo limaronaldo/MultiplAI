@@ -66,3 +66,12 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
           <p id={`${selectId}-helper`} className="mt-1 text-sm text-slate-400">
             {helperText}
           </p>
+        )}
+      </div>
+    );
+  }
+);
+
+Select.displayName = 'Select';
+
+export default Select;
