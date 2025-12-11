@@ -22,7 +22,7 @@ export const validTransitions: StatusTransitions = {
   REVIEW_APPROVED: ["PR_CREATED", "FAILED"],
   REVIEW_REJECTED: ["CODING", "FAILED"], // Volta pro coder
   PR_CREATED: ["WAITING_HUMAN", "FAILED"],
-  WAITING_HUMAN: ["COMPLETED", "FAILED"],
+  WAITING_HUMAN: ["COMPLETED", "REVIEW_REJECTED", "FAILED"], // Can be rejected by human review
   COMPLETED: [], // Estado final
   FAILED: [], // Estado final
 };
@@ -40,7 +40,7 @@ export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
 export function transition(from: TaskStatus, to: TaskStatus): TaskStatus {
   if (!canTransition(from, to)) {
     throw new Error(
-      `Invalid transition: ${from} -> ${to}. Valid transitions from ${from}: ${validTransitions[from].join(", ")}`
+      `Invalid transition: ${from} -> ${to}. Valid transitions from ${from}: ${validTransitions[from].join(", ")}`,
     );
   }
   return to;
@@ -50,8 +50,17 @@ export function transition(from: TaskStatus, to: TaskStatus): TaskStatus {
  * Retorna o próximo passo lógico dado o estado atual
  */
 export function getNextAction(
-  status: TaskStatus
-): "PLAN" | "CODE" | "TEST" | "FIX" | "REVIEW" | "OPEN_PR" | "WAIT" | "DONE" | "FAILED" {
+  status: TaskStatus,
+):
+  | "PLAN"
+  | "CODE"
+  | "TEST"
+  | "FIX"
+  | "REVIEW"
+  | "OPEN_PR"
+  | "WAIT"
+  | "DONE"
+  | "FAILED" {
   switch (status) {
     case "NEW":
       return "PLAN";

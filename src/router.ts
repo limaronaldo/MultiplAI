@@ -1,6 +1,7 @@
 import {
   GitHubIssueEvent,
   GitHubCheckRunEvent,
+  GitHubPullRequestReviewEvent,
   defaultConfig,
   JobStatus,
 } from "./core/types";
@@ -112,6 +113,12 @@ route("POST", "/webhooks/github", async (req) => {
 
   if (event === "check_run") {
     return handleCheckRunEvent(payload as GitHubCheckRunEvent);
+  }
+
+  if (event === "pull_request_review") {
+    return handlePullRequestReviewEvent(
+      payload as GitHubPullRequestReviewEvent,
+    );
   }
 
   return Response.json({ ok: true, message: "Event ignored" });
@@ -274,6 +281,105 @@ async function handleCheckRunEvent(
     message: `Processed ${processed.length} tasks`,
     taskIds: processed,
   });
+}
+
+async function handlePullRequestReviewEvent(
+  payload: GitHubPullRequestReviewEvent,
+): Promise<Response> {
+  const { action, review, pull_request, repository } = payload;
+
+  console.log(
+    `[Webhook] PR review: #${pull_request.number} - ${action} - ${review.state} by ${review.user.login}`,
+  );
+
+  // Only process submitted reviews that request changes
+  if (action !== "submitted") {
+    return Response.json({ ok: true, message: "Not a submitted review" });
+  }
+
+  if (review.state !== "changes_requested") {
+    return Response.json({
+      ok: true,
+      message: "Not a changes_requested review",
+    });
+  }
+
+  // Find task by PR number
+  const task = await db.getTaskByPR(repository.full_name, pull_request.number);
+
+  if (!task) {
+    return Response.json({
+      ok: true,
+      message: "No AutoDev task found for this PR",
+    });
+  }
+
+  // Only process if task is waiting for human review
+  if (task.status !== "WAITING_HUMAN") {
+    console.log(
+      `[Webhook] Task ${task.id} is not in WAITING_HUMAN state (${task.status})`,
+    );
+    return Response.json({
+      ok: true,
+      message: `Task not waiting for review (status: ${task.status})`,
+    });
+  }
+
+  // Check if we've exceeded max attempts
+  if (task.attemptCount >= task.maxAttempts) {
+    console.log(
+      `[Webhook] Task ${task.id} exceeded max attempts (${task.attemptCount}/${task.maxAttempts})`,
+    );
+    await db.updateTask(task.id, {
+      status: "FAILED",
+      lastError: `Max attempts (${task.maxAttempts}) exceeded. Last review feedback: ${review.body || "No feedback provided"}`,
+    });
+    return Response.json({
+      ok: true,
+      message: "Task failed - max attempts exceeded",
+      taskId: task.id,
+    });
+  }
+
+  console.log(
+    `[Webhook] Processing review rejection for task ${task.id} (attempt ${task.attemptCount + 1}/${task.maxAttempts})`,
+  );
+
+  // Update task with review feedback and transition to REVIEW_REJECTED
+  const updatedTask = await db.updateTask(task.id, {
+    status: "REVIEW_REJECTED",
+    lastError:
+      review.body || "Changes requested (no specific feedback provided)",
+    attemptCount: task.attemptCount + 1,
+  });
+
+  // Process the task - orchestrator will see REVIEW_REJECTED and re-run coder
+  try {
+    const processedTask = await orchestrator.process(updatedTask);
+    await db.updateTask(task.id, processedTask);
+
+    // Update Linear if configured
+    if (linear && task.linearIssueId) {
+      await linear.addComment(
+        task.linearIssueId,
+        `🔄 **AutoDev is fixing based on review feedback**\n\nFeedback: ${review.body || "Changes requested"}\n\nAttempt ${task.attemptCount + 1}/${task.maxAttempts}`,
+      );
+    }
+
+    return Response.json({
+      ok: true,
+      message: "Task reprocessing after review rejection",
+      taskId: task.id,
+      newStatus: processedTask.status,
+      attempt: task.attemptCount + 1,
+    });
+  } catch (error) {
+    console.error(`[Webhook] Error reprocessing task ${task.id}:`, error);
+    return Response.json(
+      { error: "Failed to reprocess task", details: String(error) },
+      { status: 500 },
+    );
+  }
 }
 
 // ============================================

@@ -94,6 +94,18 @@ export const db = {
     return result ? this.mapTask(result) : null;
   },
 
+  async getTaskByPR(repo: string, prNumber: number): Promise<Task | null> {
+    const sql = getDb();
+    const [result] = await sql`
+      SELECT * FROM tasks
+      WHERE github_repo = ${repo}
+      AND pr_number = ${prNumber}
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    return result ? this.mapTask(result) : null;
+  },
+
   async updateTask(id: string, updates: Partial<Task>): Promise<Task> {
     const sql = getDb();
 
