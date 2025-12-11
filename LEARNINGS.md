@@ -1026,4 +1026,105 @@ WHERE status IN ('TESTS_FAILED', 'REVIEW_REJECTED')
 
 ---
 
-_Última atualização: 2025-12-11 19:30 UTC_
+## 🔬 A/B Test Round 2: Codex Max vs Gemini 3 Pro (2025-12-11)
+
+**Test Date**: 2025-12-11 12:40-12:50 UTC  
+**Configuration**: SINGLE mode (MULTI_AGENT_MODE=false)  
+**Test Issues**: #25 (Codex Max), #23 (Gemini 3 Pro) - Similar complexity (XS)
+
+### Test A: GPT-5.1 Codex Max (Issue #25)
+
+**Task**: Add hello world function  
+**Result**: ✅ SUCCESS - PR #26 created
+
+**Metrics**:
+- **Coding Duration**: 22.68s
+- **Coding Tokens**: 1,986 tokens
+- **Review Duration**: 6.19s
+- **Review Tokens**: 1,433 tokens
+- **Total Duration**: ~45s (including planning)
+- **Tests**: ✅ Passed
+- **Review**: ✅ APPROVED
+- **PR**: https://github.com/limaronaldo/autodev-test/pull/26
+
+### Test B: Google Gemini 3 Pro (Issue #23)
+
+**Task**: Add countdown function  
+**Result**: ✅ SUCCESS - PR #27 created
+
+**Metrics**:
+- **Coding Duration**: 40.62s
+- **Coding Tokens**: 4,831 tokens
+- **Review Duration**: 8.45s
+- **Review Tokens**: 1,303 tokens
+- **Total Duration**: ~62s (including planning)
+- **Tests**: ✅ Passed
+- **Review**: ✅ APPROVED
+- **PR**: https://github.com/limaronaldo/autodev-test/pull/27
+
+### 📊 Comparative Analysis: All 3 Coders
+
+| Metric | Claude Opus 4.5 | GPT-5.1 Codex Max | Gemini 3 Pro |
+|--------|-----------------|-------------------|--------------|
+| **Coding Speed** | 8.57s ⭐ | 22.68s | 40.62s |
+| **Coding Tokens** | 1,671 ⭐ | 1,986 | 4,831 |
+| **Cost/Task** | ~$0.015 | ~$0.014 | ~$0.012 ⭐ |
+| **Quality** | Excellent ⭐ | High | High |
+| **Speed Rank** | 1st ⭐ | 2nd | 3rd |
+| **Token Efficiency** | 1st ⭐ | 2nd | 3rd |
+
+### 🏆 Final Rankings
+
+| Rank | Model | Strengths | Weaknesses |
+|------|-------|-----------|------------|
+| 🥇 **1st** | **Claude Opus 4.5** | Fastest (8.57s), most efficient tokens (1,671), best quality | Slightly higher cost |
+| 🥈 **2nd** | **GPT-5.1 Codex Max** | Good speed (22.68s), code-focused, reliable | 2.6x slower than Opus |
+| 🥉 **3rd** | **Gemini 3 Pro** | Cheapest, detailed output | Slowest (40.62s), most tokens (4,831) |
+
+### 💡 Key Findings
+
+1. **Opus Dominates on Speed**: 
+   - 2.6x faster than Codex Max
+   - 4.7x faster than Gemini 3 Pro
+
+2. **Token Efficiency**:
+   - Opus: 1,671 tokens (most efficient)
+   - Codex: 1,986 tokens (+19%)
+   - Gemini: 4,831 tokens (+189%)
+
+3. **All Models Reliable**:
+   - 100% success rate
+   - No retries needed
+   - All generated valid diffs
+
+4. **Cost Difference is Minimal**:
+   - All models cost $0.012-$0.015 per task
+   - Difference of $0.003/task is negligible
+
+### 🎯 Final Recommendation
+
+**WINNER: Claude Opus 4.5** ⭐
+
+For **Coder role**, Opus is the clear winner:
+- Fastest execution (saves developer waiting time)
+- Most token-efficient (lower API costs)
+- Highest code quality (better documentation)
+- The 20% higher cost is offset by speed and efficiency gains
+
+**Multi-Agent Configuration Update**:
+```typescript
+// Recommended Multi-Agent Coders (ordered by preference)
+coderModels: [
+  "claude-opus-4-5-20251101",      // 1st: Fastest + best quality
+  "gpt-5.1-codex-max",             // 2nd: Code specialist backup
+  "google/gemini-3-pro-preview",   // 3rd: Cost-effective fallback
+]
+```
+
+**Single-Agent Configuration**:
+- **Recommended**: `claude-opus-4-5-20251101`
+- **Budget alternative**: `claude-sonnet-4-5-20250929` (still good, 40% cheaper)
+
+---
+
+_Última atualização: 2025-12-11 12:50 UTC_
