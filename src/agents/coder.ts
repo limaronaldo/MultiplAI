@@ -87,6 +87,7 @@ Respond ONLY with valid JSON:
 export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
   constructor(modelOverride?: string) {
     // Default: Claude Sonnet 4.5 - reliable and high quality
+    // A/B tested: Opus is faster but Sonnet is cost-effective
     // Can be overridden for multi-agent mode
     super({
       model: modelOverride || "claude-sonnet-4-5-20250929",
