@@ -8,8 +8,14 @@ interface CompletionParams {
   userPrompt: string;
 }
 
-// Models that use the responses API (Codex models)
+// Models that use the responses API (GPT-5.2 and Codex models)
+// GPT-5.2 works best with Responses API for CoT passing
 const RESPONSES_API_MODELS = [
+  "gpt-5.2",
+  "gpt-5.2-thinking",
+  "gpt-5.2-instant",
+  "gpt-5.2-2025-12-11",
+  "gpt-5.2-pro",
   "gpt-5.1-codex",
   "gpt-5.1-codex-max",
   "gpt-5.1-codex-mini",
@@ -161,17 +167,32 @@ export class OpenAIDirectClient {
     return { content, tokens: tokensUsed };
   }
 
+  private isGPT52Model(model: string): boolean {
+    return model.startsWith("gpt-5.2");
+  }
+
   private async completeWithResponses(
     params: CompletionParams,
   ): Promise<{ content: string; tokens: number }> {
     // Responses API uses a different format
-    // Note: Codex models don't support temperature
-    const response = await this.client.responses.create({
+    // GPT-5.2 supports reasoning effort and verbosity controls
+    const isGPT52 = this.isGPT52Model(params.model);
+
+    const requestParams: any = {
       model: params.model,
-      instructions: params.systemPrompt,
-      input: params.userPrompt,
+      input: params.systemPrompt + "\n\n---\n\n" + params.userPrompt,
       max_output_tokens: params.maxTokens,
-    });
+    };
+
+    // GPT-5.2 specific parameters
+    if (isGPT52) {
+      // Use high reasoning effort for coding tasks (user approved)
+      requestParams.reasoning = { effort: "high" };
+      // High verbosity for detailed code output
+      requestParams.text = { verbosity: "high" };
+    }
+
+    const response = await this.client.responses.create(requestParams);
 
     // Extract text from response output
     let content = "";
