@@ -33,6 +33,11 @@ import { createTaskLogger, createSystemLogger, Logger } from "./logger";
 import { validateDiff, quickValidateDiff, DiffFile } from "./diff-validator";
 import { buildImportGraph, getRelatedFiles } from "../lib/import-analyzer";
 import { ForemanService, ForemanResult } from "../services/foreman";
+import {
+  CommandExecutor,
+  type AllowedCommand,
+  type CommandResult,
+} from "../services/command-executor";
 
 const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
 const VALIDATE_DIFF = process.env.VALIDATE_DIFF !== "false"; // Default to true
@@ -56,6 +61,7 @@ export class Orchestrator {
   private breakdown: BreakdownAgent;
   private consensus: ConsensusEngine;
   private foreman: ForemanService;
+  private commandExecutor: CommandExecutor;
   private systemLogger: Logger;
 
   // Multi-agent metadata for PR comments
@@ -76,6 +82,7 @@ export class Orchestrator {
     this.breakdown = new BreakdownAgent();
     this.consensus = new ConsensusEngine();
     this.foreman = new ForemanService();
+    this.commandExecutor = new CommandExecutor();
     this.systemLogger = createSystemLogger("orchestrator");
 
     if (this.multiAgentConfig.enabled) {
@@ -173,6 +180,8 @@ export class Orchestrator {
     task.plan = plannerOutput.plan;
     task.targetFiles = plannerOutput.targetFiles;
     task.multiFilePlan = plannerOutput.multiFilePlan;
+    task.commands = plannerOutput.commands;
+    task.commandOrder = plannerOutput.commandOrder;
 
     // Expand target files with import analysis
     if (EXPAND_IMPORTS && task.targetFiles && task.targetFiles.length > 0) {
@@ -578,6 +587,22 @@ export class Orchestrator {
     task.currentDiff = coderOutput.diff;
     task.commitMessage = coderOutput.commitMessage;
 
+    // Execute pre-diff commands (e.g., npm install)
+    if (task.commands && task.commandOrder === "before_diff") {
+      const cmdResult = await this.executeCommands(task, "before_diff");
+      if (!cmdResult.success) {
+        return this.failTask(
+          task,
+          createOrchestratorError(
+            "COMMAND_FAILED",
+            `Pre-diff command failed: ${cmdResult.error}`,
+            task.id,
+            true, // Recoverable - can retry
+          ),
+        );
+      }
+    }
+
     // Validate diff before applying
     if (VALIDATE_DIFF) {
       const validationResult = await this.validateAndApplyDiff(
@@ -599,7 +624,68 @@ export class Orchestrator {
       );
     }
 
+    // Execute post-diff commands (e.g., prisma generate)
+    if (task.commands && task.commandOrder === "after_diff") {
+      const cmdResult = await this.executeCommands(task, "after_diff");
+      if (!cmdResult.success) {
+        return this.failTask(
+          task,
+          createOrchestratorError(
+            "COMMAND_FAILED",
+            `Post-diff command failed: ${cmdResult.error}`,
+            task.id,
+            true, // Recoverable - can retry
+          ),
+        );
+      }
+    }
+
     return this.updateStatus(task, "CODING_DONE");
+  }
+
+  /**
+   * Execute commands for a task
+   */
+  private async executeCommands(
+    task: Task,
+    phase: "before_diff" | "after_diff",
+  ): Promise<{ success: boolean; error?: string }> {
+    const logger = this.getLogger(task);
+
+    if (!task.commands || task.commands.length === 0) {
+      return { success: true };
+    }
+
+    logger.info(`Executing ${task.commands.length} ${phase} commands...`);
+
+    for (const command of task.commands) {
+      logger.info(`  Running: ${command.type}`);
+
+      const result = await this.commandExecutor.execute(
+        command as AllowedCommand,
+      );
+
+      // Log the command execution event
+      await this.logEvent(task, "CODED", "command-executor", {
+        commandType: command.type,
+        success: result.success,
+        duration: result.duration,
+        exitCode: result.exitCode,
+      });
+
+      if (!result.success) {
+        logger.error(`  Command failed: ${result.error || result.stderr}`);
+        return {
+          success: false,
+          error: `${command.type} failed: ${result.error || result.stderr}`,
+        };
+      }
+
+      logger.info(`  ✓ ${command.type} completed (${result.duration}ms)`);
+    }
+
+    logger.info(`All ${phase} commands completed successfully`);
+    return { success: true };
   }
 
   /**

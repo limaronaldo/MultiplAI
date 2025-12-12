@@ -45,6 +45,33 @@ When the change involves 3+ files, include a "multiFilePlan" with:
 4. **components**: UI/handlers (depend on services)
 5. **tests**: Test files (depend on all above)
 
+## Command Execution (optional)
+
+If the task requires running shell commands (installing packages, migrations, etc.), include:
+- "commands": Array of commands to execute
+- "commandOrder": "before_diff" or "after_diff"
+
+### Available Command Types:
+- npm_install: { type: "npm_install", packages: ["lodash", "@types/lodash"], dev?: true }
+- bun_add: { type: "bun_add", packages: ["zod"], dev?: true }
+- pnpm_add: { type: "pnpm_add", packages: ["axios"], dev?: true }
+- yarn_add: { type: "yarn_add", packages: ["react"], dev?: true }
+- prisma_migrate: { type: "prisma_migrate", name: "add_users_table" }
+- prisma_generate: { type: "prisma_generate" }
+- prisma_db_push: { type: "prisma_db_push" }
+- drizzle_generate: { type: "drizzle_generate" }
+- drizzle_migrate: { type: "drizzle_migrate" }
+- create_directory: { type: "create_directory", path: "src/new-feature" }
+- typecheck: { type: "typecheck" }
+- lint_fix: { type: "lint_fix" }
+- format: { type: "format" }
+
+### When to use commands:
+- Package installation: Include BEFORE diff (so code can import them)
+- Prisma/Drizzle generate: Include AFTER diff (after schema changes)
+- Directory creation: Include BEFORE diff
+- Formatting/linting: Include AFTER diff
+
 Respond ONLY with valid JSON matching this schema:
 {
   "definitionOfDone": ["string array of acceptance criteria"],
@@ -52,6 +79,11 @@ Respond ONLY with valid JSON matching this schema:
   "targetFiles": ["string array of file paths"],
   "estimatedComplexity": "XS" | "S" | "M" | "L" | "XL",
   "risks": ["optional array of potential issues"],
+  "commands": [  // Optional: commands to run
+    { "type": "npm_install", "packages": ["zod"], "dev": false },
+    { "type": "prisma_generate" }
+  ],
+  "commandOrder": "before_diff" | "after_diff",  // When to run commands
   "multiFilePlan": {  // Include for M+ complexity with 3+ files
     "files": [{
       "path": "src/types/user.ts",

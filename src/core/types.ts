@@ -73,6 +73,8 @@ export interface Task {
   plan?: string[];
   targetFiles?: string[];
   multiFilePlan?: MultiFilePlan; // For M+ complexity coordination
+  commands?: PlannerCommand[]; // Commands to execute
+  commandOrder?: "before_diff" | "after_diff";
 
   // Coding outputs
   branchName?: string;
@@ -273,6 +275,61 @@ export const MultiFilePlanSchema = z.object({
 
 export type MultiFilePlan = z.infer<typeof MultiFilePlanSchema>;
 
+// Command execution schemas (re-exported from command-executor for convenience)
+export const PlannerCommandSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("npm_install"),
+    packages: z.array(z.string()),
+    dev: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal("bun_add"),
+    packages: z.array(z.string()),
+    dev: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal("pnpm_add"),
+    packages: z.array(z.string()),
+    dev: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal("yarn_add"),
+    packages: z.array(z.string()),
+    dev: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal("prisma_migrate"),
+    name: z.string(),
+  }),
+  z.object({
+    type: z.literal("prisma_generate"),
+  }),
+  z.object({
+    type: z.literal("prisma_db_push"),
+  }),
+  z.object({
+    type: z.literal("drizzle_generate"),
+  }),
+  z.object({
+    type: z.literal("drizzle_migrate"),
+  }),
+  z.object({
+    type: z.literal("create_directory"),
+    path: z.string(),
+  }),
+  z.object({
+    type: z.literal("typecheck"),
+  }),
+  z.object({
+    type: z.literal("lint_fix"),
+  }),
+  z.object({
+    type: z.literal("format"),
+  }),
+]);
+
+export type PlannerCommand = z.infer<typeof PlannerCommandSchema>;
+
 export const PlannerOutputSchema = z.object({
   definitionOfDone: z.array(z.string()),
   plan: z.array(z.string()),
@@ -281,6 +338,9 @@ export const PlannerOutputSchema = z.object({
   risks: z.array(z.string()).optional(),
   // Multi-file coordination (optional, for M+ complexity)
   multiFilePlan: MultiFilePlanSchema.optional(),
+  // Commands to execute (optional)
+  commands: z.array(PlannerCommandSchema).optional(),
+  commandOrder: z.enum(["before_diff", "after_diff"]).optional(),
 });
 
 export type PlannerOutput = z.infer<typeof PlannerOutputSchema>;
