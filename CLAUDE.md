@@ -530,6 +530,27 @@ See `LEARNINGS.md` for detailed benchmarks. Quick reference:
 
 ---
 
+## Critical Rules for Claude
+
+### ⚠️ DO NOT CHANGE MODELS WITHOUT EXPRESS USER APPROVAL
+
+Model configuration is in `src/core/model-selection.ts`. **Never modify MODEL_TIERS without explicit user confirmation.**
+
+Reasons:
+1. Different providers have different billing/credits (Anthropic vs OpenRouter vs OpenAI)
+2. Model naming conventions vary (`anthropic/claude-opus-...` for OpenRouter vs `claude-opus-...` for direct API)
+3. User has specific preferences for cost/quality tradeoffs
+
+**Current approved models (2025-12-12):**
+| Tier | Model | Provider |
+|------|-------|----------|
+| Fast | `x-ai/grok-code-fast-1` | OpenRouter |
+| Standard | `claude-opus-4-5-20251101` | Anthropic Direct |
+| Multi | `claude-opus-4-5-20251101`, `gpt-4o`, `google/gemini-2.0-flash-exp` | Mixed |
+| Thinking | `o1`, `o3-mini` | OpenAI Direct |
+
+---
+
 ## Safety Constraints
 
 ### Allowed Paths

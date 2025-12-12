@@ -2,10 +2,12 @@ import {
   GitHubIssueEvent,
   GitHubCheckRunEvent,
   GitHubPullRequestReviewEvent,
+  Task,
   defaultConfig,
   JobStatus,
 } from "./core/types";
 import { Orchestrator } from "./core/orchestrator";
+import { TaskRunner } from "./core/task-runner";
 import { db } from "./integrations/db";
 import { dbJobs } from "./integrations/db-jobs";
 import { JobRunner } from "./core/job-runner";
@@ -51,6 +53,40 @@ function route(method: string, path: string, handler: Handler) {
   // Converte path pattern para regex
   const pattern = new RegExp("^" + path.replace(/:\w+/g, "([^/]+)") + "$");
   routes.push({ method, pattern, handler });
+}
+
+function startBackgroundTaskRunner(task: Task): void {
+  const runner = new TaskRunner(orchestrator);
+  void runner
+    .run(task)
+    .then(async (processedTask) => {
+      // Ensure final state is persisted
+      await db.updateTask(task.id, processedTask);
+
+      // Update Linear if configured
+      if (linear && processedTask.linearIssueId) {
+        if (processedTask.prUrl) {
+          await linear.moveToInReview(processedTask.linearIssueId);
+          await linear.attachPullRequest(
+            processedTask.linearIssueId,
+            processedTask.prUrl,
+            processedTask.prTitle || processedTask.githubIssueTitle,
+          );
+          await linear.addComment(
+            processedTask.linearIssueId,
+            `✅ **AutoDev created a Pull Request**\n\n[View PR](${processedTask.prUrl})\n\nReady for your review!`,
+          );
+        } else if (processedTask.status === "FAILED") {
+          await linear.addComment(
+            processedTask.linearIssueId,
+            `❌ **AutoDev failed to complete this task**\n\nReason: ${processedTask.lastError}\n\nThis issue may require manual implementation.`,
+          );
+        }
+      }
+    })
+    .catch((error) => {
+      console.error(`[TaskRunner] Error processing task ${task.id}:`, error);
+    });
 }
 
 // ============================================
@@ -208,28 +244,12 @@ async function handleIssueEvent(payload: GitHubIssueEvent): Promise<Response> {
 
     console.log(`[Task] Created task ${task.id} for issue #${issue.number}`);
 
-    // Processa a task (pode ser feito async em produção)
-    // Para MVP, processa inline
-    const processedTask = await orchestrator.process(task);
-    await db.updateTask(task.id, processedTask);
-
-    // Se PR foi criado, atualiza Linear
-    if (processedTask.prUrl && linear && linearIssueId) {
-      await linear.moveToInReview(linearIssueId);
-      await linear.attachPullRequest(
-        linearIssueId,
-        processedTask.prUrl,
-        processedTask.prTitle || issue.title,
-      );
-      await linear.addComment(
-        linearIssueId,
-        `✅ **AutoDev created a Pull Request**\n\n[View PR](${processedTask.prUrl})\n\nReady for your review!`,
-      );
-    }
+    // Run task in background (don't block webhook request)
+    startBackgroundTaskRunner(task);
 
     return Response.json({
       ok: true,
-      message: "Task created and processing started",
+      message: "Task created and processing started (background)",
       taskId: task.id,
       linearIssueId,
     });
@@ -377,8 +397,7 @@ async function handlePullRequestReviewEvent(
 
   // Process the task - orchestrator will see REVIEW_REJECTED and re-run coder
   try {
-    const processedTask = await orchestrator.process(updatedTask);
-    await db.updateTask(task.id, processedTask);
+    startBackgroundTaskRunner(updatedTask);
 
     // Update Linear if configured
     if (linear && task.linearIssueId) {
@@ -390,9 +409,9 @@ async function handlePullRequestReviewEvent(
 
     return Response.json({
       ok: true,
-      message: "Task reprocessing after review rejection",
+      message: "Task reprocessing started (background)",
       taskId: task.id,
-      newStatus: processedTask.status,
+      newStatus: updatedTask.status,
       attempt: task.attemptCount + 1,
     });
   } catch (error) {
@@ -492,14 +511,13 @@ route("POST", "/api/tasks/:id/reject", async (req) => {
 
   // Process the task - orchestrator will re-run coder with feedback
   try {
-    const processedTask = await orchestrator.process(updatedTask);
-    await db.updateTask(task.id, processedTask);
+    startBackgroundTaskRunner(updatedTask);
 
     return Response.json({
       ok: true,
-      message: "Task reprocessing after rejection",
+      message: "Task reprocessing started (background)",
       taskId: task.id,
-      newStatus: processedTask.status,
+      newStatus: updatedTask.status,
       attempt: task.attemptCount + 1,
     });
   } catch (error) {

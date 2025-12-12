@@ -4,6 +4,22 @@
  * Selects models based on task effort level and escalation state.
  * Implements cost-efficient routing: cheap models for simple tasks,
  * expensive models only when needed.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ⚠️  DO NOT CHANGE MODELS WITHOUT EXPRESS USER APPROVAL
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Model changes require explicit user confirmation because:
+ * 1. Different providers have different billing/credits
+ * 2. Model naming conventions vary (OpenRouter uses "anthropic/...", direct API uses "claude-...")
+ * 3. User has specific preferences for cost/quality tradeoffs
+ *
+ * Current approved models (as of 2025-12-12):
+ * - Fast tier: x-ai/grok-code-fast-1 (via OpenRouter)
+ * - Standard tier: claude-opus-4-5-20251101 (direct Anthropic API)
+ * - Multi tier: claude-opus-4-5-20251101, gpt-4o, google/gemini-2.0-flash-exp
+ * - Thinking tier: o1, o3-mini (direct OpenAI API)
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 
 import { EffortLevel } from "./types";
@@ -17,6 +33,8 @@ export interface ModelTier {
 
 /**
  * Model tiers from cheapest to most expensive
+ *
+ * ⚠️ DO NOT MODIFY without user approval - see header comment
  */
 export const MODEL_TIERS: ModelTier[] = [
   {
