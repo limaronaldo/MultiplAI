@@ -241,6 +241,68 @@ export const db = {
     return results.map(this.mapTaskEvent);
   },
 
+  async getTaskEventsForAnalytics(sinceDate: Date): Promise<
+    Array<{
+      agent?: string;
+      model?: string;
+      tokensUsed?: number;
+      inputTokens?: number;
+      outputTokens?: number;
+      createdAt: Date;
+    }>
+  > {
+    const sql = getDb();
+    const results = await sql`
+      SELECT
+        agent,
+        metadata->>'model' as model,
+        tokens_used,
+        (metadata->>'inputTokens')::int as input_tokens,
+        (metadata->>'outputTokens')::int as output_tokens,
+        created_at
+      FROM task_events
+      WHERE created_at >= ${sinceDate}
+        AND tokens_used IS NOT NULL
+      ORDER BY created_at ASC
+    `;
+    return results.map((row: any) => ({
+      agent: row.agent,
+      model: row.model,
+      tokensUsed: row.tokens_used,
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      createdAt: new Date(row.created_at),
+    }));
+  },
+
+  async getRecentTaskEvents(
+    sinceId: number = 0,
+    taskId?: string,
+    limit: number = 50,
+  ): Promise<TaskEvent[]> {
+    const sql = getDb();
+    let results;
+
+    if (taskId) {
+      results = await sql`
+        SELECT * FROM task_events
+        WHERE id > ${sinceId}
+        AND task_id = ${taskId}
+        ORDER BY id ASC
+        LIMIT ${limit}
+      `;
+    } else {
+      results = await sql`
+        SELECT * FROM task_events
+        WHERE id > ${sinceId}
+        ORDER BY id ASC
+        LIMIT ${limit}
+      `;
+    }
+
+    return results.map(this.mapTaskEvent);
+  },
+
   // ============================================
   // Helpers
   // ============================================

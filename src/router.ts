@@ -742,6 +742,263 @@ route("POST", "/api/jobs/:id/cancel", async (req) => {
   });
 });
 
+// ============================================
+// Analytics API
+// ============================================
+
+// Token costs per million tokens (in USD)
+const TOKEN_COSTS: Record<string, { input: number; output: number }> = {
+  "claude-opus-4-5-20251101": { input: 15, output: 75 },
+  "claude-sonnet-4-5-20250929": { input: 3, output: 15 },
+  "claude-sonnet-4-20250514": { input: 3, output: 15 },
+  "claude-3-5-sonnet-20241022": { input: 3, output: 15 },
+  "claude-3-5-haiku-20241022": { input: 0.8, output: 4 },
+  "gpt-4o": { input: 2.5, output: 10 },
+  "gpt-4o-mini": { input: 0.15, output: 0.6 },
+};
+
+// Calculate cost from tokens
+function calculateTokenCost(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+): number {
+  const costs = TOKEN_COSTS[model] || { input: 3, output: 15 }; // Default to Sonnet pricing
+  return (inputTokens * costs.input + outputTokens * costs.output) / 1_000_000;
+}
+
+/**
+ * GET /api/analytics/costs - Get cost analytics
+ * Query params:
+ *   - range: 7d, 30d, 90d (default: 30d)
+ */
+route("GET", "/api/analytics/costs", async (req) => {
+  const url = new URL(req.url);
+  const range = url.searchParams.get("range") || "30d";
+
+  // Parse range to days
+  const days = parseInt(range.replace("d", "")) || 30;
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - days);
+
+  try {
+    // Fetch task events with token usage
+    const events = await db.getTaskEventsForAnalytics(startDate);
+
+    // Aggregate costs
+    let total = 0;
+    let totalTokens = 0;
+    let totalCalls = 0;
+    const byDay: Record<string, { cost: number; tokens: number }> = {};
+    const byAgent: Record<
+      string,
+      { cost: number; tokens: number; calls: number }
+    > = {};
+    const byModel: Record<
+      string,
+      { cost: number; tokens: number; calls: number }
+    > = {};
+
+    for (const event of events) {
+      const inputTokens =
+        event.inputTokens || Math.floor((event.tokensUsed || 0) * 0.7);
+      const outputTokens =
+        event.outputTokens || Math.floor((event.tokensUsed || 0) * 0.3);
+      const model = event.model || "claude-sonnet-4-5-20250929";
+      const cost = calculateTokenCost(model, inputTokens, outputTokens);
+      const tokens = event.tokensUsed || inputTokens + outputTokens;
+
+      total += cost;
+      totalTokens += tokens;
+      totalCalls += 1;
+
+      // By day
+      const dateStr = new Date(event.createdAt).toISOString().split("T")[0];
+      if (!byDay[dateStr]) {
+        byDay[dateStr] = { cost: 0, tokens: 0 };
+      }
+      byDay[dateStr].cost += cost;
+      byDay[dateStr].tokens += tokens;
+
+      // By agent
+      const agent = event.agent || "unknown";
+      if (!byAgent[agent]) {
+        byAgent[agent] = { cost: 0, tokens: 0, calls: 0 };
+      }
+      byAgent[agent].cost += cost;
+      byAgent[agent].tokens += tokens;
+      byAgent[agent].calls += 1;
+
+      // By model
+      if (!byModel[model]) {
+        byModel[model] = { cost: 0, tokens: 0, calls: 0 };
+      }
+      byModel[model].cost += cost;
+      byModel[model].tokens += tokens;
+      byModel[model].calls += 1;
+    }
+
+    // Format response
+    return Response.json({
+      total: Math.round(total * 10000) / 10000,
+      totalTokens,
+      totalCalls,
+      byDay: Object.entries(byDay)
+        .map(([date, data]) => ({
+          date,
+          cost: Math.round(data.cost * 10000) / 10000,
+          tokens: data.tokens,
+        }))
+        .sort((a, b) => a.date.localeCompare(b.date)),
+      byAgent: Object.fromEntries(
+        Object.entries(byAgent).map(([k, v]) => [
+          k,
+          {
+            cost: Math.round(v.cost * 10000) / 10000,
+            tokens: v.tokens,
+            calls: v.calls,
+          },
+        ]),
+      ),
+      byModel: Object.fromEntries(
+        Object.entries(byModel).map(([k, v]) => [
+          k,
+          {
+            cost: Math.round(v.cost * 10000) / 10000,
+            tokens: v.tokens,
+            calls: v.calls,
+          },
+        ]),
+      ),
+    });
+  } catch (error) {
+    console.error("[API] Failed to get cost analytics:", error);
+    return Response.json(
+      { error: "Failed to fetch analytics" },
+      { status: 500 },
+    );
+  }
+});
+
+// ============================================
+// SSE Logs Endpoint
+// ============================================
+
+/**
+ * Helper to determine log level from event type
+ */
+function getLogLevel(eventType: string): "INFO" | "SUCCESS" | "WARN" | "ERROR" {
+  if (eventType.includes("FAILED") || eventType.includes("ERROR")) {
+    return "ERROR";
+  }
+  if (
+    eventType.includes("COMPLETED") ||
+    eventType.includes("PASSED") ||
+    eventType.includes("APPROVED")
+  ) {
+    return "SUCCESS";
+  }
+  if (eventType.includes("REJECTED") || eventType.includes("CANCELLED")) {
+    return "WARN";
+  }
+  return "INFO";
+}
+
+/**
+ * GET /api/logs/stream - SSE endpoint for real-time task events
+ * Query params:
+ *   - taskId: optional filter by task
+ */
+route("GET", "/api/logs/stream", async (req) => {
+  const url = new URL(req.url);
+  const taskId = url.searchParams.get("taskId") || undefined;
+
+  // Track last event ID sent
+  let lastEventId = 0;
+  let isActive = true;
+
+  // Create a readable stream for SSE
+  const stream = new ReadableStream({
+    async start(controller) {
+      const encoder = new TextEncoder();
+
+      // Send initial connection message
+      controller.enqueue(
+        encoder.encode(
+          `data: ${JSON.stringify({ type: "connected", timestamp: new Date().toISOString() })}\n\n`,
+        ),
+      );
+
+      // Poll for new events every 2 seconds
+      const pollInterval = setInterval(async () => {
+        if (!isActive) {
+          clearInterval(pollInterval);
+          return;
+        }
+
+        try {
+          const events = await db.getRecentTaskEvents(lastEventId, taskId);
+
+          for (const event of events) {
+            const eventId =
+              typeof event.id === "number"
+                ? event.id
+                : parseInt(event.id, 10) || 0;
+
+            controller.enqueue(encoder.encode(`id: ${event.id}\n`));
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  type: "event",
+                  id: event.id,
+                  taskId: event.taskId,
+                  eventType: event.eventType,
+                  agent: event.agent,
+                  message: event.outputSummary || event.eventType,
+                  timestamp: event.createdAt,
+                  level: getLogLevel(event.eventType),
+                  tokensUsed: event.tokensUsed,
+                  durationMs: event.durationMs,
+                })}\n\n`,
+              ),
+            );
+
+            lastEventId = Math.max(lastEventId, eventId);
+          }
+        } catch (err) {
+          console.error("[SSE] Error fetching events:", err);
+        }
+      }, 2000);
+
+      // Send keep-alive ping every 30 seconds
+      const keepAlive = setInterval(() => {
+        if (!isActive) {
+          clearInterval(keepAlive);
+          return;
+        }
+        controller.enqueue(encoder.encode(`: keep-alive\n\n`));
+      }, 30000);
+
+      // Cleanup on close (handled by abort signal)
+      req.signal?.addEventListener("abort", () => {
+        isActive = false;
+        clearInterval(pollInterval);
+        clearInterval(keepAlive);
+        controller.close();
+      });
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+});
+
 // Endpoint para Claude Code: lista issues aguardando review
 route("GET", "/api/review/pending", async (req) => {
   if (!linear) {
