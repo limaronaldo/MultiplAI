@@ -18,6 +18,8 @@ const RESPONSES_API_MODELS = [
 // Models that require max_completion_tokens instead of max_tokens
 const REASONING_MODELS = [
   "gpt-5.2",
+  "gpt-5.2-thinking",
+  "gpt-5.2-instant",
   "gpt-5.2-2025-12-11",
   "gpt-5.1-2025-11-13",
   "gpt-5.1",
@@ -201,6 +203,8 @@ export class OpenAIDirectClient {
 export const OPENAI_DIRECT_MODELS = {
   // GPT-5.2 (Latest - 400K context, 128K output)
   "gpt-5.2": "GPT-5.2 (400K context)",
+  "gpt-5.2-thinking": "GPT-5.2 Thinking (Reasoning)",
+  "gpt-5.2-instant": "GPT-5.2 Instant (Fast)",
   "gpt-5.2-2025-12-11": "GPT-5.2 (Pinned snapshot)",
 
   // GPT-5.1 Chat

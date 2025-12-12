@@ -42,6 +42,15 @@ interface CreateIssueInput {
   estimate?: number;
 }
 
+interface CreateIssueFromGitHubInput {
+  githubRepo: string;
+  githubIssueNumber: number;
+  githubIssueTitle: string;
+  githubIssueBody: string;
+  githubIssueUrl: string;
+  teamKey?: string; // defaults to first team
+}
+
 interface CreateProjectInput {
   name: string;
   description?: string;
@@ -501,6 +510,119 @@ export class LinearService {
       console.error("[Linear] Error checking organization:", error);
       return false;
     }
+  }
+
+  /**
+   * Creates a Linear issue from a GitHub issue with automatic linking
+   * This enables GitHub → Linear two-way sync
+   */
+  async createIssueFromGitHub(
+    input: CreateIssueFromGitHubInput,
+  ): Promise<LinearIssueInfo | null> {
+    try {
+      // Get team (use provided key or default to first team)
+      let team: LinearTeamInfo | null = null;
+      if (input.teamKey) {
+        team = await this.findTeamByKey(input.teamKey);
+      } else {
+        const teams = await this.listTeams();
+        team = teams[0] || null;
+      }
+
+      if (!team) {
+        console.error("[Linear] No team found for issue creation");
+        return null;
+      }
+
+      // Check if issue already exists (by GitHub URL in attachment)
+      const existing = await this.findByGitHubIssue(
+        input.githubRepo,
+        input.githubIssueNumber,
+      );
+      if (existing) {
+        console.log(
+          `[Linear] Issue already exists: ${existing.identifier} for GitHub #${input.githubIssueNumber}`,
+        );
+        return existing;
+      }
+
+      // Parse labels from title prefix (e.g., "[Core]" -> "Core")
+      const labelMatch = input.githubIssueTitle.match(/^\[([^\]]+)\]/);
+      const labelIds: string[] = [];
+      if (labelMatch) {
+        const label = await this.findOrCreateLabel(team.id, labelMatch[1]);
+        if (label) {
+          labelIds.push(label.id);
+        }
+      }
+
+      // Build description with GitHub link
+      const description = `${input.githubIssueBody || ""}\n\n---\n🔗 **GitHub Issue:** [${input.githubRepo}#${input.githubIssueNumber}](${input.githubIssueUrl})`;
+
+      // Create the issue
+      const issue = await this.createIssue({
+        title: input.githubIssueTitle,
+        description,
+        teamId: team.id,
+        labelIds: labelIds.length > 0 ? labelIds : undefined,
+      });
+
+      if (!issue) {
+        return null;
+      }
+
+      // Attach GitHub issue URL
+      await this.client.createAttachment({
+        issueId: issue.id,
+        url: input.githubIssueUrl,
+        title: `GitHub #${input.githubIssueNumber}`,
+        subtitle: input.githubRepo,
+        iconUrl: "https://github.githubassets.com/favicons/favicon.svg",
+      });
+
+      console.log(
+        `[Linear] Created issue ${issue.identifier} from GitHub #${input.githubIssueNumber}`,
+      );
+
+      return issue;
+    } catch (error) {
+      console.error("[Linear] Error creating issue from GitHub:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Syncs multiple GitHub issues to Linear
+   * Returns created/existing Linear issues
+   */
+  async syncGitHubIssues(
+    issues: Array<{
+      repo: string;
+      number: number;
+      title: string;
+      body: string;
+      url: string;
+    }>,
+    teamKey?: string,
+  ): Promise<LinearIssueInfo[]> {
+    const results: LinearIssueInfo[] = [];
+
+    for (const issue of issues) {
+      const linearIssue = await this.createIssueFromGitHub({
+        githubRepo: issue.repo,
+        githubIssueNumber: issue.number,
+        githubIssueTitle: issue.title,
+        githubIssueBody: issue.body,
+        githubIssueUrl: issue.url,
+        teamKey,
+      });
+
+      if (linearIssue) {
+        results.push(linearIssue);
+      }
+    }
+
+    return results;
   }
 
   /**

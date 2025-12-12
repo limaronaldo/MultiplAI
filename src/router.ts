@@ -127,6 +127,28 @@ route("POST", "/webhooks/github", async (req) => {
 async function handleIssueEvent(payload: GitHubIssueEvent): Promise<Response> {
   const { action, issue, repository } = payload;
 
+  // Sync newly opened issues to Linear (two-way sync)
+  if (action === "opened" && linear) {
+    const githubIssueUrl = `https://github.com/${repository.full_name}/issues/${issue.number}`;
+
+    // Create Linear issue from GitHub issue
+    const linearIssue = await linear.createIssueFromGitHub({
+      githubRepo: repository.full_name,
+      githubIssueNumber: issue.number,
+      githubIssueTitle: issue.title,
+      githubIssueBody: issue.body || "",
+      githubIssueUrl,
+    });
+
+    if (linearIssue) {
+      console.log(
+        `[Webhook] Created Linear issue ${linearIssue.identifier} from GitHub #${issue.number}`,
+      );
+    }
+
+    // Continue processing - don't return early so auto-dev label can be checked
+  }
+
   // Só processa se for labeled com auto-dev
   if (action === "labeled") {
     const hasAutoDevLabel = issue.labels.some(
@@ -997,6 +1019,129 @@ route("GET", "/api/logs/stream", async (req) => {
       "Access-Control-Allow-Origin": "*",
     },
   });
+});
+
+// ============================================
+// Linear Sync API
+// ============================================
+
+/**
+ * POST /api/linear/sync - Sync GitHub issues to Linear
+ * Body: { repo: string, issueNumbers: number[] }
+ * Or: { repo: string, syncAll: true } to sync all open issues
+ */
+route("POST", "/api/linear/sync", async (req) => {
+  if (!linear) {
+    return Response.json(
+      {
+        error: "Linear integration not configured",
+        hint: "Set LINEAR_API_KEY environment variable",
+      },
+      { status: 503 },
+    );
+  }
+
+  const body = await req.json();
+  const { repo, issueNumbers, syncAll, teamKey } = body as {
+    repo: string;
+    issueNumbers?: number[];
+    syncAll?: boolean;
+    teamKey?: string;
+  };
+
+  if (!repo || !isValidRepo(repo)) {
+    return Response.json(
+      { error: "Invalid or missing repo. Expected format: owner/repo" },
+      { status: 400 },
+    );
+  }
+
+  const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+  const [owner, repoName] = repo.split("/");
+
+  try {
+    let issuesToSync: Array<{
+      repo: string;
+      number: number;
+      title: string;
+      body: string;
+      url: string;
+    }> = [];
+
+    if (syncAll) {
+      // Fetch all open issues from GitHub
+      const { data: issues } = await octokit.rest.issues.listForRepo({
+        owner,
+        repo: repoName,
+        state: "open",
+        per_page: 100,
+      });
+
+      issuesToSync = issues
+        .filter((i) => !i.pull_request) // Exclude PRs
+        .map((i) => ({
+          repo,
+          number: i.number,
+          title: i.title,
+          body: i.body || "",
+          url: i.html_url,
+        }));
+    } else if (issueNumbers && issueNumbers.length > 0) {
+      // Fetch specific issues
+      for (const issueNumber of issueNumbers) {
+        const { data: issue } = await octokit.rest.issues.get({
+          owner,
+          repo: repoName,
+          issue_number: issueNumber,
+        });
+
+        issuesToSync.push({
+          repo,
+          number: issue.number,
+          title: issue.title,
+          body: issue.body || "",
+          url: issue.html_url,
+        });
+      }
+    } else {
+      return Response.json(
+        { error: "Provide issueNumbers array or set syncAll: true" },
+        { status: 400 },
+      );
+    }
+
+    if (issuesToSync.length === 0) {
+      return Response.json({
+        ok: true,
+        message: "No issues to sync",
+        synced: [],
+      });
+    }
+
+    // Sync to Linear
+    const synced = await linear.syncGitHubIssues(issuesToSync, teamKey);
+
+    console.log(
+      `[API] Synced ${synced.length}/${issuesToSync.length} issues to Linear`,
+    );
+
+    return Response.json({
+      ok: true,
+      message: `Synced ${synced.length} issues to Linear`,
+      synced: synced.map((i) => ({
+        identifier: i.identifier,
+        title: i.title,
+        url: i.url,
+      })),
+      total: issuesToSync.length,
+    });
+  } catch (error) {
+    console.error("[API] Error syncing to Linear:", error);
+    return Response.json(
+      { error: "Failed to sync issues", details: String(error) },
+      { status: 500 },
+    );
+  }
 });
 
 // Endpoint para Claude Code: lista issues aguardando review

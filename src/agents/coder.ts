@@ -112,7 +112,7 @@ Respond ONLY with valid JSON:
 const DEFAULT_CODER_MODEL =
   process.env.CODER_MODEL ||
   process.env.DEFAULT_LLM_MODEL ||
-  "claude-sonnet-4-5-20250929";
+  "claude-opus-4-5-20251101";
 
 export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
   constructor(modelOverride?: string) {

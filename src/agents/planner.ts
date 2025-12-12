@@ -5,7 +5,7 @@ import { PlannerOutput, PlannerOutputSchema } from "../core/types";
 const DEFAULT_PLANNER_MODEL =
   process.env.PLANNER_MODEL ||
   process.env.DEFAULT_LLM_MODEL ||
-  "claude-sonnet-4-5-20250929";
+  "gpt-5.2-thinking";
 
 interface PlannerInput {
   issueTitle: string;

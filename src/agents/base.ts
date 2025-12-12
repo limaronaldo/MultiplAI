@@ -7,8 +7,7 @@ export interface AgentConfig {
 }
 
 // Default model - can be overridden via env var
-const DEFAULT_MODEL =
-  process.env.DEFAULT_LLM_MODEL || "claude-sonnet-4-5-20250929";
+const DEFAULT_MODEL = process.env.DEFAULT_LLM_MODEL || "gpt-5.2";
 
 export abstract class BaseAgent<TInput, TOutput> {
   protected llm: LLMClient;
@@ -117,7 +116,9 @@ export abstract class BaseAgent<TInput, TOutput> {
    */
   private aggressiveJsonFix(jsonStr: string): string {
     // Try to extract key-value pairs and rebuild JSON
-    const diffMatch = jsonStr.match(/"diff"\s*:\s*"([\s\S]*?)(?:"\s*,\s*"commitMessage|"\s*})/);
+    const diffMatch = jsonStr.match(
+      /"diff"\s*:\s*"([\s\S]*?)(?:"\s*,\s*"commitMessage|"\s*})/,
+    );
     const commitMatch = jsonStr.match(/"commitMessage"\s*:\s*"([^"]*?)"/);
     const filesMatch = jsonStr.match(/"filesModified"\s*:\s*\[([\s\S]*?)\]/);
     const notesMatch = jsonStr.match(/"notes"\s*:\s*"([^"]*?)"/);
@@ -137,7 +138,9 @@ export abstract class BaseAgent<TInput, TOutput> {
       return JSON.stringify({
         diff: diff.replace(/\\\\n/g, "\\n").replace(/\\\\"/g, '\\"'),
         commitMessage: commit,
-        filesModified: files ? files.split(",").map(f => f.trim().replace(/["\[\]]/g, "")) : [],
+        filesModified: files
+          ? files.split(",").map((f) => f.trim().replace(/["\[\]]/g, ""))
+          : [],
         notes: notes || undefined,
       });
     }

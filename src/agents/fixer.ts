@@ -13,7 +13,7 @@ interface FixerInput {
 const DEFAULT_FIXER_MODEL =
   process.env.FIXER_MODEL ||
   process.env.DEFAULT_LLM_MODEL ||
-  "claude-opus-4-5-20251101";
+  "claude-opus-4-5-20251101"; // Opus best for debugging
 
 const SYSTEM_PROMPT = `You are an expert debugger fixing failing code.
 

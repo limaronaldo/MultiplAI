@@ -82,6 +82,8 @@ function getOpenAIDirectClient(): OpenAIDirectClient {
 // Models that should use OpenAI Direct client (responses API for Codex)
 const OPENAI_DIRECT_MODELS = [
   "gpt-5.2",
+  "gpt-5.2-thinking",
+  "gpt-5.2-instant",
   "gpt-5.2-2025-12-11",
   "gpt-5.1-codex",
   "gpt-5.1-codex-max",

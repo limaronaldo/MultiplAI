@@ -3,9 +3,7 @@ import { ReviewerOutput, ReviewerOutputSchema } from "../core/types";
 
 // Default reviewer model - can be overridden via env var
 const DEFAULT_REVIEWER_MODEL =
-  process.env.REVIEWER_MODEL ||
-  process.env.DEFAULT_LLM_MODEL ||
-  "claude-sonnet-4-5-20250929";
+  process.env.REVIEWER_MODEL || process.env.DEFAULT_LLM_MODEL || "gpt-5.2";
 
 interface ReviewerInput {
   definitionOfDone: string[];
