@@ -220,28 +220,28 @@ export class OpenAIDirectClient {
   }
 }
 
-// OpenAI Direct models
+/**
+ * OpenAI Direct models - APPROVED LIST
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ⚠️  ONLY USE GPT-5.2 OR GPT-5.1-CODEX MODELS
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Do NOT use legacy models (gpt-4o, gpt-4, o1, o3, etc.)
+ * GPT-5.2 is the flagship model for coding and agentic tasks.
+ * GPT-5.1-Codex-Max is for specialized coding workflows.
+ *
+ * All GPT-5.2 models use the Responses API with:
+ * - reasoning.effort: "high" (for thorough reasoning)
+ * - text.verbosity: "high" (for detailed code output)
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
 export const OPENAI_DIRECT_MODELS = {
-  // GPT-5.2 (Latest - 400K context, 128K output)
-  "gpt-5.2": "GPT-5.2 (400K context)",
-  "gpt-5.2-thinking": "GPT-5.2 Thinking (Reasoning)",
-  "gpt-5.2-instant": "GPT-5.2 Instant (Fast)",
+  // GPT-5.2 (Latest - 400K context, 128K output) - USE THESE
+  "gpt-5.2": "GPT-5.2 - Best for coding and agentic tasks",
+  "gpt-5.2-pro": "GPT-5.2 Pro - Harder thinking, tougher problems",
   "gpt-5.2-2025-12-11": "GPT-5.2 (Pinned snapshot)",
 
-  // GPT-5.1 Chat
-  "gpt-5.1-2025-11-13": "GPT-5.1 (Latest)",
-  "gpt-5.1": "GPT-5.1",
-
-  // GPT-5.1 Codex (Responses API)
-  "gpt-5.1-codex": "GPT-5.1 Codex",
-  "gpt-5.1-codex-max": "GPT-5.1 Codex Max",
-  "gpt-5.1-codex-mini": "GPT-5.1 Codex Mini",
-
-  // O4 Reasoning
-  "o4-mini": "O4 Mini (Reasoning)",
-  o4: "O4 (Reasoning)",
-
-  // O3 Reasoning
-  "o3-mini": "O3 Mini (Reasoning)",
-  o3: "O3 (Reasoning)",
+  // GPT-5.1 Codex (Responses API) - USE THESE FOR SPECIALIZED CODING
+  "gpt-5.1-codex-max": "GPT-5.1 Codex Max - Interactive coding products",
 };

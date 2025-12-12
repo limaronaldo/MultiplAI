@@ -547,7 +547,20 @@ Reasons:
 | Fast | `x-ai/grok-code-fast-1` | OpenRouter |
 | Standard | `claude-opus-4-5-20251101` | Anthropic Direct |
 | Multi | `claude-opus-4-5-20251101`, `gpt-5.2`, `x-ai/grok-code-fast-1` | Mixed |
-| Thinking | `o1`, `o3-mini` | OpenAI Direct |
+| Thinking | `gpt-5.2-pro` | OpenAI Responses API |
+
+### ⚠️ OPENAI: ONLY USE GPT-5.2 OR GPT-5.1-CODEX
+
+**Do NOT use legacy OpenAI models** (gpt-4o, gpt-4, o1, o3, etc.)
+
+Approved OpenAI models:
+- `gpt-5.2` - Best for coding and agentic tasks (400K context, 128K output)
+- `gpt-5.2-pro` - Harder thinking, tougher problems
+- `gpt-5.1-codex-max` - Specialized interactive coding products
+
+GPT-5.2 uses the **Responses API** (`/v1/responses`) with:
+- `reasoning.effort: "high"` - thorough reasoning for coding
+- `text.verbosity: "high"` - detailed code output
 
 ---
 

@@ -18,7 +18,9 @@
  * - Fast tier: x-ai/grok-code-fast-1 (via OpenRouter)
  * - Standard tier: claude-opus-4-5-20251101 (direct Anthropic API)
  * - Multi tier: claude-opus-4-5-20251101, gpt-5.2, x-ai/grok-code-fast-1
- * - Thinking tier: o1, o3-mini (direct OpenAI API)
+ * - Thinking tier: gpt-5.2-pro (Responses API with high reasoning)
+ *
+ * ⚠️ OPENAI: ONLY USE GPT-5.2 OR GPT-5.1-CODEX - NO LEGACY MODELS (gpt-4o, o1, o3, etc.)
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
@@ -58,7 +60,7 @@ export const MODEL_TIERS: ModelTier[] = [
   },
   {
     name: "thinking",
-    models: ["o1", "o3-mini"],
+    models: ["gpt-5.2-pro"],
     description:
       "Deep reasoning. For failures that simpler models can't solve.",
     avgCostPerTask: 2.0,
