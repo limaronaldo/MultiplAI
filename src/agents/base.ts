@@ -42,8 +42,36 @@ export abstract class BaseAgent<TInput, TOutput> {
 
   protected parseJSON<T>(text: string): T {
     // Extract JSON from markdown code block if present
-    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    let jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+
+    // Fallback: if no closing ```, try to extract from opening ``` to end
+    if (!jsonMatch) {
+      const openMatch = text.match(/```(?:json)?\s*([\s\S]*)/);
+      if (openMatch) {
+        jsonMatch = openMatch;
+      }
+    }
+
     let jsonStr = jsonMatch ? jsonMatch[1].trim() : text.trim();
+
+    // If it starts with { and doesn't end with }, try to find the JSON object
+    if (jsonStr.startsWith("{") && !jsonStr.endsWith("}")) {
+      // Try to find the last complete JSON by finding balanced braces
+      let braceCount = 0;
+      let lastValidEnd = -1;
+      for (let i = 0; i < jsonStr.length; i++) {
+        if (jsonStr[i] === "{") braceCount++;
+        if (jsonStr[i] === "}") {
+          braceCount--;
+          if (braceCount === 0) {
+            lastValidEnd = i;
+          }
+        }
+      }
+      if (lastValidEnd > 0) {
+        jsonStr = jsonStr.slice(0, lastValidEnd + 1);
+      }
+    }
 
     // Fix common LLM JSON issues:
     // 1. Escape unescaped newlines inside string values
