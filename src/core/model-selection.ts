@@ -17,6 +17,9 @@ export interface ModelTier {
 
 /**
  * Model tiers from cheapest to most expensive
+ *
+ * Uses OpenRouter for Anthropic models to avoid credit issues.
+ * OpenRouter model format: anthropic/claude-opus-4-5-20251101
  */
 export const MODEL_TIERS: ModelTier[] = [
   {
@@ -27,7 +30,7 @@ export const MODEL_TIERS: ModelTier[] = [
   },
   {
     name: "standard",
-    models: ["claude-opus-4-5-20251101"],
+    models: ["anthropic/claude-opus-4-5-20251101"],
     description:
       "High quality single agent. For simple features, bug fixes, tests.",
     avgCostPerTask: 0.15,
@@ -35,8 +38,8 @@ export const MODEL_TIERS: ModelTier[] = [
   {
     name: "multi",
     models: [
-      "claude-opus-4-5-20251101",
-      "gpt-4o",
+      "anthropic/claude-opus-4-5-20251101",
+      "openai/gpt-4o",
       "google/gemini-2.0-flash-exp",
     ],
     description: "Multi-agent consensus. For complex features, refactors.",
@@ -44,7 +47,7 @@ export const MODEL_TIERS: ModelTier[] = [
   },
   {
     name: "thinking",
-    models: ["o1", "o3-mini"],
+    models: ["openai/o1", "openai/o3-mini"],
     description:
       "Deep reasoning. For failures that simpler models can't solve.",
     avgCostPerTask: 2.0,
