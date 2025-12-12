@@ -33,6 +33,9 @@ export const TaskStatus = {
   NEW: "NEW",
   PLANNING: "PLANNING",
   PLANNING_DONE: "PLANNING_DONE",
+  BREAKING_DOWN: "BREAKING_DOWN", // Decomposing M/L issues into subtasks
+  BREAKDOWN_DONE: "BREAKDOWN_DONE", // Subtasks created, ready for orchestration
+  ORCHESTRATING: "ORCHESTRATING", // Processing child tasks
   CODING: "CODING",
   CODING_DONE: "CODING_DONE",
   TESTING: "TESTING",
@@ -89,6 +92,10 @@ export interface Task {
   parentTaskId?: string | null;
   subtaskIndex?: number | null;
   isOrchestrated: boolean;
+
+  // Orchestration state (for parent tasks managing subtasks)
+  orchestrationState?: OrchestrationState;
+  estimatedComplexity?: "XS" | "S" | "M" | "L" | "XL";
 
   // Timestamps
   createdAt: Date;

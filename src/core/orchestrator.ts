@@ -5,15 +5,21 @@ import {
   OrchestratorError,
   createOrchestratorError,
   defaultConfig,
+  createOrchestrationState,
+  areAllSubtasksComplete,
+  getNextPendingSubtask,
   type AutoDevConfig,
   type ConsensusDecision,
   type CandidateEvaluation,
+  type OrchestrationState,
+  type SubtaskDefinition,
 } from "./types";
 import { transition, getNextAction, isTerminal } from "./state-machine";
 import { PlannerAgent } from "../agents/planner";
 import { CoderAgent } from "../agents/coder";
 import { FixerAgent } from "../agents/fixer";
 import { ReviewerAgent } from "../agents/reviewer";
+import { BreakdownAgent } from "../agents/breakdown";
 import { GitHubClient } from "../integrations/github";
 import { db } from "../integrations/db";
 import {
@@ -47,6 +53,7 @@ export class Orchestrator {
   private coder: CoderAgent;
   private fixer: FixerAgent;
   private reviewer: ReviewerAgent;
+  private breakdown: BreakdownAgent;
   private consensus: ConsensusEngine;
   private foreman: ForemanService;
   private systemLogger: Logger;
@@ -66,6 +73,7 @@ export class Orchestrator {
     this.coder = new CoderAgent();
     this.fixer = new FixerAgent();
     this.reviewer = new ReviewerAgent();
+    this.breakdown = new BreakdownAgent();
     this.consensus = new ConsensusEngine();
     this.foreman = new ForemanService();
     this.systemLogger = createSystemLogger("orchestrator");
@@ -107,7 +115,15 @@ export class Orchestrator {
         case "PLAN":
           return await this.runPlanning(task);
         case "CODE":
+          // Check if this is an M/L complexity task that needs decomposition
+          if (this.shouldDecompose(task)) {
+            return await this.runBreakdown(task);
+          }
           return await this.runCoding(task);
+        case "BREAKDOWN":
+          return await this.runBreakdown(task);
+        case "ORCHESTRATE":
+          return await this.runOrchestration(task);
         case "TEST":
           return await this.runTests(task);
         case "FIX":
@@ -203,11 +219,11 @@ export class Orchestrator {
       }
     }
 
-    // Valida complexidade
-    if (
-      plannerOutput.estimatedComplexity === "L" ||
-      plannerOutput.estimatedComplexity === "XL"
-    ) {
+    // Store estimated complexity for decomposition decision
+    task.estimatedComplexity = plannerOutput.estimatedComplexity;
+
+    // XL complexity still fails - too large even for decomposition
+    if (plannerOutput.estimatedComplexity === "XL") {
       return this.failTask(
         task,
         createOrchestratorError(
@@ -219,7 +235,256 @@ export class Orchestrator {
       );
     }
 
+    // M/L complexity will be decomposed in the next step
+    if (
+      plannerOutput.estimatedComplexity === "M" ||
+      plannerOutput.estimatedComplexity === "L"
+    ) {
+      logger.info(
+        `Complexity ${plannerOutput.estimatedComplexity} detected - will decompose into subtasks`,
+      );
+    }
+
     return this.updateStatus(task, "PLANNING_DONE");
+  }
+
+  /**
+   * Check if a task should be decomposed into subtasks
+   */
+  private shouldDecompose(task: Task): boolean {
+    // Only decompose M/L complexity tasks that haven't been decomposed yet
+    return (
+      (task.estimatedComplexity === "M" || task.estimatedComplexity === "L") &&
+      !task.orchestrationState &&
+      !task.parentTaskId // Don't decompose child tasks
+    );
+  }
+
+  /**
+   * Step 2a: Breakdown (for M/L complexity issues)
+   * Decomposes the issue into smaller XS/S subtasks
+   */
+  private async runBreakdown(task: Task): Promise<Task> {
+    this.validateTaskState(
+      task,
+      "PLANNING_DONE",
+      ["definitionOfDone", "plan", "targetFiles"],
+      "Cannot run breakdown",
+    );
+
+    const logger = this.getLogger(task);
+    task = this.updateStatus(task, "BREAKING_DOWN");
+    await this.logEvent(task, "PLANNED", "breakdown");
+
+    logger.info(
+      `Breaking down ${task.estimatedComplexity} complexity issue into subtasks...`,
+    );
+
+    // Get repo context for breakdown agent
+    const repoContext = await this.github.getRepoContext(
+      task.githubRepo,
+      task.targetFiles || [],
+    );
+
+    // Call breakdown agent
+    const breakdownOutput = await this.breakdown.run({
+      issueTitle: task.githubIssueTitle,
+      issueBody: task.githubIssueBody,
+      repoContext,
+      estimatedComplexity: task.estimatedComplexity as "M" | "L" | "XL",
+    });
+
+    logger.info(`Created ${breakdownOutput.subIssues.length} subtasks:`);
+    for (const sub of breakdownOutput.subIssues) {
+      logger.info(`  - [${sub.complexity}] ${sub.id}: ${sub.title}`);
+    }
+
+    // Convert SubIssue to SubtaskDefinition format
+    const subtaskDefinitions: SubtaskDefinition[] =
+      breakdownOutput.subIssues.map((sub) => ({
+        id: sub.id,
+        title: sub.title,
+        description: sub.description,
+        targetFiles: sub.targetFiles,
+        dependencies: sub.dependsOn,
+        acceptanceCriteria: sub.acceptanceCriteria,
+        estimatedComplexity: sub.complexity,
+      }));
+
+    // Create orchestration state
+    task.orchestrationState = createOrchestrationState(
+      subtaskDefinitions,
+      breakdownOutput.executionOrder,
+      breakdownOutput.parallelGroups,
+    );
+
+    logger.info(
+      `Execution order: ${breakdownOutput.executionOrder.join(" -> ")}`,
+    );
+    if (breakdownOutput.parallelGroups) {
+      logger.info(
+        `Parallel groups: ${breakdownOutput.parallelGroups.map((g) => `[${g.join(", ")}]`).join(", ")}`,
+      );
+    }
+
+    return this.updateStatus(task, "BREAKDOWN_DONE");
+  }
+
+  /**
+   * Step 2b: Orchestration (process subtasks)
+   * Processes each subtask in order, aggregating diffs
+   */
+  private async runOrchestration(task: Task): Promise<Task> {
+    this.validateTaskState(
+      task,
+      "BREAKDOWN_DONE",
+      ["orchestrationState"],
+      "Cannot run orchestration",
+    );
+
+    const logger = this.getLogger(task);
+    task = this.updateStatus(task, "ORCHESTRATING");
+
+    const state = task.orchestrationState!;
+
+    // Check if all subtasks are complete
+    if (areAllSubtasksComplete(state)) {
+      logger.info("All subtasks complete! Aggregating diffs...");
+
+      // Aggregate all diffs
+      const aggregatedDiff = this.aggregateDiffs(state);
+      task.currentDiff = aggregatedDiff;
+      task.commitMessage = `feat: implement ${task.githubIssueTitle} (${state.subtasks.length} subtasks)`;
+
+      // Create branch and apply aggregated diff
+      if (!task.branchName) {
+        task.branchName = `auto/${task.githubIssueNumber}-${this.slugify(task.githubIssueTitle)}`;
+        await this.github.createBranch(task.githubRepo, task.branchName);
+      }
+
+      await this.github.applyDiff(
+        task.githubRepo,
+        task.branchName,
+        aggregatedDiff,
+        task.commitMessage,
+      );
+
+      // Skip to TESTS_PASSED (subtasks were already tested individually)
+      return this.updateStatus(task, "TESTS_PASSED");
+    }
+
+    // Get next pending subtask
+    const nextSubtask = getNextPendingSubtask(state);
+    if (!nextSubtask) {
+      logger.warn(
+        "No pending subtasks found but not all complete - checking status...",
+      );
+      return task;
+    }
+
+    logger.info(`Processing subtask: ${nextSubtask.id}`);
+    state.currentSubtask = nextSubtask.id;
+
+    // Update subtask status to in_progress
+    const subtaskIndex = state.subtasks.findIndex(
+      (s) => s.id === nextSubtask.id,
+    );
+    if (subtaskIndex >= 0) {
+      state.subtasks[subtaskIndex].status = "in_progress";
+    }
+
+    // Process the subtask inline (simplified - could spawn child tasks)
+    try {
+      const subtaskDiff = await this.processSubtask(task, nextSubtask);
+
+      // Mark subtask as completed
+      if (subtaskIndex >= 0) {
+        state.subtasks[subtaskIndex].status = "completed";
+        state.subtasks[subtaskIndex].diff = subtaskDiff;
+      }
+      state.completedSubtasks.push(nextSubtask.id);
+      state.currentSubtask = null;
+
+      logger.info(`Subtask ${nextSubtask.id} completed`);
+
+      // Continue orchestration (will be called again)
+      return task;
+    } catch (error) {
+      logger.error(
+        `Subtask ${nextSubtask.id} failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+
+      // Mark subtask as failed
+      if (subtaskIndex >= 0) {
+        state.subtasks[subtaskIndex].status = "failed";
+        state.subtasks[subtaskIndex].attempts++;
+      }
+
+      // If subtask failed, fail the whole task for now
+      // TODO: Add retry logic for individual subtasks
+      return this.failTask(
+        task,
+        createOrchestratorError(
+          "SUBTASK_FAILED",
+          `Subtask ${nextSubtask.id} failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+          task.id,
+          false,
+        ),
+      );
+    }
+  }
+
+  /**
+   * Process a single subtask and return its diff
+   */
+  private async processSubtask(
+    parentTask: Task,
+    subtask: {
+      id: string;
+      targetFiles?: string[];
+      acceptanceCriteria?: string[];
+    },
+  ): Promise<string> {
+    const logger = this.getLogger(parentTask);
+
+    // Get file contents for this subtask
+    const fileContents = await this.github.getFilesContent(
+      parentTask.githubRepo,
+      subtask.targetFiles || [],
+    );
+
+    // Create a mini DoD and plan for this subtask
+    const subtaskDoD = subtask.acceptanceCriteria || [];
+    const subtaskPlan = [`Implement subtask: ${subtask.id}`];
+
+    // Call coder for this subtask
+    const coderOutput = await this.coder.run({
+      definitionOfDone: subtaskDoD,
+      plan: subtaskPlan,
+      targetFiles: subtask.targetFiles || [],
+      fileContents,
+    });
+
+    logger.info(
+      `Subtask ${subtask.id} generated ${coderOutput.diff.split("\n").length} lines of diff`,
+    );
+
+    return coderOutput.diff;
+  }
+
+  /**
+   * Aggregate diffs from all completed subtasks
+   */
+  private aggregateDiffs(state: OrchestrationState): string {
+    const diffs: string[] = [];
+
+    for (const subtask of state.subtasks) {
+      if (subtask.status === "completed" && subtask.diff) {
+        diffs.push(`# Subtask: ${subtask.id}\n${subtask.diff}`);
+      }
+    }
+
+    return diffs.join("\n\n");
   }
 
   /**

@@ -11,7 +11,12 @@ type StatusTransitions = {
 export const validTransitions: StatusTransitions = {
   NEW: ["PLANNING", "FAILED"],
   PLANNING: ["PLANNING_DONE", "FAILED"],
-  PLANNING_DONE: ["CODING", "FAILED"],
+  // PLANNING_DONE can go to CODING (XS/S) or BREAKING_DOWN (M/L)
+  PLANNING_DONE: ["CODING", "BREAKING_DOWN", "FAILED"],
+  // Decomposition flow for M/L complexity issues
+  BREAKING_DOWN: ["BREAKDOWN_DONE", "FAILED"],
+  BREAKDOWN_DONE: ["ORCHESTRATING", "FAILED"],
+  ORCHESTRATING: ["TESTS_PASSED", "FAILED"], // Skips to TESTS_PASSED when all subtasks done
   CODING: ["CODING_DONE", "FAILED"],
   CODING_DONE: ["TESTING", "FAILED"],
   TESTING: ["TESTS_PASSED", "TESTS_FAILED", "FAILED"],
@@ -47,12 +52,12 @@ export function transition(from: TaskStatus, to: TaskStatus): TaskStatus {
 }
 
 /**
- * Retorna o próximo passo lógico dado o estado atual
+ * Action types for the state machine
  */
-export function getNextAction(
-  status: TaskStatus,
-):
+export type TaskAction =
   | "PLAN"
+  | "BREAKDOWN" // Decompose M/L issue into subtasks
+  | "ORCHESTRATE" // Process subtasks
   | "CODE"
   | "TEST"
   | "FIX"
@@ -60,12 +65,24 @@ export function getNextAction(
   | "OPEN_PR"
   | "WAIT"
   | "DONE"
-  | "FAILED" {
+  | "FAILED";
+
+/**
+ * Retorna o próximo passo lógico dado o estado atual
+ */
+export function getNextAction(status: TaskStatus): TaskAction {
   switch (status) {
     case "NEW":
       return "PLAN";
     case "PLANNING_DONE":
+      // Decision between CODE and BREAKDOWN happens in orchestrator based on complexity
       return "CODE";
+    case "BREAKING_DOWN":
+      return "WAIT"; // Waiting for breakdown to complete
+    case "BREAKDOWN_DONE":
+      return "ORCHESTRATE";
+    case "ORCHESTRATING":
+      return "WAIT"; // Waiting for subtasks to complete
     case "CODING_DONE":
       return "TEST";
     case "TESTS_PASSED":
@@ -105,6 +122,8 @@ export function isWaiting(status: TaskStatus): boolean {
     status === "PLANNING" ||
     status === "CODING" ||
     status === "FIXING" ||
-    status === "REVIEWING"
+    status === "REVIEWING" ||
+    status === "BREAKING_DOWN" ||
+    status === "ORCHESTRATING"
   );
 }
