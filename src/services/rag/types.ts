@@ -1,46 +1,56 @@
 /**
- * Represents a chunk of code extracted from a file for indexing and search.
+ * RAG (Retrieval-Augmented Generation) types for code search and indexing
+ */
+
+/**
+ * Represents a chunk of code extracted from a file
  */
 export interface CodeChunk {
+  /** Unique identifier for the chunk */
   id: string;
+  /** Path to the source file */
   filePath: string;
+  /** The actual code content */
   content: string;
+  /** Starting line number in the source file */
   startLine: number;
+  /** Ending line number in the source file */
   endLine: number;
+  /** Programming language of the code */
+  language: string;
+  /** Optional embedding vector for similarity search */
   embedding?: number[];
 }
 
 /**
- * Represents a search result from the RAG system.
+ * Represents a search result from the RAG system
  */
 export interface SearchResult {
+  /** The matching code chunk */
   chunk: CodeChunk;
+  /** Similarity score (0-1, higher is more similar) */
   score: number;
-  highlights?: string[];
 }
 
 /**
- * Options for configuring search behavior.
+ * Options for configuring search behavior
  */
 export interface SearchOptions {
-  maxResults?: number;
+  /** Maximum number of results to return */
+  limit?: number;
+  /** Minimum similarity score threshold (0-1) */
   minScore?: number;
+  /** Filter results by programming language */
+  language?: string;
+  /** Filter results by file path pattern */
   filePattern?: string;
 }
 
 /**
- * Statistics about the current index state.
+ * Statistics about the current index state
  */
 export interface IndexStats {
+  /** Total number of indexed chunks */
   totalChunks: number;
+  /** Total number of indexed files */
   totalFiles: number;
-  lastUpdated: Date;
-  embeddingDimension?: number;
-}
-/**
- * RAG (Retrieval-Augmented Generation) service types and utilities.
- */
-export type { CodeChunk } from './types.js';
-export type { SearchResult } from './types.js';
-export type { SearchOptions } from './types.js';
-export type { IndexStats } from './types.js';
