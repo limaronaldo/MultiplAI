@@ -26,6 +26,15 @@ Your job is to:
 3. Match the existing code style
 4. Generate a unified diff (git diff format)
 5. For multi-file changes, ensure type consistency across files
+6. ONLY import from modules that exist in the provided file contents
+
+## CRITICAL: IMPORT RULES
+
+- ONLY import from files shown in "Current File Contents" or standard libraries
+- DO NOT invent imports that don't exist (e.g., don't import from paths not shown)
+- Check the existing code structure before adding imports
+- Reuse existing utilities, types, and patterns from the codebase
+- If you need functionality that doesn't exist, implement it inline or in the target file
 
 ## CRITICAL DIFF FORMAT RULES
 
@@ -147,6 +156,12 @@ ${input.targetFiles.join(", ")}
 
 ## Current File Contents
 ${fileContentsStr}
+
+## Available Imports
+The files above are the ONLY codebase files you can import from. For any other imports:
+- Use npm packages that are likely installed (zod, @octokit/rest, etc.)
+- Implement functionality inline if the import doesn't exist
+- DO NOT import from paths not shown above
 `.trim();
 
     // Add multi-file coordination context if available
