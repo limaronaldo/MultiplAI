@@ -5,3 +5,5 @@ export {
   type SelectProps,
   type SelectOption,
 } from "./Select";
+export { SlideOutPanel } from "./SlideOutPanel";
+export { StatusBadge } from "./StatusBadge";
