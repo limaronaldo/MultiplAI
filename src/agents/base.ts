@@ -41,19 +41,33 @@ export abstract class BaseAgent<TInput, TOutput> {
     });
   }
 
-  protected parseJSON<T>(text: string): T {
+  protected parseJSON<T>(text: string | unknown): T {
+    // Ensure text is a string - OpenAI Responses API may return non-string in edge cases
+    if (text === null || text === undefined) {
+      throw new Error("Cannot parse JSON from null/undefined response");
+    }
+
+    // If text is an object, it might already be parsed JSON
+    if (typeof text === "object") {
+      // Check if it's already the expected structure
+      return text as T;
+    }
+
+    // Convert to string if needed
+    const textStr = typeof text === "string" ? text : String(text);
+
     // Extract JSON from markdown code block if present
-    let jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    let jsonMatch = textStr.match(/```(?:json)?\s*([\s\S]*?)```/);
 
     // Fallback: if no closing ```, try to extract from opening ``` to end
     if (!jsonMatch) {
-      const openMatch = text.match(/```(?:json)?\s*([\s\S]*)/);
+      const openMatch = textStr.match(/```(?:json)?\s*([\s\S]*)/);
       if (openMatch) {
         jsonMatch = openMatch;
       }
     }
 
-    let jsonStr = jsonMatch ? jsonMatch[1].trim() : text.trim();
+    let jsonStr = jsonMatch ? jsonMatch[1].trim() : textStr.trim();
 
     // If it starts with { and doesn't end with }, try to find the JSON object
     if (jsonStr.startsWith("{") && !jsonStr.endsWith("}")) {
@@ -88,7 +102,7 @@ export abstract class BaseAgent<TInput, TOutput> {
         return JSON.parse(aggressiveFixed);
       } catch (e2) {
         throw new Error(
-          `Failed to parse JSON from LLM response: ${text.slice(0, 200)}...`,
+          `Failed to parse JSON from LLM response: ${textStr.slice(0, 200)}...`,
         );
       }
     }
