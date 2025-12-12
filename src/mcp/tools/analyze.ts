@@ -1,8 +1,19 @@
 import { z } from 'zod';
 import { Octokit } from '@octokit/rest';
-import { PlannerAgent } from '../../agents/planner.js';
-import { ClaudeProvider } from '../../providers/claude.js';
-import type { ToolDefinition } from '../types.js';
+
+/**
+ * Tool definition type for MCP registration
+ */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  inputSchema: {
+    type: string;
+    properties: Record<string, { type: string; description: string }>;
+    required: string[];
+  };
+  handler: (input: unknown) => Promise<unknown>;
+}
 
 /**
  * Input schema for the analyze tool
@@ -50,7 +61,36 @@ async function fetchGitHubIssue(
 }
 
 /**
- * Analyzes a GitHub issue using the PlannerAgent
+ * Simple analysis based on issue content
+ * This provides a basic implementation that can be enhanced with PlannerAgent later
+ */
+function analyzeIssueContent(title: string, body: string): { complexity: 'low' | 'medium' | 'high'; targetFiles: string[]; plan: string; confidence: number } {
+  const content = `${title} ${body}`.toLowerCase();
+  const lines = body.split('\n').filter(line => line.trim());
+  
+  // Estimate complexity based on content length and keywords
+  let complexity: 'low' | 'medium' | 'high' = 'low';
+  if (content.includes('refactor') || content.includes('breaking') || content.includes('migration') || lines.length > 20) {
+    complexity = 'high';
+  } else if (content.includes('feature') || content.includes('add') || content.includes('implement') || lines.length > 10) {
+    complexity = 'medium';
+  }
+  
+  // Extract potential file paths from content
+  const filePattern = /[\w-]+\.[a-z]{2,4}/gi;
+  const targetFiles = [...new Set(content.match(filePattern) || [])];
+  
+  // Generate a basic plan
+  const plan = `Analyze and address: ${title}`;
+  
+  // Confidence based on how much information is available
+  const confidence = Math.min(0.9, 0.3 + (lines.length * 0.05));
+  
+  return { complexity, targetFiles, plan, confidence };
+}
+
+/**
+ * Analyzes a GitHub issue
  */
 export async function analyzeGitHubIssue(input: AnalyzeInput): Promise<AnalyzeOutput> {
   const { repo, issueNumber } = input;
@@ -80,48 +120,20 @@ export async function analyzeGitHubIssue(input: AnalyzeInput): Promise<AnalyzeOu
     throw new Error(`Failed to fetch issue: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 
-  // Initialize the PlannerAgent
-  const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
-  if (!anthropicApiKey) {
-    throw new Error('ANTHROPIC_API_KEY environment variable is required');
+  // Run analysis
+  const analysis = analyzeIssueContent(issue.title, issue.body);
+
+  // Generate recommendation
+  let recommendation: string;
+  if (analysis.confidence < 0.5) {
+    recommendation = 'Low confidence analysis. Consider providing more context or breaking down the issue.';
+  } else if (analysis.complexity === 'high') {
+    recommendation = 'Complex change detected. Consider breaking into smaller issues or requesting human review.';
+  } else if (analysis.complexity === 'medium') {
+    recommendation = 'Moderate complexity. Automated implementation possible with careful review.';
+  } else {
+    recommendation = 'Simple change. Good candidate for automated implementation.';
   }
-
-  const provider = new ClaudeProvider(anthropicApiKey);
-  const planner = new PlannerAgent(provider);
-
-  // Run analysis using the PlannerAgent
-  const issueContent = `# ${issue.title}\n\n${issue.body}`;
-  const analysis = await planner.analyze(issueContent);
 
   return {
     complexity: analysis.complexity,
-    targetFiles: analysis.targetFiles,
-    plan: analysis.plan,
-    confidence: analysis.confidence,
-    recommendation: generateRecommendation(analysis.complexity, analysis.confidence),
-    issueTitle: issue.title,
-    issueUrl: issue.url,
-  };
-}
-
-/**
- * Generates a recommendation based on complexity and confidence
- */
-function generateRecommendation(complexity: string, confidence: number): string {
-  if (confidence < 0.5) {
-    return 'Low confidence analysis. Consider providing more context or breaking down the issue.';
-  }
-  if (complexity === 'high') {
-    return 'Complex change detected. Consider breaking into smaller issues or requesting human review.';
-  }
-  if (complexity === 'medium') {
-    return 'Moderate complexity. Automated implementation possible with careful review.';
-  }
-  return 'Simple change. Good candidate for automated implementation.';
-}
-
-/**
- * Tool definition for MCP registration
- */
-export const analyzeToolDefinition: ToolDefinition = {
-  name: 'analyze_issue',
