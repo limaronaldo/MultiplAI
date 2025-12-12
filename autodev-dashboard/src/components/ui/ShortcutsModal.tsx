@@ -1,6 +1,6 @@
-import React from 'react';
-import { X, Keyboard } from 'lucide-react';
-import type { KeyboardShortcut } from '@/hooks/useKeyboardShortcuts';
+import React from "react";
+import { X, Keyboard } from "lucide-react";
+import type { KeyboardShortcut } from "@/hooks/useKeyboardShortcuts";
 
 interface ShortcutsModalProps {
   isOpen: boolean;
@@ -8,7 +8,13 @@ interface ShortcutsModalProps {
   shortcuts: KeyboardShortcut[];
 }
 
-function KeyIndicator({ keyName, shift }: { keyName: string; shift?: boolean }) {
+function KeyIndicator({
+  keyName,
+  shift,
+}: {
+  keyName: string;
+  shift?: boolean;
+}) {
   return (
     <div className="flex items-center gap-1">
       {shift && (
@@ -24,11 +30,19 @@ function KeyIndicator({ keyName, shift }: { keyName: string; shift?: boolean }) 
   );
 }
 
-export function ShortcutsModal({ isOpen, onClose, shortcuts }: ShortcutsModalProps) {
+export function ShortcutsModal({
+  isOpen,
+  onClose,
+  shortcuts,
+}: ShortcutsModalProps) {
   if (!isOpen) return null;
 
-  const navigationShortcuts = shortcuts.filter((s) => s.description.startsWith('Go to'));
-  const actionShortcuts = shortcuts.filter((s) => !s.description.startsWith('Go to'));
+  const navigationShortcuts = shortcuts.filter((s) =>
+    s.description.startsWith("Go to"),
+  );
+  const actionShortcuts = shortcuts.filter(
+    (s) => !s.description.startsWith("Go to"),
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -44,7 +58,9 @@ export function ShortcutsModal({ isOpen, onClose, shortcuts }: ShortcutsModalPro
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
           <div className="flex items-center gap-3">
             <Keyboard className="w-5 h-5 text-blue-400" />
-            <h2 className="text-lg font-semibold text-slate-100">Keyboard Shortcuts</h2>
+            <h2 className="text-lg font-semibold text-slate-100">
+              Keyboard Shortcuts
+            </h2>
           </div>
           <button
             onClick={onClose}
@@ -58,25 +74,62 @@ export function ShortcutsModal({ isOpen, onClose, shortcuts }: ShortcutsModalPro
         <div className="px-6 py-4 space-y-6">
           {/* Navigation */}
           <div>
-            <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-3">Navigation</h3>
+            <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-3">
+              Navigation
+            </h3>
             <div className="space-y-2">
               {navigationShortcuts.map((shortcut) => (
-                <div key={shortcut.key} className="flex items-center justify-between py-1">
+                <div
+                  key={shortcut.key}
+                  className="flex items-center justify-between py-1"
+                >
                   <span className="text-slate-300">{shortcut.description}</span>
-                  <KeyIndicator keyName={shortcut.key} shift={shortcut.modifiers?.shift} />
+                  <KeyIndicator
+                    keyName={shortcut.key}
+                    shift={shortcut.modifiers?.shift}
+                  />
                 </div>
               ))}
             </div>
           </div>
 
           {/* Actions */}
-          <div>
-            <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-3">Actions</h3>
-            <div className="space-y-2">
-              {actionShortcuts.map((shortcut) => (
-                <div key={shortcut.key} className="flex items-center justify-between py-1">
-                  <span className="text-slate-300">{shortcut.description}</span>
-                  <KeyIndicator keyName={shortcut.key} shift={shortcut.modifiers?.shift} />
-                </div>
-              ))}
-              <div className="flex items-center justify-between py-1">
+          {actionShortcuts.length > 0 && (
+            <div>
+              <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-3">
+                Actions
+              </h3>
+              <div className="space-y-2">
+                {actionShortcuts.map((shortcut) => (
+                  <div
+                    key={shortcut.key}
+                    className="flex items-center justify-between py-1"
+                  >
+                    <span className="text-slate-300">
+                      {shortcut.description}
+                    </span>
+                    <KeyIndicator
+                      keyName={shortcut.key}
+                      shift={shortcut.modifiers?.shift}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-3 border-t border-slate-700 bg-slate-800/50 rounded-b-lg">
+          <p className="text-xs text-slate-500 text-center">
+            Press{" "}
+            <kbd className="px-1.5 py-0.5 bg-slate-700 rounded text-slate-300">
+              Esc
+            </kbd>{" "}
+            to close
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}

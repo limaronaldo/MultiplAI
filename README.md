@@ -1,142 +1,198 @@
-# MultiplAI 🚀
+# MultiplAI
 
-**Múltiplos devs, um só comando.**
+**Autonomous development agents that turn GitHub issues into pull requests.**
 
-MultiplAI é sua linha de produção paralela de código. Você planeja, ele executa em lote, e você revisa PRs prontos.
+MultiplAI is your parallel coding pipeline. You create issues, it executes in batch, you review ready PRs.
 
-> "MultiplAI não é um chatbot. É seu time extra de devs em paralelo."
+> MultiplAI is not a chatbot. It's your extra dev team working in parallel.
 
-## O que faz?
-
-1. **Você cria issues** descrevendo o que precisa
-2. **MultiplAI quebra em tarefas** e executa em paralelo
-3. **Você recebe PRs prontos** para revisar e mergear
+## What it does
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                                                                 │
-│    Issues        MultiplAI           PRs prontos               │
-│    ┌───┐         ┌───────┐           ┌───┐                     │
-│    │ 1 │────────▶│       │──────────▶│PR1│                     │
-│    └───┘         │       │           └───┘                     │
-│    ┌───┐         │  ⚡⚡⚡  │           ┌───┐                     │
-│    │ 2 │────────▶│       │──────────▶│PR2│                     │
-│    └───┘         │       │           └───┘                     │
-│    ┌───┐         │       │           ┌───┐                     │
-│    │ 3 │────────▶│       │──────────▶│PR3│                     │
-│    └───┘         └───────┘           └───┘                     │
+│    Issues           MultiplAI              Ready PRs            │
+│    ┌───┐           ┌─────────┐             ┌───┐               │
+│    │ 1 │──────────▶│         │────────────▶│PR1│               │
+│    └───┘           │  ⚡⚡⚡⚡  │             └───┘               │
+│    ┌───┐           │         │             ┌───┐               │
+│    │ 2 │──────────▶│ Planner │────────────▶│PR2│               │
+│    └───┘           │ Coder   │             └───┘               │
+│    ┌───┐           │ Tester  │             ┌───┐               │
+│    │ 3 │──────────▶│ Review  │────────────▶│PR3│               │
+│    └───┘           └─────────┘             └───┘               │
 │                                                                 │
-│    Você planeja    Paralelo         Você revisa                │
+│    You plan         Parallel              You review            │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Por que MultiplAI?
+1. **Create issues** describing what you need
+2. **MultiplAI processes them** with AI agents in parallel
+3. **Review ready PRs** and merge
 
-| Tradicional | MultiplAI |
-|-------------|-----------|
-| 1 dev = 1 task por vez | N tasks em paralelo |
-| Espera review, espera deploy | Lote de PRs de uma vez |
-| Custo alto de headcount | Paga por uso |
-| Contexto perdido entre tasks | Cada task isolada e focada |
+## Features
 
-**Você continua no comando.** MultiplAI é seu time extra, não seu substituto.
+- **Autonomous Pipeline**: Issue → Plan → Code → Test → Review → PR
+- **Multi-Agent Architecture**: Specialized agents for planning, coding, fixing, and reviewing
+- **Batch Processing**: Process multiple issues in parallel with Jobs API
+- **Self-Healing**: Automatic retry with Fixer agent when tests fail (up to 3 attempts)
+- **Code Review**: LLM-based review before opening PR
+- **Dashboard**: Real-time monitoring, analytics, and job management
+- **Linear Integration**: Sync with Linear issues for project management
 
 ## Quick Start
 
-### 1. Instale
+### 1. Install
 
 ```bash
-git clone https://github.com/your-org/multiplai.git
-cd multiplai
+git clone https://github.com/limaronaldo/MultiplAI.git
+cd MultiplAI
 bun install
 ```
 
 ### 2. Configure
 
 ```bash
-bun run setup  # Wizard interativo
-```
-
-Ou manualmente:
-```bash
 cp .env.example .env
-# Preencha: GITHUB_TOKEN, ANTHROPIC_API_KEY, DATABASE_URL
+# Fill in: GITHUB_TOKEN, ANTHROPIC_API_KEY, DATABASE_URL
 bun run db:migrate
 ```
 
-### 3. Rode
+### 3. Run
 
 ```bash
+# Backend
+bun run dev
+
+# Dashboard (separate terminal)
+cd autodev-dashboard
+bun install
 bun run dev
 ```
 
 ### 4. Use
 
-1. Configure o webhook no seu repo GitHub → `https://seu-servidor/webhooks/github`
-2. Crie uma issue com a label `auto-dev`
-3. MultiplAI entrega um PR
+1. Configure webhook in your GitHub repo → `https://your-server/webhooks/github`
+2. Create an issue with label `auto-dev`
+3. MultiplAI delivers a PR
 
-## Como funciona
+## Architecture
+
+### Pipeline Flow
 
 ```
-Issue marcada ──▶ Planner ──▶ Coder ──▶ Tester ──▶ Reviewer ──▶ PR
+Issue labeled ──▶ Planner ──▶ Coder ──▶ Tester ──▶ Reviewer ──▶ PR
      │              │           │          │           │        │
-     │              │           │          │           │        │
-   Label         Analisa    Implementa   Roda CI    Review    Pronto
-  auto-dev       + DoD      como diff    + Fix     LLM-based  pra você
+   auto-dev      Analyzes   Implements   Runs CI    Reviews   Ready
+   trigger       + DoD      as diff      + Fix      code      for you
 ```
 
-### Agentes
+### Agents
 
-| Agente | Modelo | Função |
-|--------|--------|--------|
-| **Planner** | Claude Sonnet | Analisa issue, cria plano e Definition of Done |
-| **Coder** | Claude Opus | Escreve o código como unified diff |
-| **Fixer** | Claude Opus | Corrige se testes falharem (até 3x) |
-| **Reviewer** | Claude Sonnet | Code review antes de abrir PR |
+| Agent | Model | Function |
+|-------|-------|----------|
+| **Planner** | Claude Sonnet | Analyzes issue, creates plan and Definition of Done |
+| **Coder** | Claude Opus | Writes code as unified diff |
+| **Fixer** | Claude Opus | Fixes code when tests fail (up to 3x) |
+| **Reviewer** | Claude Sonnet | Code review before opening PR |
 
-### Modelos suportados
+### State Machine
 
-**Anthropic:**
-- `claude-opus-4-5-20251101` - Melhor qualidade
-- `claude-sonnet-4-5-20250929` - Balanceado
-- `claude-haiku-4-5-20251015` - Rápido e barato
+```
+NEW → PLANNING → PLANNING_DONE → CODING → CODING_DONE → TESTING
+    → TESTS_PASSED → REVIEWING → REVIEW_APPROVED → PR_CREATED → WAITING_HUMAN
+                                                              → COMPLETED
 
-**OpenAI:**
-- `gpt-4.1` - Melhor GPT, 1M contexto
-- `gpt-4o` - Multimodal
-- `o3`, `o3-mini` - Reasoning models
+Fix Loop: TESTS_FAILED → FIXING → CODING_DONE (retry)
+Review Loop: REVIEW_REJECTED → CODING (re-code with feedback)
+```
 
-## API
+### Project Structure
+
+```
+├── src/
+│   ├── index.ts              # Bun HTTP server entry
+│   ├── router.ts             # HTTP routes
+│   ├── core/
+│   │   ├── types.ts          # Types and Zod schemas
+│   │   ├── state-machine.ts  # State transitions
+│   │   └── orchestrator.ts   # Main processing logic
+│   ├── agents/
+│   │   ├── base.ts           # Base agent class
+│   │   ├── planner.ts        # Planning agent
+│   │   ├── coder.ts          # Code generation
+│   │   ├── fixer.ts          # Error fixing
+│   │   └── reviewer.ts       # Code review
+│   └── integrations/
+│       ├── anthropic.ts      # Claude SDK
+│       ├── github.ts         # Octokit wrapper
+│       ├── linear.ts         # Linear SDK
+│       └── db.ts             # PostgreSQL
+├── autodev-dashboard/        # React dashboard
+│   ├── src/
+│   │   ├── components/       # UI components
+│   │   ├── hooks/            # React hooks
+│   │   ├── pages/            # Route pages
+│   │   └── stores/           # Zustand stores
+│   └── ...
+└── prompts/                  # Agent prompt templates
+```
+
+## Dashboard
+
+Real-time monitoring dashboard built with React + TypeScript + Tailwind.
+
+### Features
+
+- **Dashboard**: KPI cards, status distribution, activity charts
+- **Tasks**: List, filter, and view task details with diff viewer
+- **Jobs**: Create and manage batch jobs, real-time progress
+- **Logs**: Live log streaming via SSE
+- **Settings**: Theme toggle, repository config
+
+### Running the Dashboard
+
+```bash
+cd autodev-dashboard
+bun install
+bun run dev
+# Opens at http://localhost:5173
+```
+
+Configure the backend URL in `.env.local`:
+```env
+VITE_API_BASE_URL=http://localhost:3000/api
+```
+
+## API Reference
 
 ### Tasks
 
-| Método | Endpoint | Descrição |
-|--------|----------|-----------|
-| GET | `/api/tasks` | Lista tasks pendentes |
-| GET | `/api/tasks/:id` | Detalhes da task com eventos |
-| POST | `/api/tasks/:id/process` | Processa task manualmente |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/tasks` | List all tasks |
+| GET | `/api/tasks/:id` | Get task details |
+| POST | `/api/tasks/:id/process` | Manually trigger processing |
 
 ### Jobs (Batch Processing)
 
-| Método | Endpoint | Descrição |
-|--------|----------|-----------|
-| POST | `/api/jobs` | Cria job com múltiplas issues |
-| GET | `/api/jobs` | Lista jobs recentes |
-| GET | `/api/jobs/:id` | Detalhes do job com status das tasks |
-| GET | `/api/jobs/:id/events` | Eventos agregados de todas as tasks |
-| POST | `/api/jobs/:id/run` | Inicia processamento do job |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/jobs` | Create job with multiple issues |
+| GET | `/api/jobs/:id` | Get job status with task summaries |
+| POST | `/api/jobs/:id/run` | Start job processing |
+| POST | `/api/jobs/:id/cancel` | Cancel running job |
 
-#### Criar Job
+#### Create a Job
 
 ```bash
 curl -X POST http://localhost:3000/api/jobs \
   -H "Content-Type: application/json" \
-  -d '{"repo": "owner/repo", "issueNumbers": [1, 2, 3]}'
+  -d '{"repo": "owner/repo", "issueNumbers": [21, 22, 23]}'
 ```
 
-#### Executar Job
+#### Start a Job
 
 ```bash
 curl -X POST http://localhost:3000/api/jobs/{id}/run
@@ -144,99 +200,135 @@ curl -X POST http://localhost:3000/api/jobs/{id}/run
 
 ### Webhooks
 
-| Método | Endpoint | Descrição |
-|--------|----------|-----------|
-| POST | `/webhooks/github` | Recebe eventos do GitHub |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/webhooks/github` | Receives GitHub events |
 
-### Outros
+Events: `issues` (labeled), `check_run` (completed), `pull_request` (closed)
 
-| Método | Endpoint | Descrição |
-|--------|----------|-----------|
+### Other
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
 | GET | `/api/health` | Health check |
-| GET | `/api/review/pending` | Issues aguardando review (Linear) |
+| GET | `/api/review/pending` | Linear issues awaiting review |
 
-## Deploy (Fly.io)
+## Configuration
+
+### Environment Variables
+
+**Required:**
+- `GITHUB_TOKEN` - GitHub personal access token
+- `ANTHROPIC_API_KEY` - Claude API key
+- `DATABASE_URL` - Neon PostgreSQL connection string
+
+**Optional:**
+- `LINEAR_API_KEY` - Linear API key for issue sync
+- `GITHUB_WEBHOOK_SECRET` - Webhook signature validation
+- `MAX_ATTEMPTS` - Max fix attempts (default: 3)
+- `MAX_DIFF_LINES` - Max lines in diff (default: 300)
+
+### Safety Limits
+
+| Config | Default | Description |
+|--------|---------|-------------|
+| `maxAttempts` | 3 | Retry attempts before failing |
+| `maxDiffLines` | 300 | Maximum diff size |
+| Complexity | XS/S | L/XL issues are rejected |
+| Allowed paths | `src/`, `lib/`, `tests/` | Safe to modify |
+| Blocked paths | `.env`, `secrets/`, `.github/workflows/` | Never touched |
+
+## Writing Good Issues
+
+### Good Issue ✅
+
+```markdown
+## Add email validation function
+
+### Requirements
+- Create `validateEmail(email: string): boolean` in `src/utils.ts`
+- Use regex for validation
+- Return true if valid, false if invalid
+
+### Acceptance Criteria
+- [ ] Function exists and is exported
+- [ ] Validates correct format (test@example.com)
+- [ ] Rejects invalid formats
+- [ ] Has unit tests
+```
+
+### Bad Issue ❌
+
+```markdown
+Improve the email system
+```
+
+## Deployment
+
+### Fly.io
 
 ```bash
-# Primeiro deploy
+# First deploy
 fly apps create multiplai --region gru
 fly secrets set GITHUB_TOKEN=ghp_xxx ANTHROPIC_API_KEY=sk-ant-xxx DATABASE_URL=postgresql://...
 fly deploy
 
-# Deploys futuros
+# Future deploys
 fly deploy
+
+# View logs
+fly logs
 ```
 
-## Arquitetura
+### Dashboard Deployment
 
-```
-src/
-├── index.ts              # Entry point
-├── router.ts             # HTTP routes
-├── core/
-│   ├── types.ts          # Tipos e schemas
-│   ├── state-machine.ts  # Transições de estado
-│   └── orchestrator.ts   # Lógica principal
-├── agents/
-│   ├── base.ts           # Classe base
-│   ├── planner.ts        # Planejamento
-│   ├── coder.ts          # Geração de código
-│   ├── fixer.ts          # Correção de erros
-│   └── reviewer.ts       # Code review
-└── integrations/
-    ├── llm.ts            # Multi-provider (Anthropic + OpenAI)
-    ├── github.ts         # GitHub API
-    ├── linear.ts         # Linear (opcional)
-    └── db.ts             # PostgreSQL
+The dashboard can be deployed to any static hosting (Vercel, Netlify, Cloudflare Pages):
+
+```bash
+cd autodev-dashboard
+bun run build
+# Deploy dist/ folder
 ```
 
-## Escrevendo boas issues
+## Tech Stack
 
-### Boa issue ✅
+**Backend:**
+- Bun runtime
+- TypeScript
+- Neon PostgreSQL
+- Anthropic Claude SDK
 
-```markdown
-## Adicionar função de validação de email
+**Dashboard:**
+- React 19
+- TypeScript
+- Tailwind CSS
+- Zustand (state management)
+- React Router v7
+- react-diff-viewer-continued
 
-### Requisitos
-- Criar `validateEmail(email: string): boolean` em `src/utils.ts`
-- Usar regex para validação
-- Retornar true se válido, false se inválido
-
-### Critérios de aceite
-- [ ] Função existe e é exportada
-- [ ] Valida formato correto (test@example.com)
-- [ ] Rejeita formatos inválidos
-- [ ] Tem testes unitários
-```
-
-### Issue ruim ❌
-
-```markdown
-Melhorar o sistema de emails
-```
-
-## Limites
-
-| Config | Padrão | Descrição |
-|--------|--------|-----------|
-| `maxAttempts` | 3 | Tentativas antes de falhar |
-| `maxDiffLines` | 300 | Tamanho máximo do diff |
-| Complexidade | S/M | Issues L/XL são rejeitadas |
+**Integrations:**
+- GitHub API (Octokit)
+- Linear API
+- SSE for real-time logs
 
 ## Roadmap
 
-- [x] Multi-provider LLM (Anthropic + OpenAI)
-- [x] Auto-approve para diffs pequenos
-- [x] Integração Linear
-- [ ] Dashboard web
-- [ ] Fila de processamento (Redis)
-- [ ] Execução em batch programada
-- [ ] Métricas e analytics
+- [x] Multi-agent pipeline (Planner → Coder → Fixer → Reviewer)
+- [x] Batch processing with Jobs API
+- [x] Linear integration
+- [x] Dashboard with real-time monitoring
+- [x] Theme support (dark/light/system)
+- [x] Mobile responsive design
+- [ ] Local test runner (Foreman)
+- [ ] Issue decomposition for complex tasks
+- [ ] RAG-based codebase indexing
+- [ ] Redis queue for rate limiting
+- [ ] Cost tracking and analytics
 
-## Links
+## Documentation
 
-- [CLAUDE.md](CLAUDE.md) - Guia completo do codebase
-- [AUTODEV_GUIDE.md](AUTODEV_GUIDE.md) - Como escrever issues
+- [CLAUDE.md](CLAUDE.md) - Complete codebase guide for AI agents
+- [LEARNINGS.md](LEARNINGS.md) - Model performance data and lessons learned
 
 ## License
 
@@ -244,4 +336,4 @@ MIT
 
 ---
 
-**MultiplAI** — Multiplique a capacidade do seu time, não o número de headcounts.
+**MultiplAI** — Multiply your team's capacity, not your headcount.
