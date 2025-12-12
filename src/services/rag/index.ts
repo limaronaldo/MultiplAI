@@ -1,6 +1,5 @@
 /**
- * RAG (Retrieval-Augmented Generation) service exports
+ * RAG Service - Retrieval-Augmented Generation
  */
 
-// Export all types
-export type { CodeChunk, SearchResult, SearchOptions, IndexStats } from './types';
+export * from './types';
