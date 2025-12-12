@@ -123,3 +123,18 @@ export interface ApiError {
   message: string;
   status_code: number;
 }
+
+// Task event for tracking agent calls and costs
+export interface TaskEvent {
+  id: string;
+  taskId: string;
+  eventType: string;
+  agent?: string;
+  model?: string;
+  tokensUsed?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  durationMs?: number;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
