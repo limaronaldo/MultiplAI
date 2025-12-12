@@ -1,5 +1,6 @@
 /**
- * RAG Service - Retrieval-Augmented Generation
+ * RAG Service - Public API
  */
 
-export * from './types.js';
+// Export all types
+export type { CodeChunk, SearchResult, SearchOptions, IndexStats } from './types.js';
