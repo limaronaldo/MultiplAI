@@ -1,0 +1,237 @@
+# AI Super Review - Multi-Agent PR Review Orchestration
+# Triggers Copilot, Codex, and Jules to review PRs in parallel
+# Creates a unified "Super Review" summary for merge decisions
+#
+# Prerequisites:
+# 1. Copilot automatic review enabled in repo Settings → Rules → Rulesets
+# 2. Codex connected via codex.openai.com (optional)
+# 3. Jules connected via jules.google (optional)
+
+name: AI Super Review
+
+on:
+  pull_request:
+    types: [ready_for_review, synchronize]
+
+# Only run on trusted branches (not forks) to protect secrets
+jobs:
+  trigger-reviews:
+    name: Trigger AI Reviews
+    if: |
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      checks: write
+      issues: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Create Check Run for branch protection integration
+      - name: Create Super Review Check
+        id: create-check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const check = await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'AI Super Review',
+              head_sha: context.payload.pull_request.head.sha,
+              status: 'in_progress',
+              output: {
+                title: 'AI Review in Progress',
+                summary: 'Waiting for Copilot, Codex, and Jules reviews...',
+                text: `## Review Status\n\n| Agent | Status |\n|-------|--------|\n| Copilot | ⏳ Pending |\n| Codex | ⏳ Pending |\n| Jules | ⏳ Pending |`
+              }
+            });
+            return check.data.id;
+
+      # Trigger Codex review via PR comment
+      - name: Trigger Codex Review
+        uses: actions/github-script@v7
+        env:
+          CODEX_ENABLED: ${{ vars.CODEX_ENABLED || 'true' }}
+        with:
+          script: |
+            if (process.env.CODEX_ENABLED !== 'true') {
+              console.log('Codex review disabled via CODEX_ENABLED variable');
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `@codex review for:
+            - Security vulnerabilities and injection risks
+            - Breaking changes to public APIs
+            - Missing error handling
+            - Downstream impact on dependent code
+
+            Prioritize P0/P1 issues only. See AGENTS.md for guidelines.`
+            });
+            console.log('Codex review triggered');
+
+      # Trigger Jules review via PR comment
+      - name: Trigger Jules Review
+        uses: actions/github-script@v7
+        env:
+          JULES_ENABLED: ${{ vars.JULES_ENABLED || 'true' }}
+        with:
+          script: |
+            if (process.env.JULES_ENABLED !== 'true') {
+              console.log('Jules review disabled via JULES_ENABLED variable');
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `@jules Please review this PR with focus on:
+
+            ## Review Checklist
+            1. **Correctness**: Does the implementation match the PR description?
+            2. **Edge Cases**: Are error conditions and edge cases handled?
+            3. **Tests**: Is there adequate test coverage for new code?
+            4. **Alternatives**: Are there simpler or more maintainable approaches?
+
+            ## Output Format
+            Please structure your response with these sections:
+            - **✅ Approved** or **⚠️ Changes Requested**
+            - **Summary**: 1-2 sentence overview
+            - **Issues Found**: Numbered list of concerns (if any)
+            - **Suggestions**: Optional improvements
+
+            Refer to AGENTS.md for project-specific guidelines.`
+            });
+            console.log('Jules review triggered');
+
+      # Create summary tracking comment
+      - name: Create Super Review Tracker
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const prTitle = context.payload.pull_request.title;
+            const author = context.payload.pull_request.user.login;
+            const changedFiles = context.payload.pull_request.changed_files;
+            const additions = context.payload.pull_request.additions;
+            const deletions = context.payload.pull_request.deletions;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: `## 🤖 AI Super Review Initiated
+
+            **PR**: #${prNumber} - ${prTitle}
+            **Author**: @${author}
+            **Changes**: ${changedFiles} files (+${additions}/-${deletions})
+
+            ### Review Status
+
+            | Agent | Status | Focus Area |
+            |-------|--------|------------|
+            | 🔷 Copilot | ⏳ Pending | Style, tests, edge cases, suggested fixes |
+            | 🟢 Codex | ⏳ Pending | Security, API contracts, downstream impact |
+            | 🔴 Jules | ⏳ Pending | Correctness, alternatives, improvements |
+
+            ### Merge Requirements
+
+            - [ ] All consensus issues (2+ agents) addressed
+            - [ ] Human approval received
+            - [ ] CI checks passing
+            - [ ] No unresolved P0/P1 issues
+
+            ---
+            <details>
+            <summary>📋 Review Guidelines (from AGENTS.md)</summary>
+
+            **Priority Levels:**
+            - P0: Security vulnerabilities, data loss, crashes
+            - P1: Logic errors, missing validation, breaking changes
+            - P2: Performance issues, missing tests
+            - P3: Style issues (usually ignored)
+
+            **Architecture Constraints:**
+            - Parameterized database queries
+            - Authentication required for non-public endpoints
+            - Timeouts and retries for external calls
+
+            </details>
+
+            _This comment tracks AI review status. Reviews will appear as separate comments._`
+            });
+
+  # Aggregate reviews after delay (optional - can be triggered manually)
+  aggregate-reviews:
+    name: Aggregate Reviews
+    needs: trigger-reviews
+    runs-on: ubuntu-latest
+    # Wait for reviews to complete (adjust based on typical review time)
+    # In practice, you might want to trigger this via webhook or manual dispatch
+    if: false  # Disabled by default - enable when you have review aggregation logic
+    permissions:
+      pull-requests: write
+      checks: write
+
+    steps:
+      - name: Wait for Reviews
+        run: sleep 300  # 5 minutes - adjust as needed
+
+      - name: Aggregate and Summarize
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Fetch all comments on the PR
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              per_page: 100
+            });
+
+            // Parse reviews from each agent
+            const copilotReviews = comments.data.filter(c =>
+              c.user.login === 'github-actions[bot]' ||
+              c.user.login === 'copilot[bot]'
+            );
+
+            const codexReviews = comments.data.filter(c =>
+              c.body.includes('@codex') ||
+              c.user.login.includes('codex')
+            );
+
+            const julesReviews = comments.data.filter(c =>
+              c.body.includes('@jules') ||
+              c.user.login.includes('jules')
+            );
+
+            // Create summary (simplified - enhance based on actual response formats)
+            const summary = `## 🤖 AI Super Review Summary
+
+            ### Review Completion
+            - Copilot: ${copilotReviews.length > 0 ? '✅ Complete' : '⏳ Pending'}
+            - Codex: ${codexReviews.length > 0 ? '✅ Complete' : '⏳ Pending'}
+            - Jules: ${julesReviews.length > 0 ? '✅ Complete' : '⏳ Pending'}
+
+            ### Consensus Issues
+            _Issues flagged by 2+ agents appear here_
+
+            ### Merge Gate
+            **Status**: ⏳ Awaiting human review
+
+            ---
+            _Aggregated at ${new Date().toISOString()}_`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: summary
+            });

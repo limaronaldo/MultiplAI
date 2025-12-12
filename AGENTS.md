@@ -1,6 +1,8 @@
 # AI Agent Instructions for AutoDev
 
-This file provides instructions for AI coding agents (GitHub Copilot Coding Agent, Claude, etc.) working on this repository.
+This file provides instructions for AI coding agents (GitHub Copilot, OpenAI Codex, Google Jules, Claude, etc.) working on this repository.
+
+> **For AI Reviewers**: See [Review Guidelines](#review-guidelines) for PR review instructions.
 
 ## Project Context
 
@@ -199,3 +201,91 @@ When generating code, consider:
 - What patterns worked before (learning memory)
 - What constraints exist (static memory)
 - Current context and attempts (session memory)
+
+---
+
+## Review Guidelines
+
+This section is for AI agents reviewing PRs (Copilot, Codex, Jules).
+
+### Priority Levels
+
+Use these priorities when flagging issues:
+
+| Priority | Name | Examples | Action |
+|----------|------|----------|--------|
+| **P0** | Critical | Security vulnerabilities, data loss, crashes, secrets exposure | Block merge |
+| **P1** | High | Logic errors, missing validation, breaking API changes, missing auth | Block merge |
+| **P2** | Medium | Performance issues, missing tests, error handling gaps | Request changes |
+| **P3** | Low | Style issues, typos in non-user-facing code | Comment only |
+
+**Default behavior**: Only flag P0 and P1 issues. Ignore P3 unless explicitly requested.
+
+### Architecture Constraints
+
+When reviewing, verify these constraints:
+
+1. **Database Security**
+   - All queries use parameterized statements (no string concatenation)
+   - No raw SQL with user input
+
+2. **Authentication**
+   - API endpoints require auth unless explicitly marked public
+   - Tokens/secrets never logged or exposed in errors
+
+3. **External Calls**
+   - Timeout configured for all external API calls
+   - Retry logic with exponential backoff
+   - Errors handled gracefully (no silent failures)
+
+4. **Error Handling**
+   - Errors logged with context
+   - User-facing errors are actionable
+   - No `catch` blocks that swallow errors silently
+
+### Review Output Format
+
+Structure your review with these sections:
+
+```markdown
+## Summary
+[1-2 sentence overview of the changes]
+
+## Verdict
+✅ **Approved** | ⚠️ **Changes Requested** | ❌ **Blocked**
+
+## Issues Found
+### P0 - Critical
+- [issue description with file:line reference]
+
+### P1 - High  
+- [issue description with file:line reference]
+
+### P2 - Medium (Optional)
+- [issue description]
+
+## Suggestions (Optional)
+- [non-blocking improvements]
+
+## Tests
+- [ ] Adequate test coverage for new code
+- [ ] Edge cases covered
+- [ ] No test regressions
+```
+
+### What NOT to Flag
+
+Avoid noise by ignoring:
+- Style preferences already handled by linters
+- Minor refactoring opportunities unrelated to the PR
+- Documentation for internal/obvious code
+- Type annotations on simple functions
+- Comments explaining self-evident logic
+
+### Agent-Specific Instructions
+
+**Copilot**: Focus on immediate code quality, missing tests, and suggested fixes.
+
+**Codex**: Focus on security implications, API contract changes, and downstream breakage. Run code if needed to verify behavior.
+
+**Jules**: Focus on correctness vs PR description, implementation alternatives, and iterative improvements. Respond to follow-up comments.
