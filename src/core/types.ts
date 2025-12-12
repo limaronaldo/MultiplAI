@@ -72,6 +72,7 @@ export interface Task {
   definitionOfDone?: string[];
   plan?: string[];
   targetFiles?: string[];
+  multiFilePlan?: MultiFilePlan; // For M+ complexity coordination
 
   // Coding outputs
   branchName?: string;
@@ -230,12 +231,56 @@ export function getNextPendingSubtask(
 // Agent Outputs
 // ============================================
 
+// File change type for multi-file planning
+export const FileChangeType = {
+  CREATE: "create",
+  MODIFY: "modify",
+  DELETE: "delete",
+} as const;
+
+export type FileChangeType =
+  (typeof FileChangeType)[keyof typeof FileChangeType];
+
+// Single file plan within a multi-file change
+export const FilePlanSchema = z.object({
+  path: z.string(),
+  changeType: z.enum(["create", "modify", "delete"]),
+  dependencies: z.array(z.string()), // Other file paths this depends on
+  summary: z.string(), // What changes in this file
+  layer: z
+    .enum(["types", "utils", "services", "components", "tests"])
+    .optional(),
+});
+
+export type FilePlan = z.infer<typeof FilePlanSchema>;
+
+// Shared type definition for cross-file consistency
+export const SharedTypeSchema = z.object({
+  name: z.string(), // e.g., "UserProfile"
+  definition: z.string(), // TypeScript/language definition
+  usedIn: z.array(z.string()), // File paths that use this type
+});
+
+export type SharedType = z.infer<typeof SharedTypeSchema>;
+
+// Multi-file coordination plan
+export const MultiFilePlanSchema = z.object({
+  files: z.array(FilePlanSchema),
+  sharedTypes: z.array(SharedTypeSchema).optional(),
+  executionOrder: z.array(z.string()), // File paths in order
+  rollbackStrategy: z.string().optional(), // How to undo if partial fail
+});
+
+export type MultiFilePlan = z.infer<typeof MultiFilePlanSchema>;
+
 export const PlannerOutputSchema = z.object({
   definitionOfDone: z.array(z.string()),
   plan: z.array(z.string()),
   targetFiles: z.array(z.string()),
   estimatedComplexity: z.enum(["XS", "S", "M", "L", "XL"]),
   risks: z.array(z.string()).optional(),
+  // Multi-file coordination (optional, for M+ complexity)
+  multiFilePlan: MultiFilePlanSchema.optional(),
 });
 
 export type PlannerOutput = z.infer<typeof PlannerOutputSchema>;

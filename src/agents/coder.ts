@@ -1,5 +1,10 @@
 import { BaseAgent } from "./base";
-import { CoderOutput, CoderOutputSchema } from "../core/types";
+import {
+  CoderOutput,
+  CoderOutputSchema,
+  type MultiFilePlan,
+  type SharedType,
+} from "../core/types";
 
 interface CoderInput {
   definitionOfDone: string[];
@@ -8,6 +13,9 @@ interface CoderInput {
   fileContents: Record<string, string>;
   previousDiff?: string;
   lastError?: string;
+  // Multi-file coordination (optional)
+  multiFilePlan?: MultiFilePlan;
+  sharedTypes?: SharedType[];
 }
 
 const SYSTEM_PROMPT = `You are an expert software engineer implementing a planned change.
@@ -17,6 +25,7 @@ Your job is to:
 2. Write clean, idiomatic code
 3. Match the existing code style
 4. Generate a unified diff (git diff format)
+5. For multi-file changes, ensure type consistency across files
 
 ## CRITICAL DIFF FORMAT RULES
 
@@ -48,6 +57,19 @@ Your job is to:
 
 5. **Context**: Include 3 lines of context before and after changes
 
+## MULTI-FILE COORDINATION
+
+When given a multiFilePlan:
+1. **Respect execution order**: Generate diffs in the order specified
+2. **Use shared types**: Apply the exact type definitions provided
+3. **Maintain consistency**: Imports, types, and function signatures must match
+4. **Layer order**: types → utils → services → components → tests
+
+### Type Consistency Rules
+- If a shared type is defined, use it EXACTLY as specified
+- Import types from the correct paths
+- Don't redefine types that should be imported
+
 ## COMMON MISTAKES TO AVOID
 
 - Do NOT duplicate existing code in the diff
@@ -55,6 +77,8 @@ Your job is to:
 - Do NOT forget to count lines correctly in @@ headers
 - Do NOT mix up line numbers between hunks
 - Do NOT add trailing whitespace
+- Do NOT define types that should be imported from shared files
+- Do NOT use inconsistent type names across files
 
 ## EXAMPLE: Adding a function after existing code
 
@@ -78,7 +102,7 @@ Note: @@ -3,4 means "starting at line 3, showing 4 lines from original"
 
 Respond ONLY with valid JSON:
 {
-  "diff": "unified diff string with proper format",
+  "diff": "unified diff string with proper format (all files in one diff)",
   "commitMessage": "conventional commit message (feat/fix/refactor: description)",
   "filesModified": ["array of file paths touched"],
   "notes": "optional implementation notes"
@@ -120,6 +144,16 @@ ${input.targetFiles.join(", ")}
 ${fileContentsStr}
 `.trim();
 
+    // Add multi-file coordination context if available
+    if (input.multiFilePlan) {
+      userPrompt += this.buildMultiFilePlanSection(input.multiFilePlan);
+    }
+
+    // Add shared types if available
+    if (input.sharedTypes && input.sharedTypes.length > 0) {
+      userPrompt += this.buildSharedTypesSection(input.sharedTypes);
+    }
+
     // Se há erro anterior, inclui contexto
     if (input.lastError && input.previousDiff) {
       userPrompt += `
@@ -145,5 +179,56 @@ Please fix the issues while maintaining the original intent.`;
     const parsed = this.parseJSON<CoderOutput>(response);
 
     return CoderOutputSchema.parse(parsed);
+  }
+
+  /**
+   * Build the multi-file plan section for the prompt
+   */
+  private buildMultiFilePlanSection(plan: MultiFilePlan): string {
+    let section = `\n\n## Multi-File Coordination Plan\n\n`;
+
+    section += `### Execution Order\n`;
+    section += `Generate diffs for files in this exact order:\n`;
+    plan.executionOrder.forEach((path, i) => {
+      const file = plan.files.find((f) => f.path === path);
+      const layer = file?.layer ? ` [${file.layer}]` : "";
+      const changeType = file?.changeType || "modify";
+      section += `${i + 1}. \`${path}\`${layer} (${changeType})\n`;
+    });
+
+    section += `\n### File Details\n`;
+    for (const file of plan.files) {
+      section += `\n#### ${file.path}\n`;
+      section += `- **Change type**: ${file.changeType}\n`;
+      section += `- **Summary**: ${file.summary}\n`;
+      if (file.dependencies.length > 0) {
+        section += `- **Depends on**: ${file.dependencies.join(", ")}\n`;
+      }
+      if (file.layer) {
+        section += `- **Layer**: ${file.layer}\n`;
+      }
+    }
+
+    if (plan.rollbackStrategy) {
+      section += `\n### Rollback Strategy\n${plan.rollbackStrategy}\n`;
+    }
+
+    return section;
+  }
+
+  /**
+   * Build the shared types section for the prompt
+   */
+  private buildSharedTypesSection(types: SharedType[]): string {
+    let section = `\n\n## Shared Types (USE EXACTLY AS DEFINED)\n\n`;
+    section += `These types are shared across files. Use them exactly as defined:\n\n`;
+
+    for (const type of types) {
+      section += `### ${type.name}\n`;
+      section += `\`\`\`typescript\n${type.definition}\n\`\`\`\n`;
+      section += `Used in: ${type.usedIn.join(", ")}\n\n`;
+    }
+
+    return section;
   }
 }

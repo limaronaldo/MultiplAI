@@ -172,6 +172,7 @@ export class Orchestrator {
     task.definitionOfDone = plannerOutput.definitionOfDone;
     task.plan = plannerOutput.plan;
     task.targetFiles = plannerOutput.targetFiles;
+    task.multiFilePlan = plannerOutput.multiFilePlan;
 
     // Expand target files with import analysis
     if (EXPAND_IMPORTS && task.targetFiles && task.targetFiles.length > 0) {
@@ -521,6 +522,9 @@ export class Orchestrator {
       fileContents,
       previousDiff: task.currentDiff,
       lastError: task.lastError,
+      // Multi-file coordination
+      multiFilePlan: task.multiFilePlan,
+      sharedTypes: task.multiFilePlan?.sharedTypes,
     };
 
     let coderOutput;

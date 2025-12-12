@@ -21,6 +21,7 @@ Your job is to:
 3. Create a step-by-step implementation plan
 4. Identify which files need to be modified or created
 5. Estimate complexity
+6. For M+ complexity, create a multi-file coordination plan
 
 IMPORTANT RULES:
 - Keep the scope small and focused
@@ -29,21 +30,52 @@ IMPORTANT RULES:
 - Only include files that NEED to change
 - Be conservative with complexity estimates
 
+## Multi-File Coordination (for M, L, XL complexity)
+
+When the change involves 3+ files, include a "multiFilePlan" with:
+1. File-by-file breakdown with dependencies
+2. Shared types that span multiple files
+3. Execution order respecting dependencies
+4. Rollback strategy
+
+### Dependency Layers (execute in this order):
+1. **types**: Type definitions, interfaces, schemas (no deps)
+2. **utils**: Utility functions (depend on types)
+3. **services**: Business logic (depend on types, utils)
+4. **components**: UI/handlers (depend on services)
+5. **tests**: Test files (depend on all above)
+
 Respond ONLY with valid JSON matching this schema:
 {
   "definitionOfDone": ["string array of acceptance criteria"],
   "plan": ["string array of implementation steps"],
   "targetFiles": ["string array of file paths"],
   "estimatedComplexity": "XS" | "S" | "M" | "L" | "XL",
-  "risks": ["optional array of potential issues"]
+  "risks": ["optional array of potential issues"],
+  "multiFilePlan": {  // Include for M+ complexity with 3+ files
+    "files": [{
+      "path": "src/types/user.ts",
+      "changeType": "create" | "modify" | "delete",
+      "dependencies": [],  // File paths this depends on
+      "summary": "What changes in this file",
+      "layer": "types" | "utils" | "services" | "components" | "tests"
+    }],
+    "sharedTypes": [{  // Types used across files
+      "name": "UserProfile",
+      "definition": "interface UserProfile { id: string; name: string; }",
+      "usedIn": ["src/types/user.ts", "src/services/user.ts"]
+    }],
+    "executionOrder": ["src/types/user.ts", "src/services/user.ts"],
+    "rollbackStrategy": "Delete created files, revert modified files"
+  }
 }
 
 Complexity guide:
 - XS: < 20 lines, single file, trivial change
 - S: < 50 lines, 1-2 files, straightforward
-- M: < 150 lines, 2-4 files, some logic
-- L: > 150 lines, multiple files, complex logic
-- XL: Major feature, architectural changes`;
+- M: < 150 lines, 2-4 files, some logic (include multiFilePlan)
+- L: > 150 lines, multiple files, complex logic (include multiFilePlan)
+- XL: Major feature, architectural changes (include multiFilePlan)`;
 
 export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
   constructor() {
