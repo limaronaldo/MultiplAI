@@ -5,7 +5,7 @@
 
 ---
 
-## Configuração Atual de Modelos (Atualizado 2025-12-11 19:00 UTC)
+## Configuração Atual de Modelos (Atualizado 2025-12-12 09:30 UTC)
 
 ### Configuração em Produção ✅ (MULTI-AGENT MODE)
 
@@ -14,18 +14,32 @@
 | Agente | Modelo(s) | Provider | Modo | Razão da Escolha |
 |--------|-----------|----------|------|------------------|
 | **Planner** | `claude-sonnet-4-5-20250929` | Anthropic Direct | Single | Planejamento estruturado |
-| **Coder** | Opus 4.5, GPT-5.1 Codex, Gemini 3 Pro | Multi-provider | **MULTI** (3 parallel) | Consensus de 3 modelos, melhor qualidade |
-| **Fixer** | Opus 4.5, Gemini 3 Pro | Multi-provider | **MULTI** (2 parallel) | Consensus, maior confiabilidade |
-| **Reviewer** | `gpt-5.1-codex-max` | OpenAI Direct | Single + Consensus | Code review + tie-breaking |
+| **Coder** | Opus 4.5, GPT-5.2, Gemini 3 Pro | Multi-provider | **MULTI** (3 parallel) | Consensus de 3 modelos, melhor qualidade |
+| **Fixer** | Opus 4.5, GPT-5.2, Gemini 3 Pro | Multi-provider | **MULTI** (3 parallel) | Consensus, maior confiabilidade |
+| **Reviewer** | `claude-sonnet-4-5-20250929` | Anthropic Direct | Single + Consensus | Code review + tie-breaking |
 
 **Multi-Agent Coder** (3 modelos em paralelo):
 1. `claude-opus-4-5-20251101` - ⭐ **Frequentemente vencedor** (rápido + qualidade)
-2. `gpt-5.1-codex-max` - Code specialist
+2. `gpt-5.2` - 400K context, 128K output - best for large diffs
 3. `google/gemini-3-pro-preview` - Google latest (mais lento ~60s)
 
-**Multi-Agent Fixer** (2 modelos em paralelo):
+**Multi-Agent Fixer** (3 modelos em paralelo):
 1. `claude-opus-4-5-20251101` - Debugging expert
-2. `google/gemini-3-pro-preview` - Backup
+2. `gpt-5.2` - 400K context for full error context
+3. `google/gemini-3-pro-preview` - Google latest
+
+### GPT-5.2 Model Selection (2025-12-12)
+
+**Why `gpt-5.2` over alternatives:**
+- ✅ 400K context / 128K output - handles large codebases and diffs
+- ✅ 500K TPM rate limit - supports parallel multi-agent execution
+- ✅ Supports distillation and predicted outputs
+- ✅ Can pin to dated snapshot for reproducibility (`gpt-5.2-2025-12-11`)
+
+**Alternatives considered:**
+- ❌ `gpt-5.2-pro` - Responses API only, different integration
+- ❌ `gpt-5.2-chat-latest` - Only 128K context/16K output, 30K TPM, unstable
+- 🤔 `gpt-5.2-thinking` - Could improve Planner with reasoning (future consideration)
 
 ### Por Que Esta Configuração é a Melhor
 

@@ -74,14 +74,15 @@ export interface MultiAgentMetadata {
 export const DEFAULT_MULTI_AGENT_CONFIG: MultiAgentConfig = {
   enabled: false,
   coderCount: 3,
-  fixerCount: 2,
+  fixerCount: 3,
   coderModels: [
     "claude-opus-4-5-20251101", // Claude Opus 4.5 - highest quality
-    "gpt-5.1-codex-max", // GPT 5.1 Codex Max - OpenAI code specialist
+    "gpt-5.2", // GPT 5.2 - 400K context, 128K output, best for large diffs
     "google/gemini-3-pro-preview", // Gemini 3 Pro - Google's latest (via OpenRouter)
   ],
   fixerModels: [
     "claude-opus-4-5-20251101", // Claude Opus 4.5 - highest quality for debugging
+    "gpt-5.2", // GPT 5.2 - 400K context for full error context
     "google/gemini-3-pro-preview", // Gemini 3 Pro - Google's latest (via OpenRouter)
   ],
   consensusStrategy: "reviewer",
