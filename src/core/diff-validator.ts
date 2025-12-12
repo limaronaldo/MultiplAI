@@ -436,13 +436,20 @@ export function sanitizeCodeContent(content: string): {
   // These patterns match standalone diff markers that shouldn't be in code
   const diffHeaderPatterns = [
     // "--- a/path/to/file" at start of line (diff file header)
-    /^--- a\/[^\n]+\n/gm,
+    /^--- a\/[^\n]+\n?/gm,
+    /\n--- a\/[^\n]+\n?/g,
     // "+++ b/path/to/file" at start of line (diff file header)
-    /^\+\+\+ b\/[^\n]+\n/gm,
+    /^\+\+\+ b\/[^\n]+\n?/gm,
+    /\n\+\+\+ b\/[^\n]+\n?/g,
+    // "-- a/" and "++ b/" corrupted patterns (double minus/plus)
+    /\n-- a\/[^\n]+\n?/g,
+    /\n\+\+ b\/[^\n]+\n?/g,
     // "diff --git a/... b/..." header
-    /^diff --git a\/[^\n]+ b\/[^\n]+\n/gm,
+    /^diff --git a\/[^\n]+ b\/[^\n]+\n?/gm,
+    /\ndiff --git a\/[^\n]+ b\/[^\n]+\n?/g,
     // Hunk headers like "@@ -1,5 +1,6 @@"
-    /^@@ -\d+,?\d* \+\d+,?\d* @@[^\n]*\n/gm,
+    /^@@ -\d+,?\d* \+\d+,?\d* @@[^\n]*\n?/gm,
+    /\n@@ -\d+,?\d* \+\d+,?\d* @@[^\n]*\n?/g,
   ];
 
   for (const pattern of diffHeaderPatterns) {
