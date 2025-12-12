@@ -502,6 +502,7 @@ export const db = {
 
   /**
    * Initialize orchestration state for a parent task
+   * Uses UPSERT to create session_memory row if it doesn't exist
    */
   async initializeOrchestration(
     taskId: string,
@@ -509,10 +510,11 @@ export const db = {
   ): Promise<void> {
     const sql = getDb();
     await sql`
-      UPDATE session_memory
+      INSERT INTO session_memory (task_id, phase, status, orchestration)
+      VALUES (${taskId}, 'ORCHESTRATING', 'IN_PROGRESS', ${JSON.stringify(state)}::jsonb)
+      ON CONFLICT (task_id) DO UPDATE
       SET orchestration = ${JSON.stringify(state)}::jsonb,
           updated_at = NOW()
-      WHERE task_id = ${taskId}
     `;
   },
 
