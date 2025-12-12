@@ -204,47 +204,84 @@ export abstract class BaseAgent<TInput, TOutput> {
         const fixedJson = before + escapedDiff + after;
 
         try {
-          return (JSON.parse(fixedJson), fixedJson);
+          JSON.parse(fixedJson); // Validate it parses
+          return fixedJson;
         } catch {
           // Continue to other methods
         }
       }
     }
 
-    // Method 2: Extract key-value pairs and rebuild JSON
-    const diffMatch = jsonStr.match(
-      /"diff"\s*:\s*"([\s\S]*?)(?:"\s*,\s*"commitMessage|"\s*,\s*"filesModified|"\s*})/,
+    // Method 2: Direct extraction and reconstruction
+    // Find the diff content more robustly by looking for the pattern
+    const diffContentMatch = jsonStr.match(
+      /"diff"\s*:\s*"([\s\S]+?)(?:"\s*,\s*"(?:commitMessage|filesModified|notes|fixDescription)|"\s*\})/,
     );
-    const commitMatch = jsonStr.match(/"commitMessage"\s*:\s*"([^"]*?)"/);
-    const filesMatch = jsonStr.match(/"filesModified"\s*:\s*\[([\s\S]*?)\]/);
-    const notesMatch = jsonStr.match(/"notes"\s*:\s*"([^"]*?)"/);
-    const fixDescMatch = jsonStr.match(/"fixDescription"\s*:\s*"([^"]*?)"/);
 
-    if (diffMatch) {
-      const diff = diffMatch[1]
-        .replace(/\\/g, "\\\\")
-        .replace(/\n/g, "\\n")
-        .replace(/\r/g, "\\r")
-        .replace(/\t/g, "\\t")
-        .replace(/"/g, '\\"');
+    if (diffContentMatch) {
+      try {
+        // Extract other fields
+        const commitMatch = jsonStr.match(
+          /"commitMessage"\s*:\s*"((?:[^"\\]|\\.)*)"/,
+        );
+        const filesMatch = jsonStr.match(
+          /"filesModified"\s*:\s*\[([\s\S]*?)\]/,
+        );
+        const notesMatch = jsonStr.match(/"notes"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+        const fixDescMatch = jsonStr.match(
+          /"fixDescription"\s*:\s*"((?:[^"\\]|\\.)*)"/,
+        );
 
-      const commit = commitMatch ? commitMatch[1] : "feat: implement changes";
-      const files = filesMatch ? filesMatch[1] : "";
-      const notes = notesMatch ? notesMatch[1] : "";
-      const fixDesc = fixDescMatch ? fixDescMatch[1] : "";
+        // Properly escape the diff - handle already-escaped sequences
+        let diff = diffContentMatch[1];
 
-      const result: any = {
-        diff: diff.replace(/\\\\n/g, "\\n").replace(/\\\\"/g, '\\"'),
-        commitMessage: commit,
-        filesModified: files
-          ? files.split(",").map((f) => f.trim().replace(/["\[\]]/g, ""))
-          : [],
-      };
+        // First, normalize any double-escaped sequences
+        diff = diff.replace(/\\\\/g, "\x00BACKSLASH\x00"); // Temp placeholder
 
-      if (notes) result.notes = notes;
-      if (fixDesc) result.fixDescription = fixDesc;
+        // Escape unescaped quotes (not preceded by backslash)
+        diff = diff.replace(/(?<!\\)"/g, '\\"');
 
-      return JSON.stringify(result);
+        // Escape real newlines (not \n sequences)
+        diff = diff.replace(/\r\n/g, "\\n");
+        diff = diff.replace(/\n/g, "\\n");
+        diff = diff.replace(/\r/g, "\\r");
+        diff = diff.replace(/\t/g, "\\t");
+
+        // Restore backslashes
+        diff = diff.replace(/\x00BACKSLASH\x00/g, "\\\\");
+
+        const result: Record<string, unknown> = {
+          diff: diff,
+          commitMessage: commitMatch
+            ? commitMatch[1]
+            : "feat: implement changes",
+          filesModified: filesMatch
+            ? filesMatch[1]
+                .split(",")
+                .map((f: string) => f.trim().replace(/^["'\s]+|["'\s]+$/g, ""))
+                .filter(Boolean)
+            : [],
+        };
+
+        if (notesMatch) result.notes = notesMatch[1];
+        if (fixDescMatch) result.fixDescription = fixDescMatch[1];
+
+        const rebuilt = JSON.stringify(result);
+        JSON.parse(rebuilt); // Validate
+        return rebuilt;
+      } catch {
+        // Continue to method 3
+      }
+    }
+
+    // Method 3: Try to fix by removing problematic characters
+    try {
+      // Remove any control characters except \n \r \t
+      const cleaned = jsonStr.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+      JSON.parse(cleaned);
+      return cleaned;
+    } catch {
+      // Give up
     }
 
     return jsonStr;
