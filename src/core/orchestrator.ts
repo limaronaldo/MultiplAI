@@ -196,7 +196,6 @@ export class Orchestrator {
     const logger = this.getLogger(task);
 
     task = this.updateStatus(task, "PLANNING");
-    await this.logEvent(task, "PLANNED", "planner");
 
     // Busca contexto do repositório
     const repoContext = await this.github.getRepoContext(
@@ -254,6 +253,14 @@ export class Orchestrator {
       issueTitle: task.githubIssueTitle,
       issueBody: enrichedIssueBody,
       repoContext,
+    });
+
+    // Log planner completion with model info
+    await this.logEvent(task, "PLANNED", "planner", {
+      model: this.planner["config"].model,
+      reasoningEffort: this.planner["config"].reasoningEffort,
+      complexity: plannerOutput.estimatedComplexity,
+      effort: plannerOutput.estimatedEffort,
     });
 
     // Atualiza task com outputs do planner
@@ -624,7 +631,6 @@ export class Orchestrator {
     );
 
     task = this.updateStatus(task, "CODING");
-    await this.logEvent(task, "CODED", "coder");
 
     // Cria branch se não existir
     if (!task.branchName) {
@@ -698,6 +704,15 @@ export class Orchestrator {
 
       // Log consensus decision (Issue #17)
       await this.logConsensusDecision(task, "coder", result);
+
+      // Log multi-agent coding completion
+      await this.logEvent(task, "CODED", "coder", {
+        mode: "multi-agent",
+        models: modelSelection.models,
+        selectedModel: result.winner.model,
+        tier: modelSelection.tier,
+        attemptCount: task.attemptCount,
+      });
     } else {
       // Single agent mode - use selected model
       const selectedModel = modelSelection.models[0];
@@ -705,6 +720,16 @@ export class Orchestrator {
         `Using single coder: ${selectedModel} (${modelSelection.tier})`,
       );
       coderOutput = await this.coder.run(coderInput, selectedModel);
+
+      // Log single-agent coding completion
+      await this.logEvent(task, "CODED", "coder", {
+        mode: "single-agent",
+        model: selectedModel,
+        tier: modelSelection.tier,
+        effort: task.estimatedEffort,
+        complexity: task.estimatedComplexity,
+        attemptCount: task.attemptCount,
+      });
     }
 
     // Normalize patch format (supports unified diff and Codex-Max apply_patch format)
@@ -996,7 +1021,6 @@ export class Orchestrator {
     this.errorBeforeFix = task.lastError;
 
     task = this.updateStatus(task, "FIXING");
-    await this.logEvent(task, "FIXED", "fixer");
 
     const fileContents = await this.github.getFilesContent(
       task.githubRepo,
@@ -1088,6 +1112,15 @@ export class Orchestrator {
 
       // Log consensus decision (Issue #17)
       await this.logConsensusDecision(task, "fixer", result);
+
+      // Log multi-agent fixing completion
+      await this.logEvent(task, "FIXED", "fixer", {
+        mode: "multi-agent",
+        models: modelSelection.models,
+        selectedModel: result.winner.model,
+        tier: modelSelection.tier,
+        attemptCount: task.attemptCount,
+      });
     } else {
       // Single agent mode - use selected model (may be escalated)
       const selectedModel = modelSelection.models[0];
@@ -1095,6 +1128,16 @@ export class Orchestrator {
         `Using single fixer: ${selectedModel} (${modelSelection.tier})`,
       );
       fixerOutput = await this.fixer.run(fixerInput, selectedModel);
+
+      // Log single-agent fixing completion
+      await this.logEvent(task, "FIXED", "fixer", {
+        mode: "single-agent",
+        model: selectedModel,
+        tier: modelSelection.tier,
+        reasoningEffort: this.fixer["config"].reasoningEffort,
+        attemptCount: task.attemptCount,
+        hadKnownPatterns: enrichedErrorLogs.includes("Known Fix Patterns"),
+      });
     }
 
     // Normalize patch format (supports unified diff and Codex-Max apply_patch format)
@@ -1149,7 +1192,6 @@ export class Orchestrator {
     );
 
     task = this.updateStatus(task, "REVIEWING");
-    await this.logEvent(task, "REVIEWED", "reviewer");
 
     const fileContents = await this.github.getFilesContent(
       task.githubRepo,
@@ -1164,6 +1206,14 @@ export class Orchestrator {
       diff: task.currentDiff || "",
       fileContents,
       testsPassed: true, // We only get here if tests passed
+    });
+
+    // Log review completion with model info and verdict
+    await this.logEvent(task, "REVIEWED", "reviewer", {
+      model: this.reviewer["config"].model,
+      reasoningEffort: this.reviewer["config"].reasoningEffort,
+      verdict: reviewerOutput.verdict,
+      attemptCount: task.attemptCount,
     });
 
     if (reviewerOutput.verdict === "APPROVE") {

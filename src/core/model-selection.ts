@@ -247,8 +247,12 @@ export function logSelection(
   context: SelectionContext,
   selection: ModelSelection,
 ): void {
+  const primaryModel = getPrimaryModel(selection);
+  const estimatedCost = estimateCost(selection);
+
   console.log(
     `[ModelSelection] ${context.complexity}-${context.effort || "unknown"} ` +
-      `(attempt ${context.attemptCount}) → ${selection.tier}: ${selection.reason}`,
+      `(attempt ${context.attemptCount}) → ${selection.tier} (${primaryModel}) ` +
+      `~$${estimatedCost.toFixed(2)}/task | ${selection.reason}`,
   );
 }
