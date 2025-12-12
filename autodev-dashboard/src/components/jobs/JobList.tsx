@@ -8,13 +8,17 @@ interface JobListProps {
   isLoading?: boolean;
   error?: string | null;
   onSelectJob?: (jobId: string) => void;
+  onRefresh?: () => void;
 }
 
 function JobListSkeleton() {
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
       {[1, 2, 3].map((i) => (
-        <div key={i} className="animate-pulse bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <div
+          key={i}
+          className="animate-pulse bg-slate-900 border border-slate-800 rounded-xl p-4"
+        >
           <div className="flex items-center gap-2 mb-3">
             <div className="w-10 h-10 bg-slate-800 rounded-lg" />
             <div className="flex-1">
@@ -55,7 +59,13 @@ function JobListError({ message }: { message: string }) {
   );
 }
 
-export function JobList({ jobs, isLoading, error, onSelectJob }: JobListProps) {
+export function JobList({
+  jobs,
+  isLoading,
+  error,
+  onSelectJob,
+  onRefresh,
+}: JobListProps) {
   if (isLoading) {
     return <JobListSkeleton />;
   }

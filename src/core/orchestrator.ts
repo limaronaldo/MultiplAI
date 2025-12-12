@@ -25,9 +25,19 @@ import { MultiCoderRunner, MultiFixerRunner } from "./multi-runner";
 import { ConsensusEngine, formatConsensusForComment } from "./consensus";
 import { createTaskLogger, createSystemLogger, Logger } from "./logger";
 import { validateDiff, quickValidateDiff, DiffFile } from "./diff-validator";
+import { buildImportGraph, getRelatedFiles } from "../lib/import-analyzer";
+import { ForemanService, ForemanResult } from "../services/foreman";
 
 const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
 const VALIDATE_DIFF = process.env.VALIDATE_DIFF !== "false"; // Default to true
+const EXPAND_IMPORTS = process.env.EXPAND_IMPORTS !== "false"; // Default to true
+const IMPORT_DEPTH = parseInt(process.env.IMPORT_DEPTH || "1", 10);
+const MAX_RELATED_FILES = parseInt(process.env.MAX_RELATED_FILES || "10", 10);
+const USE_FOREMAN = process.env.USE_FOREMAN === "true"; // Opt-in for now
+const FOREMAN_MAX_ATTEMPTS = parseInt(
+  process.env.FOREMAN_MAX_ATTEMPTS || "2",
+  10,
+);
 
 export class Orchestrator {
   private config: AutoDevConfig;
@@ -38,11 +48,15 @@ export class Orchestrator {
   private fixer: FixerAgent;
   private reviewer: ReviewerAgent;
   private consensus: ConsensusEngine;
+  private foreman: ForemanService;
   private systemLogger: Logger;
 
   // Multi-agent metadata for PR comments
   private lastCoderConsensus?: string;
   private lastFixerConsensus?: string;
+
+  // Foreman tracking
+  private foremanAttempts: number = 0;
 
   constructor(config: Partial<AutoDevConfig> = {}) {
     this.config = { ...defaultConfig, ...config };
@@ -53,6 +67,7 @@ export class Orchestrator {
     this.fixer = new FixerAgent();
     this.reviewer = new ReviewerAgent();
     this.consensus = new ConsensusEngine();
+    this.foreman = new ForemanService();
     this.systemLogger = createSystemLogger("orchestrator");
 
     if (this.multiAgentConfig.enabled) {
@@ -119,6 +134,7 @@ export class Orchestrator {
    */
   private async runPlanning(task: Task): Promise<Task> {
     this.validateTaskState(task, "NEW", [], "Cannot run planning");
+    const logger = this.getLogger(task);
 
     task = this.updateStatus(task, "PLANNING");
     await this.logEvent(task, "PLANNED", "planner");
@@ -140,6 +156,52 @@ export class Orchestrator {
     task.definitionOfDone = plannerOutput.definitionOfDone;
     task.plan = plannerOutput.plan;
     task.targetFiles = plannerOutput.targetFiles;
+
+    // Expand target files with import analysis
+    if (EXPAND_IMPORTS && task.targetFiles && task.targetFiles.length > 0) {
+      try {
+        logger.info(
+          `Expanding target files with import analysis (depth: ${IMPORT_DEPTH})...`,
+        );
+
+        // Fetch source files for import graph
+        const sourceFiles = await this.github.getSourceFiles(task.githubRepo);
+
+        if (sourceFiles.size > 0) {
+          // Build import graph and find related files
+          const graph = buildImportGraph(sourceFiles);
+          const relatedFiles = getRelatedFiles(graph, task.targetFiles, {
+            depth: IMPORT_DEPTH,
+            maxFiles: MAX_RELATED_FILES,
+            includeImports: true,
+            includeImportedBy: true,
+          });
+
+          if (relatedFiles.length > 0) {
+            const originalCount = task.targetFiles.length;
+            // Add related files that aren't already in targetFiles
+            for (const file of relatedFiles) {
+              if (!task.targetFiles.includes(file)) {
+                task.targetFiles.push(file);
+              }
+            }
+            logger.info(
+              `Expanded from ${originalCount} to ${task.targetFiles.length} files (+${relatedFiles.length} related)`,
+            );
+
+            // Log which files were added
+            for (const file of relatedFiles) {
+              logger.debug(`  + ${file}`);
+            }
+          }
+        }
+      } catch (error) {
+        // Import analysis failure shouldn't block planning
+        logger.warn(
+          `Import analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        );
+      }
+    }
 
     // Valida complexidade
     if (
@@ -272,7 +334,7 @@ export class Orchestrator {
   }
 
   /**
-   * Step 3: Testing (via GitHub Actions)
+   * Step 3: Testing (via Foreman locally or GitHub Actions)
    */
   private async runTests(task: Task): Promise<Task> {
     this.validateTaskState(
@@ -282,14 +344,64 @@ export class Orchestrator {
       "Cannot run tests",
     );
 
+    const logger = this.getLogger(task);
     task = this.updateStatus(task, "TESTING");
     await this.logEvent(task, "TESTED", "runner");
 
-    // Dispara workflow de CI (se não for automático)
-    // O resultado vem via webhook de check_run
-    // Por agora, assumimos que o CI roda automaticamente no push
+    // Try Foreman (local testing) first if enabled
+    if (USE_FOREMAN && this.foremanAttempts < FOREMAN_MAX_ATTEMPTS) {
+      logger.info(
+        `Running local tests with Foreman (attempt ${this.foremanAttempts + 1}/${FOREMAN_MAX_ATTEMPTS})...`,
+      );
 
-    // Em um MVP, podemos aguardar o webhook ou fazer polling
+      const foremanResult = await this.runLocalTests(task);
+
+      if (foremanResult.success) {
+        logger.info("Local tests passed! Pushing to GitHub...");
+        this.foremanAttempts = 0; // Reset for next task
+
+        // Push the changes now that local tests pass
+        await this.github.applyDiff(
+          task.githubRepo,
+          task.branchName!,
+          task.currentDiff!,
+          task.commitMessage || "fix: implement changes",
+        );
+
+        return this.updateStatus(task, "TESTS_PASSED");
+      } else {
+        this.foremanAttempts++;
+        task.lastError =
+          foremanResult.error ||
+          foremanResult.testResult?.errorSummary ||
+          "Local tests failed";
+
+        logger.warn(`Local tests failed: ${task.lastError}`);
+
+        // If we have more Foreman attempts, trigger fix without pushing
+        if (this.foremanAttempts < FOREMAN_MAX_ATTEMPTS) {
+          logger.info("Will retry with fixer...");
+          return this.updateStatus(task, "TESTS_FAILED");
+        }
+
+        // Exhausted Foreman attempts, fall through to GitHub Actions
+        logger.info(
+          "Exhausted local attempts, falling back to GitHub Actions...",
+        );
+        this.foremanAttempts = 0;
+      }
+    }
+
+    // Fallback: Use GitHub Actions (original flow)
+    // Push changes first
+    await this.github.applyDiff(
+      task.githubRepo,
+      task.branchName!,
+      task.currentDiff!,
+      task.commitMessage || "fix: implement changes",
+    );
+
+    // Wait for CI checks
     const checkResult = await this.github.waitForChecks(
       task.githubRepo,
       task.branchName!,
@@ -315,6 +427,43 @@ export class Orchestrator {
       }
 
       return this.updateStatus(task, "TESTS_FAILED");
+    }
+  }
+
+  /**
+   * Run local tests using Foreman
+   */
+  private async runLocalTests(task: Task): Promise<ForemanResult> {
+    const logger = this.getLogger(task);
+
+    try {
+      const result = await this.foreman.runTests(
+        task.githubRepo,
+        task.branchName || "main",
+        task.currentDiff || "",
+        process.env.GITHUB_TOKEN,
+      );
+
+      if (result.testResult) {
+        logger.info(`Test command: ${result.testResult.command}`);
+        logger.info(`Duration: ${result.testResult.duration}ms`);
+        logger.info(`Exit code: ${result.testResult.exitCode}`);
+
+        if (!result.success && result.testResult.stderr) {
+          logger.debug(`Stderr: ${result.testResult.stderr.slice(0, 500)}`);
+        }
+      }
+
+      return result;
+    } catch (error) {
+      logger.error(
+        `Foreman error: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+      return {
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Foreman execution failed",
+      };
     }
   }
 

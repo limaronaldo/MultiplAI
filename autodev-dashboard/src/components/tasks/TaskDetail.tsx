@@ -3,6 +3,7 @@ import { FileCode, CheckCircle, ListChecks } from "lucide-react";
 import { useTask } from "@/hooks";
 import { SlideOutPanel } from "@/components/ui/SlideOutPanel";
 import { TaskDetailHeader } from "./TaskDetailHeader";
+import { DiffViewer } from "@/components/diff/DiffViewer";
 
 interface TaskDetailProps {
   taskId: string | null;
@@ -50,7 +51,10 @@ export function TaskDetail({ taskId, onClose }: TaskDetailProps) {
             <Section title="Definition of Done" icon={CheckCircle}>
               <ul className="space-y-2">
                 {task.definition_of_done.map((item, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm text-slate-300">
+                  <li
+                    key={i}
+                    className="flex items-start gap-2 text-sm text-slate-300"
+                  >
                     <span className="text-emerald-400 mt-0.5">✓</span>
                     <span>{item}</span>
                   </li>
@@ -91,9 +95,7 @@ export function TaskDetail({ taskId, onClose }: TaskDetailProps) {
           {/* Current Diff */}
           {task.current_diff && (
             <Section title="Current Diff" icon={FileCode}>
-              <pre className="text-xs text-slate-300 bg-slate-950 p-4 rounded-lg overflow-x-auto border border-slate-800 max-h-96">
-                {task.current_diff}
-              </pre>
+              <DiffViewer diff={task.current_diff} />
             </Section>
           )}
         </div>
