@@ -417,6 +417,12 @@ export class Orchestrator {
       breakdownOutput.parallelGroups,
     );
 
+    // Persist orchestration state to session_memory
+    await db.initializeOrchestration(task.id, task.orchestrationState);
+    logger.info(
+      `Persisted orchestration state with ${subtaskDefinitions.length} subtasks`,
+    );
+
     logger.info(
       `Execution order: ${breakdownOutput.executionOrder.join(" -> ")}`,
     );
@@ -434,6 +440,19 @@ export class Orchestrator {
    * Processes each subtask in order, aggregating diffs
    */
   private async runOrchestration(task: Task): Promise<Task> {
+    const logger = this.getLogger(task);
+
+    // Load orchestration state from database if not in memory
+    if (!task.orchestrationState) {
+      const savedState = await db.getOrchestrationState(task.id);
+      if (savedState) {
+        task.orchestrationState = savedState;
+        logger.info(
+          `Loaded orchestration state with ${savedState.subtasks.length} subtasks`,
+        );
+      }
+    }
+
     this.validateTaskState(
       task,
       ["BREAKDOWN_DONE", "ORCHESTRATING"],
@@ -441,7 +460,6 @@ export class Orchestrator {
       "Cannot run orchestration",
     );
 
-    const logger = this.getLogger(task);
     if (task.status === "BREAKDOWN_DONE") {
       task = this.updateStatus(task, "ORCHESTRATING");
     }
