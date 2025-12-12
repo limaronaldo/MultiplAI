@@ -2,9 +2,8 @@ import { BaseAgent } from "./base";
 import { PlannerOutput, PlannerOutputSchema } from "../core/types";
 
 // Default planner model - can be overridden via env var
-// Use o1 for reasoning-heavy planning, fallback to gpt-4o
 const DEFAULT_PLANNER_MODEL =
-  process.env.PLANNER_MODEL || process.env.DEFAULT_LLM_MODEL || "o1";
+  process.env.PLANNER_MODEL || process.env.DEFAULT_LLM_MODEL || "gpt-5.2";
 
 interface PlannerInput {
   issueTitle: string;
