@@ -1,24 +1,23 @@
 import React from "react";
-import { Activity, GitPullRequest, Cpu, Terminal, ShieldCheck } from "lucide-react";
-import { useTasks } from "@/hooks";
+import { ShieldCheck } from "lucide-react";
+import { useAnalytics } from "@/hooks";
+import { KPICards } from "@/components/dashboard/KPICards";
+import { StatusDistribution } from "@/components/analytics/StatusDistribution";
+import { ActivityChart } from "@/components/analytics/ActivityChart";
 
 export function DashboardPage() {
-  const { tasks, isLoading } = useTasks();
-
-  // Calculate stats from real tasks
-  const stats = {
-    totalTasks: tasks.length,
-    completedTasks: tasks.filter(t => t.status === "COMPLETED").length,
-    failedTasks: tasks.filter(t => t.status === "FAILED").length,
-    inProgressTasks: tasks.filter(t => !["COMPLETED", "FAILED", "NEW"].includes(t.status)).length,
-  };
+  const { data, isLoading } = useAnalytics();
 
   return (
     <div className="p-8 space-y-8 max-w-7xl mx-auto">
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-2xl font-bold text-white mb-1">System Overview</h2>
-          <p className="text-slate-400">Monitoring autonomous development pipeline.</p>
+          <h2 className="text-2xl font-bold text-white mb-1">
+            System Overview
+          </h2>
+          <p className="text-slate-400">
+            Monitoring autonomous development pipeline.
+          </p>
         </div>
         <div className="flex gap-2">
           <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-xs font-medium flex items-center gap-2">
@@ -27,38 +26,37 @@ export function DashboardPage() {
         </div>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        {[
-          { label: "Total Tasks", value: stats.totalTasks, icon: Activity, color: "text-blue-400" },
-          { label: "Completed", value: stats.completedTasks, icon: GitPullRequest, color: "text-emerald-400" },
-          { label: "In Progress", value: stats.inProgressTasks, icon: Cpu, color: "text-amber-400" },
-          { label: "Failed", value: stats.failedTasks, icon: Terminal, color: "text-red-400" },
-        ].map((stat, i) => (
-          <div key={i} className="bg-slate-900 border border-slate-800 p-6 rounded-xl">
-            <div className="flex justify-between items-start mb-4">
-              <div className={`p-2 bg-slate-800 rounded-lg ${stat.color}`}>
-                <stat.icon className="w-5 h-5" />
-              </div>
-            </div>
-            <div className="text-3xl font-bold text-white mb-1">
-              {isLoading ? "-" : stat.value}
-            </div>
-            <div className="text-sm text-slate-500">{stat.label}</div>
-          </div>
-        ))}
+      {/* KPI Cards */}
+      <KPICards />
+
+      {/* Analytics Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {data ? (
+          <>
+            <StatusDistribution data={data.statusDistribution} />
+            <ActivityChart data={data.activityByDay} />
+          </>
+        ) : isLoading ? (
+          <>
+            <div className="bg-slate-800 rounded-lg p-6 animate-pulse h-64" />
+            <div className="bg-slate-800 rounded-lg p-6 animate-pulse h-64" />
+          </>
+        ) : (
+          <>
+            <StatusDistribution data={[]} />
+            <ActivityChart data={[]} />
+          </>
+        )}
       </div>
 
-      {/* Recent Tasks */}
-      <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl">
-        <h3 className="text-lg font-semibold text-white mb-4">Recent Tasks</h3>
-        {isLoading ? (
-          <div className="text-slate-500 text-center py-8">Loading tasks...</div>
-        ) : tasks.length === 0 ? (
-          <div className="text-slate-500 text-center py-8">No tasks found</div>
-        ) : (
+      {/* Recent Activity */}
+      {data && data.recentActivity.length > 0 && (
+        <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl">
+          <h3 className="text-lg font-semibold text-white mb-4">
+            Recent Activity
+          </h3>
           <div className="space-y-3">
-            {tasks.slice(0, 5).map((task) => (
+            {data.recentActivity.slice(0, 5).map((task) => (
               <div
                 key={task.id}
                 className="flex items-center justify-between p-4 bg-slate-800/50 rounded-lg border border-slate-800"
@@ -81,8 +79,8 @@ export function DashboardPage() {
                     task.status === "COMPLETED"
                       ? "bg-emerald-500/10 text-emerald-400"
                       : task.status === "FAILED"
-                      ? "bg-red-500/10 text-red-400"
-                      : "bg-amber-500/10 text-amber-400"
+                        ? "bg-red-500/10 text-red-400"
+                        : "bg-amber-500/10 text-amber-400"
                   }`}
                 >
                   {task.status.replace(/_/g, " ")}
@@ -90,8 +88,8 @@ export function DashboardPage() {
               </div>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
