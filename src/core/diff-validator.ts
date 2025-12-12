@@ -331,14 +331,22 @@ function checkDiffCorruption(diff: string): string[] {
     const nextLine = lines[i + 1] || "";
 
     // Pattern 1: "+++ b/" not preceded by "--- a/" (standard diff header)
-    if (line.startsWith("+++ b/") && !prevLine.startsWith("--- a/") && !prevLine.startsWith("--- /dev/null")) {
+    if (
+      line.startsWith("+++ b/") &&
+      !prevLine.startsWith("--- a/") &&
+      !prevLine.startsWith("--- /dev/null")
+    ) {
       warnings.push(
         `Line ${i + 1}: Suspicious '+++ b/' pattern - possible corrupted diff`,
       );
     }
 
     // Pattern 2: "--- a/" not followed by "+++ b/"
-    if (line.startsWith("--- a/") && !nextLine.startsWith("+++ b/") && !nextLine.startsWith("+++ /dev/null")) {
+    if (
+      line.startsWith("--- a/") &&
+      !nextLine.startsWith("+++ b/") &&
+      !nextLine.startsWith("+++ /dev/null")
+    ) {
       warnings.push(
         `Line ${i + 1}: Suspicious '--- a/' pattern - possible corrupted diff`,
       );
@@ -409,6 +417,122 @@ function checkDiffCorruption(diff: string): string[] {
   }
 
   return warnings;
+}
+
+/**
+ * Sanitize code content by removing accidental diff markers
+ * This is a safety net for when LLMs accidentally include diff syntax in generated code
+ *
+ * @returns Object with sanitized content and list of removals made
+ */
+export function sanitizeCodeContent(content: string): {
+  content: string;
+  removals: string[];
+} {
+  const removals: string[] = [];
+  let sanitized = content;
+
+  // Pattern 1: Remove lines that are ONLY diff headers (not part of actual code)
+  // These patterns match standalone diff markers that shouldn't be in code
+  const diffHeaderPatterns = [
+    // "--- a/path/to/file" at start of line (diff file header)
+    /^--- a\/[^\n]+\n/gm,
+    // "+++ b/path/to/file" at start of line (diff file header)
+    /^\+\+\+ b\/[^\n]+\n/gm,
+    // "diff --git a/... b/..." header
+    /^diff --git a\/[^\n]+ b\/[^\n]+\n/gm,
+    // Hunk headers like "@@ -1,5 +1,6 @@"
+    /^@@ -\d+,?\d* \+\d+,?\d* @@[^\n]*\n/gm,
+  ];
+
+  for (const pattern of diffHeaderPatterns) {
+    const matches = sanitized.match(pattern);
+    if (matches) {
+      for (const match of matches) {
+        removals.push(`Removed diff header: ${match.trim()}`);
+      }
+      sanitized = sanitized.replace(pattern, "");
+    }
+  }
+
+  // Pattern 2: Remove leading +/- from lines that look like diff content
+  // Only do this if the file has multiple consecutive lines starting with + or -
+  // which indicates the LLM output the diff format instead of the actual code
+  const lines = sanitized.split("\n");
+  let consecutiveDiffLines = 0;
+  let hasDiffLinePattern = false;
+
+  for (const line of lines) {
+    if (line.match(/^[+-][^+-]/) && !line.match(/^[+-]\s*$/)) {
+      consecutiveDiffLines++;
+      if (consecutiveDiffLines >= 3) {
+        hasDiffLinePattern = true;
+        break;
+      }
+    } else if (!line.match(/^[+-]{2,}/)) {
+      // Reset counter if not a diff marker line
+      consecutiveDiffLines = 0;
+    }
+  }
+
+  // If we detected diff-formatted content, strip the leading +/- markers
+  if (hasDiffLinePattern) {
+    const cleanedLines = lines.map((line) => {
+      // Remove leading + or - but NOT from empty lines or double markers
+      if (line.match(/^[+-][^+-]/) || line.match(/^[+-]$/)) {
+        removals.push(`Stripped diff prefix from: ${line.substring(0, 50)}...`);
+        return line.substring(1);
+      }
+      return line;
+    });
+    sanitized = cleanedLines.join("\n");
+  }
+
+  // Pattern 3: Remove index and similarity lines from git diff
+  sanitized = sanitized.replace(/^index [a-f0-9]+\.\.[a-f0-9]+ \d+\n/gm, "");
+  sanitized = sanitized.replace(/^similarity index \d+%\n/gm, "");
+  sanitized = sanitized.replace(/^rename from [^\n]+\n/gm, "");
+  sanitized = sanitized.replace(/^rename to [^\n]+\n/gm, "");
+
+  return { content: sanitized, removals };
+}
+
+/**
+ * Sanitize all files in a DiffFile array
+ * Returns the sanitized files and a log of all changes made
+ */
+export function sanitizeDiffFiles(files: DiffFile[]): {
+  files: DiffFile[];
+  log: string[];
+} {
+  const log: string[] = [];
+  const sanitizedFiles: DiffFile[] = [];
+
+  for (const file of files) {
+    if (file.deleted) {
+      sanitizedFiles.push(file);
+      continue;
+    }
+
+    const result = sanitizeCodeContent(file.content);
+
+    if (result.removals.length > 0) {
+      log.push(`${file.path}: ${result.removals.length} diff markers removed`);
+      for (const removal of result.removals.slice(0, 5)) {
+        log.push(`  - ${removal}`);
+      }
+      if (result.removals.length > 5) {
+        log.push(`  ... and ${result.removals.length - 5} more`);
+      }
+    }
+
+    sanitizedFiles.push({
+      ...file,
+      content: result.content,
+    });
+  }
+
+  return { files: sanitizedFiles, log };
 }
 
 /**

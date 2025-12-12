@@ -30,7 +30,12 @@ import {
 import { MultiCoderRunner, MultiFixerRunner } from "./multi-runner";
 import { ConsensusEngine, formatConsensusForComment } from "./consensus";
 import { createTaskLogger, createSystemLogger, Logger } from "./logger";
-import { validateDiff, quickValidateDiff, DiffFile } from "./diff-validator";
+import {
+  validateDiff,
+  quickValidateDiff,
+  sanitizeDiffFiles,
+  DiffFile,
+} from "./diff-validator";
 import { buildImportGraph, getRelatedFiles } from "../lib/import-analyzer";
 import { ForemanService, ForemanResult } from "../services/foreman";
 import {
@@ -58,6 +63,8 @@ const FOREMAN_MAX_ATTEMPTS = parseInt(
   process.env.FOREMAN_MAX_ATTEMPTS || "2",
   10,
 );
+const MAX_SUBTASK_ATTEMPTS =
+  parseInt(process.env.MAX_SUBTASK_ATTEMPTS || "2", 10) || 2;
 
 // Simple in-memory lock to prevent concurrent processing of the same task
 const processingTasks = new Set<string>();
@@ -443,21 +450,39 @@ export class Orchestrator {
       task.currentDiff = aggregatedDiff;
       task.commitMessage = `feat: implement ${task.githubIssueTitle} (${state.subtasks.length} subtasks)`;
 
-      // Create branch and apply aggregated diff
+      // Create branch if needed
       if (!task.branchName) {
         task.branchName = `auto/${task.githubIssueNumber}-${this.slugify(task.githubIssueTitle)}`;
         await this.github.createBranch(task.githubRepo, task.branchName);
       }
 
-      await this.github.applyDiff(
-        task.githubRepo,
-        task.branchName,
-        aggregatedDiff,
-        task.commitMessage,
-      );
+      // Validate + apply aggregated diff (respect Foreman mode)
+      if (VALIDATE_DIFF) {
+        const validationResult = await this.validateAndApplyDiff(
+          task,
+          aggregatedDiff,
+          task.commitMessage,
+          logger,
+          { applyToGitHub: !USE_FOREMAN },
+        );
+        if (!validationResult.success) {
+          return validationResult.task;
+        }
+      } else {
+        if (!USE_FOREMAN) {
+          await this.github.applyDiff(
+            task.githubRepo,
+            task.branchName,
+            aggregatedDiff,
+            task.commitMessage,
+          );
+        } else {
+          logger.info("Skipping diff apply (Foreman enabled)");
+        }
+      }
 
-      // Skip to TESTS_PASSED (subtasks were already tested individually)
-      return this.updateStatus(task, "TESTS_PASSED");
+      // Run tests at the parent level after orchestration
+      return this.updateStatus(task, "CODING_DONE");
     }
 
     // Get next pending subtask
@@ -502,14 +527,25 @@ export class Orchestrator {
         `Subtask ${nextSubtask.id} failed: ${error instanceof Error ? error.message : "Unknown error"}`,
       );
 
-      // Mark subtask as failed
+      state.currentSubtask = null;
+
       if (subtaskIndex >= 0) {
-        state.subtasks[subtaskIndex].status = "failed";
         state.subtasks[subtaskIndex].attempts++;
+        const attempts = state.subtasks[subtaskIndex].attempts;
+
+        if (attempts < MAX_SUBTASK_ATTEMPTS) {
+          state.subtasks[subtaskIndex].status = "pending";
+          logger.warn(
+            `Retrying subtask ${nextSubtask.id} (attempt ${attempts}/${MAX_SUBTASK_ATTEMPTS})`,
+          );
+          task.updatedAt = new Date();
+          return task;
+        }
+
+        state.subtasks[subtaskIndex].status = "failed";
       }
 
-      // If subtask failed, fail the whole task for now
-      // TODO: Add retry logic for individual subtasks
+      // If subtask failed permanently, fail the whole task
       return this.failTask(
         task,
         createOrchestratorError(
@@ -1363,11 +1399,22 @@ export class Orchestrator {
       logger.info("Running full diff validation with typecheck...");
 
       // Get the parsed files from GitHub client
-      const files = await this.github.parseDiffToFiles(
+      let files = await this.github.parseDiffToFiles(
         task.githubRepo,
         task.branchName!,
         diff,
       );
+
+      // Post-process: sanitize file contents to remove accidental diff markers
+      // This is a safety net for when LLMs accidentally include diff syntax in code
+      const sanitizeResult = sanitizeDiffFiles(files);
+      if (sanitizeResult.log.length > 0) {
+        logger.warn("Sanitized diff markers from generated code:");
+        for (const logEntry of sanitizeResult.log) {
+          logger.warn(`  ${logEntry}`);
+        }
+        files = sanitizeResult.files;
+      }
 
       const fullResult = await validateDiff(
         task.githubRepo,

@@ -118,13 +118,64 @@ export abstract class BaseAgent<TInput, TOutput> {
    * More aggressive JSON fixing for edge cases
    */
   private aggressiveJsonFix(jsonStr: string): string {
-    // Try to extract key-value pairs and rebuild JSON
+    // Method 1: Try to find diff content between "diff": " and the next key
+    // This handles cases where the diff contains unescaped quotes/newlines
+    const diffStartMatch = jsonStr.match(/"diff"\s*:\s*"/);
+    if (diffStartMatch) {
+      const diffStart = diffStartMatch.index! + diffStartMatch[0].length;
+
+      // Find where the diff ends - look for ",\s*"commitMessage or ",\s*"filesModified or "\s*}
+      let diffEnd = -1;
+      const endPatterns = [
+        /"\s*,\s*"commitMessage/,
+        /"\s*,\s*"filesModified/,
+        /"\s*,\s*"fixDescription/,
+        /"\s*,\s*"notes/,
+        /"\s*}/,
+      ];
+
+      for (const pattern of endPatterns) {
+        const match = jsonStr.slice(diffStart).match(pattern);
+        if (match && match.index !== undefined) {
+          const pos = diffStart + match.index;
+          if (diffEnd === -1 || pos < diffEnd) {
+            diffEnd = pos;
+          }
+        }
+      }
+
+      if (diffEnd > diffStart) {
+        const rawDiff = jsonStr.slice(diffStart, diffEnd);
+
+        // Properly escape the diff content
+        const escapedDiff = rawDiff
+          .replace(/\\/g, "\\\\") // Escape backslashes first
+          .replace(/"/g, '\\"') // Escape quotes
+          .replace(/\n/g, "\\n") // Escape newlines
+          .replace(/\r/g, "\\r") // Escape carriage returns
+          .replace(/\t/g, "\\t"); // Escape tabs
+
+        // Rebuild the JSON with escaped diff
+        const before = jsonStr.slice(0, diffStart);
+        const after = jsonStr.slice(diffEnd);
+        const fixedJson = before + escapedDiff + after;
+
+        try {
+          return (JSON.parse(fixedJson), fixedJson);
+        } catch {
+          // Continue to other methods
+        }
+      }
+    }
+
+    // Method 2: Extract key-value pairs and rebuild JSON
     const diffMatch = jsonStr.match(
-      /"diff"\s*:\s*"([\s\S]*?)(?:"\s*,\s*"commitMessage|"\s*})/,
+      /"diff"\s*:\s*"([\s\S]*?)(?:"\s*,\s*"commitMessage|"\s*,\s*"filesModified|"\s*})/,
     );
     const commitMatch = jsonStr.match(/"commitMessage"\s*:\s*"([^"]*?)"/);
     const filesMatch = jsonStr.match(/"filesModified"\s*:\s*\[([\s\S]*?)\]/);
     const notesMatch = jsonStr.match(/"notes"\s*:\s*"([^"]*?)"/);
+    const fixDescMatch = jsonStr.match(/"fixDescription"\s*:\s*"([^"]*?)"/);
 
     if (diffMatch) {
       const diff = diffMatch[1]
@@ -137,15 +188,20 @@ export abstract class BaseAgent<TInput, TOutput> {
       const commit = commitMatch ? commitMatch[1] : "feat: implement changes";
       const files = filesMatch ? filesMatch[1] : "";
       const notes = notesMatch ? notesMatch[1] : "";
+      const fixDesc = fixDescMatch ? fixDescMatch[1] : "";
 
-      return JSON.stringify({
+      const result: any = {
         diff: diff.replace(/\\\\n/g, "\\n").replace(/\\\\"/g, '\\"'),
         commitMessage: commit,
         filesModified: files
           ? files.split(",").map((f) => f.trim().replace(/["\[\]]/g, ""))
           : [],
-        notes: notes || undefined,
-      });
+      };
+
+      if (notes) result.notes = notes;
+      if (fixDesc) result.fixDescription = fixDesc;
+
+      return JSON.stringify(result);
     }
 
     return jsonStr;

@@ -89,6 +89,28 @@ When given a multiFilePlan:
 - Do NOT define types that should be imported from shared files
 - Do NOT use inconsistent type names across files
 
+## CRITICAL: CODE CONTENT RULES
+
+**NEVER include diff markers inside the actual code content!**
+The following patterns should ONLY appear in diff headers, NOT inside code:
+- \`--- a/\` or \`+++ b/\` (file headers)
+- \`@@\` (hunk headers)
+- Lines starting with \`diff --git\`
+
+If your code needs to work with diffs (e.g., parsing diffs), use string escaping:
+- Use \`"--- a/"\` as a string literal, not raw diff syntax
+- Build diff strings programmatically, don't embed raw diff format
+
+WRONG (diff markers in code):
+\`\`\`typescript
+const header = --- a/file.ts  // BAD: raw diff marker
+\`\`\`
+
+CORRECT (escaped strings):
+\`\`\`typescript
+const header = "--- a/file.ts";  // GOOD: string literal
+\`\`\`
+
 ## EXAMPLE: Adding a function after existing code
 
 Original file has function foo() at lines 1-5. Adding bar() after it:

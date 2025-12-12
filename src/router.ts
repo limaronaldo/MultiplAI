@@ -101,9 +101,17 @@ function verifyWebhookSignature(
   signature: string | null,
 ): boolean {
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
+  const isProduction = process.env.NODE_ENV === "production";
 
   // In development, allow skipping signature verification
   if (!secret) {
+    if (isProduction) {
+      console.error(
+        "[Webhook] GITHUB_WEBHOOK_SECRET not set in production - rejecting webhook",
+      );
+      return false;
+    }
+
     console.warn(
       "[Webhook] GITHUB_WEBHOOK_SECRET not set - skipping signature verification",
     );
@@ -139,7 +147,12 @@ route("POST", "/webhooks/github", async (req) => {
     return Response.json({ error: "Invalid signature" }, { status: 401 });
   }
 
-  const payload = JSON.parse(body);
+  let payload: unknown;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+  }
 
   console.log(`[Webhook] Received ${event} event`);
 

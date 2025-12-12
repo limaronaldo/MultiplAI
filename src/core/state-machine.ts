@@ -16,7 +16,8 @@ export const validTransitions: StatusTransitions = {
   // Decomposition flow for M/L complexity issues
   BREAKING_DOWN: ["BREAKDOWN_DONE", "FAILED"],
   BREAKDOWN_DONE: ["ORCHESTRATING", "FAILED"],
-  ORCHESTRATING: ["TESTS_PASSED", "FAILED"], // Skips to TESTS_PASSED when all subtasks done
+  // Orchestration produces an aggregated diff; we still run tests at the parent level.
+  ORCHESTRATING: ["CODING_DONE", "FAILED"],
   CODING: ["CODING_DONE", "FAILED"],
   CODING_DONE: ["TESTING", "FAILED"],
   TESTING: ["TESTS_PASSED", "TESTS_FAILED", "FAILED"],

@@ -29,6 +29,20 @@ CRITICAL RULES:
 - Output valid unified diff format
 - The output diff must be complete (original changes + your fixes) and apply cleanly to the base branch; do NOT assume the repo already contains the diff.
 
+## CRITICAL: CODE CONTENT RULES
+
+**NEVER include diff markers inside the actual code content!**
+The following patterns should ONLY appear in diff headers, NOT inside code:
+- \`--- a/\` or \`+++ b/\` (file headers)
+- \`@@\` (hunk headers)
+- Lines starting with \`diff --git\`
+
+If the code needs to work with diffs, use proper string escaping:
+- Use \`"--- a/"\` as a string literal
+- Build diff strings programmatically
+
+Common error: "Contains git diff markers in content" means you put raw diff syntax inside code.
+
 Respond ONLY with valid JSON:
 {
   "diff": "complete unified diff with fixes",

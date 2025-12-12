@@ -1,12 +1,16 @@
 import OpenAI from "openai";
 
+type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh";
+
 interface CompletionParams {
   model: string;
   maxTokens: number;
   temperature: number;
   systemPrompt: string;
   userPrompt: string;
-  reasoningEffort?: "low" | "medium" | "high"; // For o1/o3 models
+  // For o1/o3 models. Accept broader values (shared with GPT-5.2),
+  // then normalize to OpenAI-supported reasoning_effort values.
+  reasoningEffort?: ReasoningEffort;
 }
 
 // Models that use reasoning (o1, o3 series)
@@ -14,6 +18,14 @@ const REASONING_MODELS = ["o1", "o1-mini", "o1-preview", "o3", "o3-mini"];
 
 function isReasoningModel(model: string): boolean {
   return REASONING_MODELS.some((m) => model.startsWith(m));
+}
+
+function normalizeReasoningEffort(
+  effort?: ReasoningEffort,
+): "low" | "medium" | "high" {
+  if (!effort || effort === "none") return "medium";
+  if (effort === "xhigh") return "high";
+  return effort;
 }
 
 export class OpenAIClient {
@@ -38,7 +50,7 @@ export class OpenAIClient {
         response = await this.client.chat.completions.create({
           model: params.model,
           max_completion_tokens: params.maxTokens,
-          reasoning_effort: params.reasoningEffort || "medium",
+          reasoning_effort: normalizeReasoningEffort(params.reasoningEffort),
           messages: [
             {
               role: "user",

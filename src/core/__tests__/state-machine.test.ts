@@ -24,6 +24,11 @@ describe("State Machine", () => {
     expect(() => transition("TESTING", "TESTS_PASSED")).not.toThrow();
   });
 
+  test("allows valid ORCHESTRATING -> CODING_DONE transition", () => {
+    expect(canTransition("ORCHESTRATING", "CODING_DONE")).toBe(true);
+    expect(() => transition("ORCHESTRATING", "CODING_DONE")).not.toThrow();
+  });
+
   // Invalid transitions
   test("prevents invalid NEW -> CODING transition", () => {
     expect(canTransition("NEW", "CODING")).toBe(false);
