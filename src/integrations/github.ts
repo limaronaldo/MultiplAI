@@ -548,6 +548,7 @@ export class GitHubClient {
 
   /**
    * Aguarda os checks (CI) completarem
+   * If no CI is configured, returns success after a grace period
    */
   async waitForChecks(
     fullName: string,
@@ -556,6 +557,10 @@ export class GitHubClient {
   ): Promise<CheckResult> {
     const { owner, repo } = this.parseRepo(fullName);
     const startTime = Date.now();
+    // Grace period to wait for CI to be triggered before assuming no CI
+    const noCIGracePeriodMs = 20000; // 20 seconds
+    let noCICheckCount = 0;
+    const noCIMaxChecks = 4; // After 4 checks with no CI (20s), assume no CI configured
 
     while (Date.now() - startTime < timeoutMs) {
       const ref = await this.octokit.rest.git.getRef({
@@ -573,11 +578,24 @@ export class GitHubClient {
       });
 
       // GitHub may return an empty list before checks are created/queued.
-      // Treat "no checks yet" as still pending.
+      // After grace period, assume no CI is configured and return success.
       if (checks.data.check_runs.length === 0) {
+        noCICheckCount++;
+        const elapsedMs = Date.now() - startTime;
+
+        if (elapsedMs >= noCIGracePeriodMs || noCICheckCount >= noCIMaxChecks) {
+          console.log(
+            `[GitHub] No CI checks found after ${elapsedMs}ms - assuming no CI configured, proceeding`,
+          );
+          return { success: true };
+        }
+
         await new Promise((resolve) => setTimeout(resolve, 5000));
         continue;
       }
+
+      // Reset counter if we see any checks
+      noCICheckCount = 0;
 
       const allComplete = checks.data.check_runs.every(
         (run) => run.status === "completed",
