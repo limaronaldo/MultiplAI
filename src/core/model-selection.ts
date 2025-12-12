@@ -242,30 +242,30 @@ function selectForXS(
 /**
  * Select models for Fixer agent
  *
- * Fixer uses GPT-5.2 with xhigh reasoning effort for thorough error analysis.
- * This ensures deep understanding of the codebase and error patterns.
- *
- * Model: gpt-5.2 with reasoning.effort: "xhigh" (configured in openai-direct.ts)
+ * Escalation chain:
+ * - First attempt: GPT-5.2 with xhigh reasoning
+ * - After 1 failure: Claude Opus 4.5 (single)
+ * - After 2+ failures: Thinking models (gpt-5.1-codex-max)
  */
 export function selectFixerModels(context: SelectionContext): ModelSelection {
   const { attemptCount } = context;
 
-  // Escalation for fixer: GPT-5.2 → Multi → Thinking
+  // Escalation for fixer: GPT-5.2 → Opus 4.5 → Thinking
   if (attemptCount >= 2) {
     return {
       tier: "thinking",
       models: MODEL_TIERS[3].models,
       useMultiAgent: false,
-      reason: "Fixer with 2+ failures → thinking models (gpt-5.2-pro)",
+      reason: "Fixer with 2+ failures → thinking models (gpt-5.1-codex-max)",
     };
   }
 
   if (attemptCount >= 1) {
     return {
-      tier: "multi",
-      models: MODEL_TIERS[2].models,
-      useMultiAgent: true,
-      reason: "Fixer with 1 failure → multi-agent consensus",
+      tier: "standard",
+      models: ["claude-opus-4-5-20251101"],
+      useMultiAgent: false,
+      reason: "Fixer with 1 failure → Claude Opus 4.5 (single)",
     };
   }
 
