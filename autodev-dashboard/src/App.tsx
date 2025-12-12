@@ -6,12 +6,14 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom";
-import { Sidebar } from "@/components/layout/Sidebar";
-import {
-  DashboardPage,
-  TasksPage,
   JobsPage,
   LogsPage,
+  SettingsPage,
+} from "@/pages";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { ShortcutsModal } from "@/components/ui/ShortcutsModal";
+
+type TabId = "dashboard" | "tasks" | "jobs" | "logs" | "settings";
   SettingsPage,
 } from "@/pages";
 
@@ -29,11 +31,14 @@ const pathToTab: Record<string, TabId> = {
 // Map tab IDs to paths
 const tabToPath: Record<TabId, string> = {
   dashboard: "/",
-  tasks: "/tasks",
-  jobs: "/jobs",
-  logs: "/logs",
-  settings: "/settings",
-};
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // Initialize keyboard shortcuts
+  const { shortcuts, isShortcutsModalOpen, setIsShortcutsModalOpen } = useKeyboardShortcuts();
+
+  // Determine active tab from current path
+  const activeTab = pathToTab[location.pathname] || "dashboard";
 
 function App() {
   const location = useLocation();
@@ -52,12 +57,18 @@ function App() {
       <Sidebar activeTab={activeTab} onTabChange={handleTabChange} />
 
       <main className="ml-64 flex-1 overflow-auto bg-slate-950">
-        <Routes>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/tasks" element={<TasksPage />} />
-          <Route path="/tasks/:taskId" element={<TasksPage />} />
-          <Route path="/jobs" element={<JobsPage />} />
-          <Route path="/jobs/:jobId" element={<JobsPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </main>
+
+      <ShortcutsModal
+        isOpen={isShortcutsModalOpen}
+        onClose={() => setIsShortcutsModalOpen(false)}
+        shortcuts={shortcuts}
+      />
+    </div>
+  );
+}
           <Route path="/logs" element={<LogsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
