@@ -82,7 +82,7 @@ export function getNextAction(status: TaskStatus): TaskAction {
     case "BREAKDOWN_DONE":
       return "ORCHESTRATE";
     case "ORCHESTRATING":
-      return "WAIT"; // Waiting for subtasks to complete
+      return "ORCHESTRATE"; // Continue processing subtasks until complete
     case "CODING_DONE":
       return "TEST";
     case "TESTS_PASSED":

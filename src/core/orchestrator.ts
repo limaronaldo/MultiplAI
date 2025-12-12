@@ -404,13 +404,15 @@ export class Orchestrator {
   private async runOrchestration(task: Task): Promise<Task> {
     this.validateTaskState(
       task,
-      "BREAKDOWN_DONE",
+      ["BREAKDOWN_DONE", "ORCHESTRATING"],
       ["orchestrationState"],
       "Cannot run orchestration",
     );
 
     const logger = this.getLogger(task);
-    task = this.updateStatus(task, "ORCHESTRATING");
+    if (task.status === "BREAKDOWN_DONE") {
+      task = this.updateStatus(task, "ORCHESTRATING");
+    }
 
     const state = task.orchestrationState!;
 
@@ -475,6 +477,7 @@ export class Orchestrator {
       logger.info(`Subtask ${nextSubtask.id} completed`);
 
       // Continue orchestration (will be called again)
+      task.updatedAt = new Date();
       return task;
     } catch (error) {
       logger.error(

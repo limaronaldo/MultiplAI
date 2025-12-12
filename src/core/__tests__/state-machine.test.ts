@@ -62,6 +62,10 @@ describe("State Machine", () => {
     expect(getNextAction("REVIEW_APPROVED")).toBe("OPEN_PR");
   });
 
+  test("returns correct next action for ORCHESTRATING state", () => {
+    expect(getNextAction("ORCHESTRATING")).toBe("ORCHESTRATE");
+  });
+
   test("returns WAIT for intermediate states", () => {
     expect(getNextAction("PLANNING")).toBe("WAIT");
     expect(getNextAction("CODING")).toBe("WAIT");
