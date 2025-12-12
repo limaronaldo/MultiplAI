@@ -19,8 +19,8 @@ export interface CodeChunk {
   endLine: number;
   /** Programming language of the code */
   language: string;
-  /** Optional metadata about the chunk */
-  metadata?: Record<string, unknown>;
+  /** Optional embedding vector for similarity search */
+  embedding?: number[];
 }
 
 /**
@@ -54,3 +54,7 @@ export interface IndexStats {
   /** Total number of indexed chunks */
   totalChunks: number;
   /** Total number of indexed files */
+  totalFiles: number;
+  /** Timestamp of last index update */
+  lastUpdated: Date;
+}
