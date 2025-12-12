@@ -4,9 +4,9 @@
  * This creates a test task and processes it through all stages
  */
 
-import { db } from "./src/integrations/db";
-import { Orchestrator } from "./src/core/orchestrator";
-import { Task, TaskStatus } from "./src/core/types";
+import { db } from "../../src/integrations/db";
+import { Orchestrator } from "../../src/core/orchestrator";
+import { Task, TaskStatus } from "../../src/core/types";
 
 console.log("🧪 AutoDev End-to-End Test\n");
 console.log("=" .repeat(60));
@@ -73,7 +73,7 @@ console.log("      - Apply diff to GitHub");
 console.log("      - Push changes");
 
 // Instead, just test the Coder agent directly
-import { CoderAgent } from "./src/agents/coder";
+import { CoderAgent } from "../../src/agents/coder";
 const coder = new CoderAgent();
 
 console.log("\n   🤖 Testing CoderAgent with mock file contents...");
@@ -111,7 +111,7 @@ await db.updateTask(task.id, {
 
 // Step 3: Review
 console.log("\n4️⃣  Running Review phase...");
-import { ReviewerAgent } from "./src/agents/reviewer";
+import { ReviewerAgent } from "../../src/agents/reviewer";
 const reviewer = new ReviewerAgent();
 
 const reviewOutput = await reviewer.run({

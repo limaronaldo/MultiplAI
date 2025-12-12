@@ -3,10 +3,10 @@
  * Test Setup - Verification script for AutoDev
  */
 
-import { db } from "./src/integrations/db";
-import { PlannerAgent } from "./src/agents/planner";
-import { CoderAgent } from "./src/agents/coder";
-import { GitHubClient } from "./src/integrations/github";
+import { db } from "../../src/integrations/db";
+import { PlannerAgent } from "../../src/agents/planner";
+import { CoderAgent } from "../../src/agents/coder";
+import { GitHubClient } from "../../src/integrations/github";
 
 console.log("🧪 AutoDev Test Setup\n");
 

@@ -44,7 +44,10 @@ export const db = {
         linear_issue_id,
         status,
         attempt_count,
-        max_attempts
+        max_attempts,
+        parent_task_id,
+        subtask_index,
+        is_orchestrated
       ) VALUES (
         ${task.githubRepo},
         ${task.githubIssueNumber},
@@ -53,7 +56,10 @@ export const db = {
         ${task.linearIssueId || null},
         ${task.status},
         ${task.attemptCount},
-        ${task.maxAttempts}
+        ${task.maxAttempts},
+        ${task.parentTaskId || null},
+        ${task.subtaskIndex ?? null},
+        ${task.isOrchestrated ?? false}
       )
       RETURNING *
     `;
@@ -137,6 +143,10 @@ export const db = {
       setClauses.push("current_diff = $" + (values.length + 1));
       values.push(updates.currentDiff);
     }
+    if (updates.commitMessage !== undefined) {
+      setClauses.push("commit_message = $" + (values.length + 1));
+      values.push(updates.commitMessage);
+    }
     if (updates.prNumber !== undefined) {
       setClauses.push("pr_number = $" + (values.length + 1));
       values.push(updates.prNumber);
@@ -160,6 +170,18 @@ export const db = {
     if (updates.lastError !== undefined) {
       setClauses.push("last_error = $" + (values.length + 1));
       values.push(updates.lastError);
+    }
+    if (updates.parentTaskId !== undefined) {
+      setClauses.push("parent_task_id = $" + (values.length + 1));
+      values.push(updates.parentTaskId);
+    }
+    if (updates.subtaskIndex !== undefined) {
+      setClauses.push("subtask_index = $" + (values.length + 1));
+      values.push(updates.subtaskIndex);
+    }
+    if (updates.isOrchestrated !== undefined) {
+      setClauses.push("is_orchestrated = $" + (values.length + 1));
+      values.push(updates.isOrchestrated);
     }
 
     setClauses.push("updated_at = NOW()");
@@ -276,7 +298,10 @@ export const db = {
   },
 
   async getRecentTaskEvents(
-    sinceId: number = 0,
+    since: { createdAt: Date; id: string } = {
+      createdAt: new Date(0),
+      id: "00000000-0000-0000-0000-000000000000",
+    },
     taskId?: string,
     limit: number = 50,
   ): Promise<TaskEvent[]> {
@@ -286,16 +311,22 @@ export const db = {
     if (taskId) {
       results = await sql`
         SELECT * FROM task_events
-        WHERE id > ${sinceId}
+        WHERE (
+          created_at > ${since.createdAt}
+          OR (created_at = ${since.createdAt} AND id > ${since.id})
+        )
         AND task_id = ${taskId}
-        ORDER BY id ASC
+        ORDER BY created_at ASC, id ASC
         LIMIT ${limit}
       `;
     } else {
       results = await sql`
         SELECT * FROM task_events
-        WHERE id > ${sinceId}
-        ORDER BY id ASC
+        WHERE (
+          created_at > ${since.createdAt}
+          OR (created_at = ${since.createdAt} AND id > ${since.id})
+        )
+        ORDER BY created_at ASC, id ASC
         LIMIT ${limit}
       `;
     }

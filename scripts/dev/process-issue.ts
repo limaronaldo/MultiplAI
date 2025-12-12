@@ -3,9 +3,9 @@
  *
  * Usage: bun run scripts/process-issue.ts <issue-number>
  */
-import { Orchestrator } from "../src/core/orchestrator";
-import { Task } from "../src/core/types";
-import { db } from "../src/integrations/db";
+import { Orchestrator } from "../../src/core/orchestrator";
+import { Task } from "../../src/core/types";
+import { db } from "../../src/integrations/db";
 import { Octokit } from "octokit";
 
 const ISSUE_NUMBER = parseInt(process.argv[2] || "2");

@@ -1664,4 +1664,95 @@ These issues were identified during the #195 learning memory implementation:
 
 ---
 
-_Última atualização: 2025-12-12 09:30 UTC_
+---
+
+## Model Performance Intelligence (2025-12-12)
+
+### Comprehensive Model Rankings by Use Case
+
+Based on benchmarks (SWE-bench Verified, AIME 2025, ARC-AGI-2) and production experience:
+
+#### 🏆 Best for Code Review (finding real bugs + correct fixes)
+
+| Rank | Model | SWE-bench Verified | Why |
+|------|-------|-------------------|-----|
+| 🥇 **1st** | **Claude Opus 4.5** | Top performer | Best at landing actual fixes, strong tool use |
+| 🥈 **2nd** | **GPT-5.2** | 80% | 400K context, excellent for large PRs |
+| 🥉 **3rd** | GPT-5.2-pro | 76.3% | Most trustworthy but slower than 5.2 |
+
+**Recommendation**: Use **Opus 4.5** for ReviewerAgent when quality matters most.
+
+#### 🧮 Best for Math + Logic (proofs, abstract reasoning)
+
+| Rank | Model | AIME 2025 | ARC-AGI-2 | Why |
+|------|-------|-----------|-----------|-----|
+| 🥇 **1st** | **GPT-5.2-pro** | 100% | 54.2% | Strongest math + abstract combo |
+| 🥈 **2nd** | **GPT-5.2** | 100% | 52.9% | Nearly identical, faster |
+| 🥉 **3rd** | Gemini 3 Pro | 95% | 31.1% | Behind on both metrics |
+
+**Recommendation**: Use **GPT-5.2-pro** for PlannerAgent when complex analysis needed.
+
+#### ⚡ Recommended Configuration (2025-12-12)
+
+| Agent | Model | Rationale |
+|-------|-------|-----------|
+| **Planner** | `gpt-5.2-thinking` | Reasoning mode for complex planning |
+| **Coder** | `claude-opus-4-5-20251101` | Best code generation quality |
+| **Fixer** | `claude-opus-4-5-20251101` | Best at debugging |
+| **Reviewer** | `gpt-5.2` | Good balance: 400K context + quality |
+
+### API Availability Notes
+
+#### Gemini Deep Think
+- ⚠️ **NOT publicly available** on Gemini API
+- Only available to Google AI Ultra subscribers via Gemini app
+- API access is "trusted testers" only
+
+#### What IS Available on API:
+- **Gemini API**: `thinkingBudget` control (0=off, -1=dynamic)
+- **Vertex AI**: `thinking_level` for Gemini 3+
+
+#### GPT-5.2 Family
+
+| Model | Context | Output | TPM Limit | Best For |
+|-------|---------|--------|-----------|----------|
+| `gpt-5.2` | 400K | 128K | 500K | **General coding** |
+| `gpt-5.2-thinking` | 400K | 128K | 500K | **Reasoning/planning** |
+| `gpt-5.2-instant` | 128K | 32K | 1M | **Fast tasks** |
+| `gpt-5.2-pro` | 400K | 128K | 200K | **Highest trust** |
+
+**Note**: `gpt-5.2-pro` uses Responses API (different integration).
+
+### Simple Decision Framework
+
+```
+Need CODE REVIEW quality?
+  → Claude Opus 4.5 (1st) or GPT-5.2 (2nd)
+
+Need MATH/LOGIC correctness?
+  → GPT-5.2-pro (1st) or GPT-5.2 (2nd)
+
+Need FAST response?
+  → GPT-5.2-instant or Claude Haiku
+
+Need LARGE CONTEXT (>200K)?
+  → GPT-5.2 (400K) or Claude Opus 4.5 (200K)
+
+Budget constrained?
+  → Claude Sonnet 4.5 (good all-around)
+```
+
+### Benchmark Reference
+
+| Model | SWE-bench Verified | SWE-bench Pro | AIME 2025 | ARC-AGI-2 |
+|-------|-------------------|---------------|-----------|-----------|
+| Claude Opus 4.5 | **Top** | - | - | - |
+| GPT-5.2 | 80% | 55.6% | 100% | 52.9% |
+| GPT-5.2-pro | 76.3% | - | **100%** | **54.2%** |
+| Gemini 3 Pro | - | - | 95% | 31.1% |
+
+**Sources**: OpenAI reports, Anthropic blog, DeepMind published tables (Dec 2025)
+
+---
+
+_Última atualização: 2025-12-12 16:00 UTC_

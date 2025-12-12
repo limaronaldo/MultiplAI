@@ -6,8 +6,8 @@
  *   MULTI_AGENT_MODE=true bun run scripts/run-comparison-test.ts multi
  */
 
-import { Orchestrator } from "../src/core/orchestrator";
-import { Task } from "../src/core/types";
+import { Orchestrator } from "../../src/core/orchestrator";
+import { Task } from "../../src/core/types";
 
 // Issue #1 data
 const ISSUE_1: Partial<Task> = {

@@ -5,7 +5,7 @@
  * Uso: bun run scripts/setup-v2-project.ts
  */
 
-import { LinearService } from "../src/integrations/linear";
+import { LinearService } from "../../src/integrations/linear";
 
 const PROJECT_NAME = "MultiplAI v2 - Self Evolution";
 const PROJECT_DESCRIPTION =

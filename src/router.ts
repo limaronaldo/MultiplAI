@@ -935,8 +935,29 @@ route("GET", "/api/logs/stream", async (req) => {
   const url = new URL(req.url);
   const taskId = url.searchParams.get("taskId") || undefined;
 
-  // Track last event ID sent
-  let lastEventId = 0;
+  const DEFAULT_CURSOR = {
+    createdAt: new Date(0),
+    id: "00000000-0000-0000-0000-000000000000",
+  };
+
+  function parseCursor(
+    cursor: string | null,
+  ): { createdAt: Date; id: string } {
+    if (!cursor) return DEFAULT_CURSOR;
+    const [createdAtStr, id] = cursor.split("|");
+    const createdAt = new Date(createdAtStr);
+    if (!id || Number.isNaN(createdAt.getTime())) return DEFAULT_CURSOR;
+    return { createdAt, id };
+  }
+
+  function formatCursor(event: { createdAt: Date; id: string }): string {
+    return `${event.createdAt.toISOString()}|${event.id}`;
+  }
+
+  // Track last cursor sent (SSE "Last-Event-ID" compatible)
+  const initialCursor =
+    url.searchParams.get("cursor") || req.headers.get("last-event-id");
+  let lastCursor = parseCursor(initialCursor);
   let isActive = true;
 
   // Create a readable stream for SSE
@@ -959,15 +980,15 @@ route("GET", "/api/logs/stream", async (req) => {
         }
 
         try {
-          const events = await db.getRecentTaskEvents(lastEventId, taskId);
+          const events = await db.getRecentTaskEvents(lastCursor, taskId);
 
           for (const event of events) {
-            const eventId =
-              typeof event.id === "number"
-                ? event.id
-                : parseInt(event.id, 10) || 0;
+            const cursor = formatCursor({
+              createdAt: event.createdAt,
+              id: event.id,
+            });
 
-            controller.enqueue(encoder.encode(`id: ${event.id}\n`));
+            controller.enqueue(encoder.encode(`id: ${cursor}\n`));
             controller.enqueue(
               encoder.encode(
                 `data: ${JSON.stringify({
@@ -985,7 +1006,7 @@ route("GET", "/api/logs/stream", async (req) => {
               ),
             );
 
-            lastEventId = Math.max(lastEventId, eventId);
+            lastCursor = { createdAt: event.createdAt, id: event.id };
           }
         } catch (err) {
           console.error("[SSE] Error fetching events:", err);

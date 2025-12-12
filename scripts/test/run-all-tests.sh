@@ -24,7 +24,7 @@ FAILED=0
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Test 1: Setup Verification"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-if bun run test-setup.ts; then
+if bun run scripts/test/test-setup.ts; then
     echo -e "${GREEN}✅ Setup Verification PASSED${NC}"
     PASSED=$((PASSED + 1))
 else
@@ -37,7 +37,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Test 2: End-to-End Workflow"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-if bun run test-e2e.ts; then
+if bun run scripts/test/test-e2e.ts; then
     echo -e "${GREEN}✅ End-to-End Test PASSED${NC}"
     PASSED=$((PASSED + 1))
 else
@@ -89,7 +89,7 @@ if [ $FAILED -eq 0 ]; then
     echo ""
     echo "🚀 Next Steps:"
     echo "  1. Start server: bun run dev"
-    echo "  2. Test webhook: bun run test-webhook.ts"
+    echo "  2. Test webhook: bun run scripts/test/test-webhook.ts"
     echo "  3. Deploy to Fly.io: fly deploy"
     echo ""
     exit 0
