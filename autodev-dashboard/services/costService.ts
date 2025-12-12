@@ -1,3 +1,195 @@
+
+export interface TokenCost {
+  /** USD per 1M input tokens */
+  input: number;
+  /** USD per 1M output tokens */
+  output: number;
+}
+
+/**
+ * Token pricing in USD per 1M tokens.
+ *
+ * Note: Model names are matched exactly by key. If your telemetry uses variant
+ * names (e.g., includes provider prefixes), normalize before calling.
+ */
+export const TOKEN_COSTS: Record<string, TokenCost> = {
+  "gpt-4o": { input: 5, output: 15 },
+  "gpt-4o-mini": { input: 0.15, output: 0.6 },
+  o1: { input: 15, output: 60 },
+  "o1-mini": { input: 3, output: 12 }
+};
+
+/**
+ * A minimal event shape for cost aggregation.
+ *
+ * This is intentionally permissive to support slightly different event payloads.
+ */
+export interface TaskEvent {
+  agent?: string;
+  model?: string;
+
+  inputTokens?: number;
+  outputTokens?: number;
+
+  /** Common timestamp fields used across telemetry systems */
+  timestamp?: string | number | Date;
+  createdAt?: string | number | Date;
+  date?: string | number | Date;
+
+  /** Optional nested usage fields */
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    promptTokens?: number;
+    completionTokens?: number;
+  };
+
+  /** Optional nested metadata */
+  metadata?: {
+    agent?: string;
+  };
+
+  /** Allow additional fields without breaking type-checking */
+  [key: string]: unknown;
+}
+
+export interface DailyCost {
+  /** Date in YYYY-MM-DD format */
+  date: string;
+  /** Total cost in USD */
+  cost: number;
+}
+
+function toNonNegativeNumber(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return value < 0 ? 0 : value;
+}
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
+}
+
+function formatDateUTC(date: Date): string {
+  return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`;
+}
+
+function getEventAgent(event: TaskEvent): string {
+  const direct = typeof event.agent === "string" ? event.agent : undefined;
+  const fromMetadata = typeof event.metadata?.agent === "string" ? event.metadata.agent : undefined;
+  return (direct || fromMetadata || "unknown").trim() || "unknown";
+}
+
+function getEventTokens(event: TaskEvent): { inputTokens: number; outputTokens: number } {
+  const anyEvent = event as Record<string, unknown>;
+  const usage = event.usage;
+
+  const inputTokens =
+    toNonNegativeNumber(event.inputTokens) ||
+    toNonNegativeNumber(usage?.inputTokens) ||
+    toNonNegativeNumber(usage?.promptTokens) ||
+    toNonNegativeNumber(anyEvent.promptTokens) ||
+    toNonNegativeNumber(anyEvent.tokensIn);
+
+  const outputTokens =
+    toNonNegativeNumber(event.outputTokens) ||
+    toNonNegativeNumber(usage?.outputTokens) ||
+    toNonNegativeNumber(usage?.completionTokens) ||
+    toNonNegativeNumber(anyEvent.completionTokens) ||
+    toNonNegativeNumber(anyEvent.tokensOut);
+
+  return { inputTokens, outputTokens };
+}
+
+function getEventDateKey(event: TaskEvent): string {
+  const raw = event.timestamp ?? event.createdAt ?? event.date;
+  if (raw == null) return "unknown";
+
+  // If it's already a YYYY-MM-DD string, accept it.
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  }
+
+  const date = raw instanceof Date ? raw : new Date(raw as string | number);
+  if (!Number.isFinite(date.getTime())) return "unknown";
+  return formatDateUTC(date);
+}
+
+/**
+ * Calculate the USD cost for a model invocation.
+ *
+ * @param modelName - The model identifier used to look up pricing.
+ * @param inputTokens - Number of input tokens.
+ * @param outputTokens - Number of output tokens.
+ * @returns The computed cost in USD. Returns 0 for unknown models or zero tokens.
+ */
+export function calculateCost(modelName: string, inputTokens: number, outputTokens: number): number {
+  const pricing = TOKEN_COSTS[modelName];
+  if (!pricing) return 0;
+
+  const inTok = toNonNegativeNumber(inputTokens);
+  const outTok = toNonNegativeNumber(outputTokens);
+  if (inTok === 0 && outTok === 0) return 0;
+
+  const inputCost = (inTok / 1_000_000) * pricing.input;
+  const outputCost = (outTok / 1_000_000) * pricing.output;
+  return inputCost + outputCost;
+}
+
+/**
+ * Aggregate total costs by agent.
+ *
+ * @param events - Task events containing agent/model/token information.
+ * @returns A mapping from agent name to total cost in USD.
+ */
+export function aggregateCostsByAgent(events: TaskEvent[]): Record<string, number> {
+  if (!Array.isArray(events) || events.length === 0) return {};
+
+  const totals: Record<string, number> = {};
+  for (const event of events) {
+    const agent = getEventAgent(event);
+    const model = typeof event.model === "string" ? event.model : "";
+    const { inputTokens, outputTokens } = getEventTokens(event);
+
+    const cost = model ? calculateCost(model, inputTokens, outputTokens) : 0;
+    totals[agent] = (totals[agent] ?? 0) + cost;
+  }
+
+  return totals;
+}
+
+/**
+ * Aggregate total costs by day (YYYY-MM-DD).
+ *
+ * @param events - Task events containing timestamp/model/token information.
+ * @returns Array of daily totals sorted ascending by date.
+ */
+export function aggregateCostsByDay(events: TaskEvent[]): DailyCost[] {
+  if (!Array.isArray(events) || events.length === 0) return [];
+
+  const totalsByDay: Record<string, number> = {};
+
+  for (const event of events) {
+    const dateKey = getEventDateKey(event);
+    const model = typeof event.model === "string" ? event.model : "";
+    const { inputTokens, outputTokens } = getEventTokens(event);
+    const cost = model ? calculateCost(model, inputTokens, outputTokens) : 0;
+
+    totalsByDay[dateKey] = (totalsByDay[dateKey] ?? 0) + cost;
+  }
+
+  const daily: DailyCost[] = Object.entries(totalsByDay).map(([date, cost]) => ({ date, cost }));
+
+  daily.sort((a, b) => {
+    if (a.date === b.date) return 0;
+    if (a.date === "unknown") return 1;
+    if (b.date === "unknown") return -1;
+    return a.date < b.date ? -1 : 1;
+  });
+
+  return daily;
+}
+
 /**
  * Cost calculation utilities for token-based LLM usage.
  *
