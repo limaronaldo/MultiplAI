@@ -430,12 +430,31 @@ export class GitHubClient {
 
       // For new files, extract content from added lines
       if (file.new || file.from === "/dev/null") {
-        const content = file.chunks
+        const addedLines = file.chunks
           .flatMap((chunk) => chunk.changes)
           .filter((change) => change.type === "add")
-          .map((change) => change.content.slice(1)) // Remove leading '+'
-          .join("\n");
-        results.push({ path: filePath, content, deleted: false });
+          .map((change) => change.content.slice(1)); // Remove leading '+'
+
+        // Filter out lines that are diff headers (parse-diff bug with malformed diffs)
+        // These occur when the LLM generates a diff with incorrect hunk line counts
+        const cleanedLines = addedLines.filter((line) => {
+          // Skip diff file headers that got mixed in
+          if (line.startsWith("++ b/") || line.startsWith("+++ b/"))
+            return false;
+          if (line.startsWith("-- a/") || line.startsWith("--- a/"))
+            return false;
+          if (line.startsWith("diff --git ")) return false;
+          if (line.match(/^@@ -\d+,?\d* \+\d+,?\d* @@/)) return false;
+          if (line.match(/^index [a-f0-9]+\.\.[a-f0-9]+/)) return false;
+          if (line === "new file mode 100644") return false;
+          return true;
+        });
+
+        results.push({
+          path: filePath,
+          content: cleanedLines.join("\n"),
+          deleted: false,
+        });
         continue;
       }
 
@@ -454,12 +473,29 @@ export class GitHubClient {
       } catch (error) {
         console.error(`[GitHub] Error processing file ${filePath}:`, error);
         // If we can't get original, try to use just the added lines
-        const content = file.chunks
+        const lines = file.chunks
           .flatMap((chunk) => chunk.changes)
           .filter((change) => change.type === "add" || change.type === "normal")
-          .map((change) => change.content.slice(1))
-          .join("\n");
-        results.push({ path: filePath, content, deleted: false });
+          .map((change) => change.content.slice(1));
+
+        // Filter out diff headers that may have been mixed in
+        const cleanedLines = lines.filter((line) => {
+          if (line.startsWith("++ b/") || line.startsWith("+++ b/"))
+            return false;
+          if (line.startsWith("-- a/") || line.startsWith("--- a/"))
+            return false;
+          if (line.startsWith("diff --git ")) return false;
+          if (line.match(/^@@ -\d+,?\d* \+\d+,?\d* @@/)) return false;
+          if (line.match(/^index [a-f0-9]+\.\.[a-f0-9]+/)) return false;
+          if (line === "new file mode 100644") return false;
+          return true;
+        });
+
+        results.push({
+          path: filePath,
+          content: cleanedLines.join("\n"),
+          deleted: false,
+        });
       }
     }
 
