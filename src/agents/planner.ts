@@ -50,9 +50,9 @@ If the task requires running shell commands (installing packages, migrations, et
 - "commands": Array of commands to execute
 - "commandOrder": "before_diff" or "after_diff"
 
-### Available Command Types:
+### Available Command Types (prefer bun_add for this project):
+- bun_add: { type: "bun_add", packages: ["zod"], dev?: true }  // PREFERRED for package installation
 - npm_install: { type: "npm_install", packages: ["lodash", "@types/lodash"], dev?: true }
-- bun_add: { type: "bun_add", packages: ["zod"], dev?: true }
 - pnpm_add: { type: "pnpm_add", packages: ["axios"], dev?: true }
 - yarn_add: { type: "yarn_add", packages: ["react"], dev?: true }
 - prisma_migrate: { type: "prisma_migrate", name: "add_users_table" }
@@ -79,7 +79,7 @@ Respond ONLY with valid JSON matching this schema:
   "estimatedComplexity": "XS" | "S" | "M" | "L" | "XL",
   "risks": ["optional array of potential issues"],
   "commands": [  // Optional: commands to run
-    { "type": "npm_install", "packages": ["zod"], "dev": false },
+    { "type": "bun_add", "packages": ["zod"], "dev": false },
     { "type": "prisma_generate" }
   ],
   "commandOrder": "before_diff" | "after_diff",  // When to run commands
