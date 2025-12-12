@@ -223,6 +223,43 @@ function selectForXS(
 }
 
 /**
+ * Select models for Fixer agent
+ *
+ * Fixer always starts with Opus minimum - it needs to understand and fix
+ * code from more capable models. Grok can't fix Opus's mistakes.
+ */
+export function selectFixerModels(context: SelectionContext): ModelSelection {
+  const { attemptCount } = context;
+
+  // Escalation for fixer: Opus → Multi → Thinking
+  if (attemptCount >= 2) {
+    return {
+      tier: "thinking",
+      models: MODEL_TIERS[3].models,
+      useMultiAgent: false,
+      reason: "Fixer with 2+ failures → thinking models",
+    };
+  }
+
+  if (attemptCount >= 1) {
+    return {
+      tier: "multi",
+      models: MODEL_TIERS[2].models,
+      useMultiAgent: true,
+      reason: "Fixer with 1 failure → multi-agent consensus",
+    };
+  }
+
+  // First fix attempt: always use Opus (standard tier)
+  return {
+    tier: "standard",
+    models: MODEL_TIERS[1].models,
+    useMultiAgent: false,
+    reason: "Fixer starts with Opus 4.5 (must understand original code)",
+  };
+}
+
+/**
  * Get the primary model from a selection (first model in list)
  */
 export function getPrimaryModel(selection: ModelSelection): string {

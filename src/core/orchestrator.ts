@@ -41,6 +41,7 @@ import {
 import { getLearningMemoryStore } from "./memory/learning-memory-store";
 import {
   selectModels,
+  selectFixerModels,
   logSelection,
   type SelectionContext,
 } from "./model-selection";
@@ -982,7 +983,8 @@ export class Orchestrator {
       lastError: task.lastError,
       isSubtask: !!task.parentTaskId,
     };
-    const modelSelection = selectModels(selectionContext);
+    // Fixer always starts with Opus - can't use Grok to fix Opus's mistakes
+    const modelSelection = selectFixerModels(selectionContext);
     logSelection(selectionContext, modelSelection);
 
     if (modelSelection.useMultiAgent) {
