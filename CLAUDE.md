@@ -900,4 +900,208 @@ OpenAI recommends continuous improvement via:
 
 ---
 
+## Computer Use Agent (CUA) - Visual Testing
+
+> **Status:** Planned - see issue #245
+> **Reference:** `docs/computer-use.md` for full implementation details
+
+### Overview
+
+OpenAI's Computer Use Agent (CUA) uses the `computer-use-preview` model to interact with computer interfaces via screenshots. AutoDev can use this for visual verification of UI changes.
+
+### CUA Loop
+
+```
+Goal: "Verify the new button appears on the homepage"
+         ↓
+┌─────────────────────────────────────┐
+│           CUA LOOP                  │
+├─────────────────────────────────────┤
+│ 1. Capture screenshot               │
+│ 2. Send to computer-use-preview     │
+│ 3. Model returns action             │
+│ 4. Execute action (Playwright)      │
+│ 5. Capture new screenshot           │
+│ 6. Repeat until goal achieved       │
+└─────────────────────────────────────┘
+```
+
+### Action Types
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `click` | x, y, button | Single click at coordinates |
+| `double_click` | x, y, button | Double click |
+| `type` | text | Type text via keyboard |
+| `keypress` | keys[] | Press key combination |
+| `scroll` | x, y, scrollX, scrollY | Scroll at position |
+| `drag` | startX, startY, path[] | Drag operation |
+| `wait` | - | Wait 2 seconds |
+| `screenshot` | - | Capture only |
+
+### Safety Checks
+
+The model may return `pending_safety_checks` that must be handled:
+
+| Code | Action | Description |
+|------|--------|-------------|
+| `malicious_instructions` | **Block** | Never acknowledge |
+| `sensitive_domain` | **Block** | Banking, gov, healthcare |
+| `irrelevant_domain` | Check allowlist | Navigating away from task |
+
+### Integration with Foreman
+
+```typescript
+// After applying diff, run visual tests
+const foreman = new Foreman();
+const results = await foreman.runVisualTests(
+  "http://localhost:3000",
+  [
+    { goal: "Verify homepage loads correctly", expectedOutcome: "success" },
+    { goal: "Click login and verify form appears", expectedOutcome: "form visible" }
+  ]
+);
+```
+
+### Use Cases for AutoDev
+
+1. **Visual Regression Testing** - Verify UI after diff application
+2. **E2E Test Execution** - Run acceptance criteria visually
+3. **Screenshot Documentation** - Capture new features for PRs
+
+### Configuration
+
+```bash
+ENABLE_COMPUTER_USE=true
+OPENAI_API_KEY=sk-...
+CUA_TIMEOUT_MS=900000              # 15 minutes
+CUA_MAX_ACTIONS=50
+CUA_BROWSER_HEADLESS=true
+CUA_ALLOWED_URLS=localhost,staging.example.com
+```
+
+### Limitations
+
+- Model accuracy is ~38% on OSWorld (not fully reliable)
+- Best for browser-based tasks
+- Requires human oversight for critical operations
+- Safety checks must be properly handled
+
+### Files (Planned)
+
+| File | Purpose |
+|------|---------|
+| `src/agents/computer-use.ts` | CUA agent implementation |
+| `src/services/cua-worker.ts` | Docker worker process |
+| `Dockerfile.cua` | Sandboxed execution container |
+| `docs/computer-use.md` | Full implementation reference |
+
+---
+
+## LLM Judge Alignment (Evals Quality)
+
+> **Status:** Planned - extends issue #238
+
+### The Problem
+
+When using LLMs to grade task outputs (code quality, correctness), the judge must be **aligned** with human judgment to be useful.
+
+### Alignment Metrics
+
+| Metric | Formula | Target |
+|--------|---------|--------|
+| **TPR** (True Positive Rate) | Correct positives / All positives | > 80% |
+| **TNR** (True Negative Rate) | Correct negatives / All negatives | > 80% |
+| **Accuracy** | (TP + TN) / Total | > 85% |
+
+### Data Split Strategy
+
+```
+Human-labeled examples (100 total)
+         ↓
+┌────────────────────────────────────────┐
+│  TRAIN (20%)   │  VAL (40%)  │ TEST (40%) │
+│  Few-shot      │  Tune       │  Final     │
+│  examples      │  prompts    │  metrics   │
+└────────────────────────────────────────┘
+```
+
+- **Train (20%)**: Use as few-shot examples in judge prompts
+- **Validation (40%)**: Iterate on prompt until metrics pass
+- **Test (40%)**: Final evaluation (never tune on this)
+
+### Grader Types
+
+| Type | Use Case | Example |
+|------|----------|---------|
+| **String Check** | Exact/contains match | `output.contains("PASS")` |
+| **Text Similarity** | Fuzzy matching | Cosine similarity > 0.85 |
+| **Score Model** | Numeric rating | 1-5 code quality |
+| **Label Model** | Classification | `correct` / `incorrect` |
+| **Python Code** | Custom logic | Parse JSON, check structure |
+
+### Failure Mode Analysis
+
+Use **Open Coding → Axial Coding** to categorize failures:
+
+```
+1. OPEN CODING: Tag each failure
+   - "Missing import statement"
+   - "Wrong function signature"
+   - "Syntax error in diff"
+   
+2. AXIAL CODING: Group into categories
+   - Import errors (15%)
+   - Signature errors (10%)
+   - Syntax errors (25%)
+   - Logic errors (50%)
+   
+3. TARGETED FIXES
+   - Add import validation step
+   - Improve signature matching in prompts
+```
+
+### Implementation for AutoDev
+
+```typescript
+// src/core/evals/judge.ts
+interface JudgeConfig {
+  trainExamples: LabeledExample[];  // 20% - few-shot
+  validationSet: LabeledExample[];  // 40% - tune
+  testSet: LabeledExample[];        // 40% - final
+  targetTPR: number;                // e.g., 0.8
+  targetTNR: number;                // e.g., 0.8
+}
+
+async function alignJudge(config: JudgeConfig): Promise<AlignedJudge> {
+  // Iterate on validation set until metrics pass
+  while (tpr < config.targetTPR || tnr < config.targetTNR) {
+    // Adjust prompt, few-shot examples
+    // Re-evaluate on validation set
+  }
+  // Final evaluation on test set
+  return new AlignedJudge(finalPrompt);
+}
+```
+
+### Grader Examples for AutoDev
+
+| Task Output | Grader Type | Criteria |
+|-------------|-------------|----------|
+| Diff validity | Python code | Parses without error |
+| Test pass/fail | String check | Contains "PASS" |
+| Code quality | Score model | 1-5 rating |
+| DoD completion | Label model | All criteria met |
+
+### Configuration
+
+```bash
+ENABLE_EVALS=true
+EVAL_JUDGE_MODEL=gpt-5.2
+EVAL_TARGET_TPR=0.8
+EVAL_TARGET_TNR=0.8
+```
+
+---
+
 _Last updated: 2025-12-12_
