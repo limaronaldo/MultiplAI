@@ -53,7 +53,7 @@ Attempt 4 → Thinking models (last resort)
 |-------|---------------|-------|
 | **Planner** | `gpt-5.2-thinking` | Deep reasoning for planning |
 | **Coder** | Effort-based | See model selection above |
-| **Fixer** | Effort-based | Escalates on failures |
+| **Fixer** | `gpt-5.2` (xhigh reasoning) | Deep debugging with max reasoning effort |
 | **Reviewer** | `gpt-5.2` | Fast, accurate reviews |
 
 ---
@@ -217,9 +217,10 @@ function selectModels(context: SelectionContext): ModelSelection;
 | Tier | Models | Use Case |
 |------|--------|----------|
 | **fast** | `x-ai/grok-code-fast-1` | Typos, comments, simple renames |
-| **standard** | `claude-sonnet-4-5`, `gpt-5.2-instant` | Helper functions, simple bugs |
-| **multi** | Opus + GPT-5.2 + Gemini (parallel) | New features, refactors |
-| **thinking** | `gpt-5.2-thinking`, `gpt-5.2-pro` | Complex failures, deep reasoning |
+| **standard** | `claude-opus-4-5-20251101` | Helper functions, simple bugs |
+| **multi** | Opus + GPT-5.2 + Grok (parallel) | New features, refactors |
+| **thinking** | `gpt-5.1-codex-max`, `gpt-5.2-pro` | Autonomous coding, deep reasoning |
+| **fixer** | `gpt-5.2` (xhigh) | Error analysis with maximum reasoning |
 
 ### Effort Estimation Guidelines
 
@@ -346,7 +347,8 @@ src/
 │   ├── types.ts                # Zod schemas, interfaces
 │   ├── state-machine.ts        # State transitions
 │   ├── orchestrator.ts         # Main processing loop
-│   ├── model-selection.ts      # NEW: Effort-based model routing
+│   ├── model-selection.ts      # Effort-based model routing
+│   ├── patch-formats.ts        # Unified diff & Codex-Max conversion
 │   ├── multi-agent-types.ts    # Multi-agent config
 │   ├── multi-runner.ts         # Parallel execution
 │   ├── consensus.ts            # Consensus voting
@@ -547,7 +549,8 @@ Reasons:
 | Fast | `x-ai/grok-code-fast-1` | OpenRouter |
 | Standard | `claude-opus-4-5-20251101` | Anthropic Direct |
 | Multi | `claude-opus-4-5-20251101`, `gpt-5.2`, `x-ai/grok-code-fast-1` | Mixed |
-| Thinking | `gpt-5.2-pro` | OpenAI Responses API |
+| Thinking | `gpt-5.1-codex-max`, `gpt-5.2-pro` | OpenAI Responses API |
+| Fixer | `gpt-5.2` (reasoning.effort: xhigh) | OpenAI Responses API |
 
 ### ⚠️ OPENAI: ONLY USE GPT-5.2 OR GPT-5.1-CODEX
 
@@ -559,8 +562,60 @@ Approved OpenAI models:
 - `gpt-5.1-codex-max` - Specialized interactive coding products
 
 GPT-5.2 uses the **Responses API** (`/v1/responses`) with:
-- `reasoning.effort: "high"` - thorough reasoning for coding
+- `reasoning.effort` - `"high"` for coding, `"xhigh"` for fixer (max debugging depth)
 - `text.verbosity: "high"` - detailed code output
+
+**GPT-5.1-Codex-Max** (thinking tier):
+- Specialized for long-running autonomous coding tasks
+- ~30% fewer tokens than GPT-5.2
+- First-class compaction support for long contexts
+- Uses apply_patch format (auto-converted to unified diff)
+
+---
+
+## Patch Format Conversion
+
+The system supports multiple diff formats and auto-converts to unified diff internally.
+
+### Supported Formats
+
+| Format | Detection | Example |
+|--------|-----------|---------|
+| **Unified Diff** | `diff --git` or `---` prefix | Standard git diff output |
+| **Codex-Max apply_patch** | `*** Begin Patch` prefix | GPT-5.1-Codex-Max output |
+
+### Codex-Max Format
+
+```
+*** Begin Patch
+*** Update File: src/example.ts
+@@
+   context line
++  added line
+-  removed line
+*** Add File: src/new-file.ts
++new file content
++line 2
+*** Delete File: src/old-file.ts
+*** End Patch
+```
+
+### Auto-Conversion
+
+The orchestrator automatically detects and converts patches:
+
+```typescript
+// In orchestrator.ts
+import { normalizePatch, detectPatchFormat } from "./patch-formats";
+
+// After coder/fixer output:
+const format = detectPatchFormat(output.diff);
+if (format === "codex-max") {
+  output.diff = normalizePatch(output.diff);
+}
+```
+
+**File:** `src/core/patch-formats.ts`
 
 ---
 
@@ -590,6 +645,7 @@ Dockerfile, docker-compose.yml, *.pem, *.key
 |---------|------|
 | Main orchestrator | `src/core/orchestrator.ts` |
 | Model selection | `src/core/model-selection.ts` |
+| Patch format conversion | `src/core/patch-formats.ts` |
 | State machine | `src/core/state-machine.ts` |
 | Multi-agent config | `src/core/multi-agent-types.ts` |
 | Consensus voting | `src/core/consensus.ts` |
@@ -597,6 +653,7 @@ Dockerfile, docker-compose.yml, *.pem, *.key
 | API routes | `src/router.ts` |
 | GitHub client | `src/integrations/github.ts` |
 | LLM routing | `src/integrations/llm.ts` |
+| OpenAI Direct (GPT-5.2) | `src/integrations/openai-direct.ts` |
 | Local testing | `src/services/foreman.ts` |
 
 ---
