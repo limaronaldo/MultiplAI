@@ -1,6 +1,14 @@
 import { z } from "zod";
 
 // ============================================
+// Re-export JobRunner types for convenience
+// ============================================
+
+// JobRunnerConfig and defaultJobRunnerConfig are defined at the bottom of this file
+// They are used by JobRunner class in job-runner.ts
+// See: JobRunnerConfig interface and defaultJobRunnerConfig constant
+
+// ============================================
 // Orchestrator Error
 // ============================================
 
