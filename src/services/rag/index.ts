@@ -2,4 +2,4 @@
  * RAG Service - Retrieval-Augmented Generation
  */
 
-export * from './types';
+export * from './types.js';
