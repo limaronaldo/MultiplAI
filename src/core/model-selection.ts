@@ -27,9 +27,10 @@ export const MODEL_TIERS: ModelTier[] = [
   },
   {
     name: "standard",
-    models: ["claude-sonnet-4-5-20250929", "gpt-5.2-instant"],
-    description: "Good balance. For simple features, bug fixes, tests.",
-    avgCostPerTask: 0.1,
+    models: ["claude-opus-4-5-20251101"],
+    description:
+      "High quality single agent. For simple features, bug fixes, tests.",
+    avgCostPerTask: 0.15,
   },
   {
     name: "multi",
@@ -44,7 +45,8 @@ export const MODEL_TIERS: ModelTier[] = [
   {
     name: "thinking",
     models: ["gpt-5.2-thinking", "gpt-5.2-pro"],
-    description: "Deep reasoning. For failures that simpler models can't solve.",
+    description:
+      "Deep reasoning. For failures that simpler models can't solve.",
     avgCostPerTask: 2.0,
   },
 ];
