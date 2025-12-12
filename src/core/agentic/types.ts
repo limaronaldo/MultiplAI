@@ -1,3 +1,8 @@
+import { z } from 'zod';
+
+export const ValidationLevelSchema = z.enum(['syntax', 'typecheck', 'test']);
+export type ValidationLevel = z.infer<typeof ValidationLevelSchema>;
+
 /**
  * Input for the reflection step of the agentic loop
  */
@@ -35,7 +40,7 @@ export interface AttemptRecord {
 export interface LoopConfig {
   maxAttempts: number;
   enableReflection: boolean;
-  validationLevel: 'syntax' | 'typecheck' | 'test';
+  validationLevel: ValidationLevel;
 }
 
 /**
@@ -48,6 +53,37 @@ export interface LoopResult {
   totalTokensUsed: number;
 }
 
-// Note: Zod schemas can be added once the 'zod' package is installed
-// For now, exporting pure TypeScript interfaces for type safety
-export type ValidationLevel = 'syntax' | 'typecheck' | 'test';
+export const ReflectionInputSchema = z.object({
+  originalPlan: z.string(),
+  generatedDiff: z.string(),
+  validationErrors: z.array(z.string()),
+  attemptNumber: z.number().int(),
+});
+
+export const ReflectionOutputSchema = z.object({
+  analysis: z.string(),
+  suggestedFixes: z.array(z.string()),
+  shouldRetry: z.boolean(),
+  revisedPlan: z.string().optional(),
+});
+
+export const AttemptRecordSchema = z.object({
+  attemptNumber: z.number().int(),
+  diff: z.string(),
+  errors: z.array(z.string()),
+  reflection: ReflectionOutputSchema.optional(),
+  timestamp: z.date(),
+});
+
+export const LoopConfigSchema = z.object({
+  maxAttempts: z.number().int(),
+  enableReflection: z.boolean(),
+  validationLevel: ValidationLevelSchema,
+});
+
+export const LoopResultSchema = z.object({
+  success: z.boolean(),
+  finalDiff: z.string().optional(),
+  attempts: z.array(AttemptRecordSchema),
+  totalTokensUsed: z.number(),
+});
