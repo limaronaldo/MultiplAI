@@ -4,6 +4,8 @@ export interface AgentConfig {
   model?: string;
   maxTokens?: number;
   temperature?: number;
+  // GPT-5.2 reasoning effort: "none" | "low" | "medium" | "high" | "xhigh"
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
 }
 
 // Default model - can be overridden via env var
@@ -34,6 +36,7 @@ export abstract class BaseAgent<TInput, TOutput> {
       temperature: this.config.temperature!,
       systemPrompt,
       userPrompt,
+      reasoningEffort: this.config.reasoningEffort,
     });
   }
 

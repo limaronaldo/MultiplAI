@@ -9,11 +9,9 @@ interface FixerInput {
   fileContents: Record<string, string>;
 }
 
-// Default fixer model - can be overridden via env var or constructor
-const DEFAULT_FIXER_MODEL =
-  process.env.FIXER_MODEL ||
-  process.env.DEFAULT_LLM_MODEL ||
-  "claude-opus-4-5-20251101"; // Opus best for debugging
+// Default fixer model - GPT-5.2 with xhigh reasoning for thorough debugging
+// Changed from Opus to GPT-5.2 per user request (2025-12-12)
+const DEFAULT_FIXER_MODEL = process.env.FIXER_MODEL || "gpt-5.2";
 
 const SYSTEM_PROMPT = `You are an expert debugger fixing failing code.
 
@@ -41,11 +39,12 @@ Respond ONLY with valid JSON:
 
 export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
   constructor(modelOverride?: string) {
-    // Opus recommended for debugging - can be overridden via FIXER_MODEL env var
+    // GPT-5.2 with xhigh reasoning for thorough error analysis
     super({
       model: modelOverride || DEFAULT_FIXER_MODEL,
       maxTokens: 8192,
       temperature: 0.2,
+      reasoningEffort: "xhigh", // Maximum reasoning depth for debugging
     });
   }
 

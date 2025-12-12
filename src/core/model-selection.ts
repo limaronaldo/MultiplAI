@@ -19,6 +19,7 @@
  * - Standard tier: claude-opus-4-5-20251101 (direct Anthropic API)
  * - Multi tier: claude-opus-4-5-20251101, gpt-5.2, x-ai/grok-code-fast-1
  * - Thinking tier: gpt-5.2-pro (Responses API with high reasoning)
+ * - Fixer tier: gpt-5.2 with reasoning.effort: "xhigh"
  *
  * ⚠️ OPENAI: ONLY USE GPT-5.2 OR GPT-5.1-CODEX - NO LEGACY MODELS (gpt-4o, o1, o3, etc.)
  * ═══════════════════════════════════════════════════════════════════════════
@@ -241,19 +242,21 @@ function selectForXS(
 /**
  * Select models for Fixer agent
  *
- * Fixer always starts with Opus minimum - it needs to understand and fix
- * code from more capable models. Grok can't fix Opus's mistakes.
+ * Fixer uses GPT-5.2 with xhigh reasoning effort for thorough error analysis.
+ * This ensures deep understanding of the codebase and error patterns.
+ *
+ * Model: gpt-5.2 with reasoning.effort: "xhigh" (configured in openai-direct.ts)
  */
 export function selectFixerModels(context: SelectionContext): ModelSelection {
   const { attemptCount } = context;
 
-  // Escalation for fixer: Opus → Multi → Thinking
+  // Escalation for fixer: GPT-5.2 → Multi → Thinking
   if (attemptCount >= 2) {
     return {
       tier: "thinking",
       models: MODEL_TIERS[3].models,
       useMultiAgent: false,
-      reason: "Fixer with 2+ failures → thinking models",
+      reason: "Fixer with 2+ failures → thinking models (gpt-5.2-pro)",
     };
   }
 
@@ -266,12 +269,12 @@ export function selectFixerModels(context: SelectionContext): ModelSelection {
     };
   }
 
-  // First fix attempt: always use Opus (standard tier)
+  // First fix attempt: GPT-5.2 with xhigh reasoning
   return {
-    tier: "standard",
-    models: MODEL_TIERS[1].models,
+    tier: "fixer",
+    models: ["gpt-5.2"],
     useMultiAgent: false,
-    reason: "Fixer starts with Opus 4.5 (must understand original code)",
+    reason: "Fixer uses GPT-5.2 with xhigh reasoning effort",
   };
 }
 

@@ -15,6 +15,9 @@ export interface CompletionParams {
   temperature: number;
   systemPrompt: string;
   userPrompt: string;
+  // GPT-5.2 reasoning effort: "none" | "low" | "medium" | "high" | "xhigh"
+  // Default is "high", use "xhigh" for Fixer agent
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
 }
 
 // Model to provider mapping
@@ -136,7 +139,15 @@ export class LLMClient {
       case "openai":
         return getOpenAIClient().complete(params);
       case "openai-direct":
-        return getOpenAIDirectClient().complete(params);
+        // Pass reasoningEffort for GPT-5.2 models
+        return getOpenAIDirectClient().complete({
+          model: params.model,
+          maxTokens: params.maxTokens,
+          temperature: params.temperature,
+          systemPrompt: params.systemPrompt,
+          userPrompt: params.userPrompt,
+          reasoningEffort: params.reasoningEffort,
+        });
       case "openrouter":
         return getOpenRouterClient().complete(params);
       case "anthropic":

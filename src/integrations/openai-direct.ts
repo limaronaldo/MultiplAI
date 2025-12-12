@@ -8,6 +8,9 @@ interface CompletionParams {
   userPrompt: string;
   // GPT-5.2 Responses API: pass previous_response_id to reuse reasoning context
   previousResponseId?: string;
+  // GPT-5.2 reasoning effort: "none" | "low" | "medium" | "high" | "xhigh"
+  // Default is "high", use "xhigh" for Fixer agent
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
 }
 
 interface CompletionResult {
@@ -210,8 +213,9 @@ export class OpenAIDirectClient {
 
     // GPT-5.2 specific parameters (from GPT-5 prompting guide best practices)
     if (isGPT52) {
-      // Use high reasoning effort for coding tasks (user approved)
-      requestParams.reasoning = { effort: "high" };
+      // Reasoning effort: default "high", use "xhigh" for Fixer agent
+      const effort = params.reasoningEffort || "high";
+      requestParams.reasoning = { effort };
       // High verbosity for detailed code output
       requestParams.text = { verbosity: "high" };
     }
