@@ -1,6 +1,17 @@
-import React from "react";
+import React, { useState, useMemo } from "react";
+import { ChevronUp, ChevronDown } from "lucide-react";
 import { useTasks } from "@/hooks";
+import { TaskFilters, type TaskFiltersState } from "./TaskFilters";
 import type { Task, TaskStatus } from "@/types/api";
+
+// Sortable columns
+type SortField = "issue" | "status" | "title" | "repo" | "attempts" | "updated";
+type SortDirection = "asc" | "desc";
+
+interface SortState {
+  field: SortField;
+  direction: SortDirection;
+}
 
 /**
  * Get background color class for task status
@@ -141,6 +152,91 @@ interface TaskListProps {
 export function TaskList({ onSelectTask }: TaskListProps) {
   const { tasks, isLoading, error } = useTasks();
 
+  // Filter state
+  const [filters, setFilters] = useState<TaskFiltersState>({
+    status: "ALL",
+    search: "",
+  });
+
+  // Sort state
+  const [sort, setSort] = useState<SortState>({
+    field: "updated",
+    direction: "desc",
+  });
+
+  // Handle column header click
+  const handleSort = (field: SortField) => {
+    setSort((prev) => ({
+      field,
+      direction:
+        prev.field === field && prev.direction === "desc" ? "asc" : "desc",
+    }));
+  };
+
+  // Sort icon component
+  const SortIcon = ({ field }: { field: SortField }) => {
+    if (sort.field !== field) {
+      return <span className="w-4" />;
+    }
+    return sort.direction === "asc" ? (
+      <ChevronUp className="w-4 h-4" />
+    ) : (
+      <ChevronDown className="w-4 h-4" />
+    );
+  };
+
+  // Apply filters AND sorting
+  const filteredAndSortedTasks = useMemo(() => {
+    // First filter
+    let result = tasks.filter((task) => {
+      if (filters.status !== "ALL" && task.status !== filters.status) {
+        return false;
+      }
+      if (filters.search) {
+        const searchLower = filters.search.toLowerCase();
+        const titleMatch = task.github_issue_title
+          .toLowerCase()
+          .includes(searchLower);
+        const repoMatch = task.github_repo.toLowerCase().includes(searchLower);
+        if (!titleMatch && !repoMatch) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    // Then sort
+    result.sort((a, b) => {
+      let comparison = 0;
+
+      switch (sort.field) {
+        case "issue":
+          comparison = a.github_issue_number - b.github_issue_number;
+          break;
+        case "status":
+          comparison = a.status.localeCompare(b.status);
+          break;
+        case "title":
+          comparison = a.github_issue_title.localeCompare(b.github_issue_title);
+          break;
+        case "repo":
+          comparison = a.github_repo.localeCompare(b.github_repo);
+          break;
+        case "attempts":
+          comparison = a.attempt_count - b.attempt_count;
+          break;
+        case "updated":
+          comparison =
+            new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime();
+          break;
+      }
+
+      return sort.direction === "asc" ? comparison : -comparison;
+    });
+
+    return result;
+  }, [tasks, filters, sort]);
+
   if (isLoading) {
     return <TaskListSkeleton />;
   }
@@ -149,30 +245,80 @@ export function TaskList({ onSelectTask }: TaskListProps) {
     return <TaskListError message={error} />;
   }
 
-  if (tasks.length === 0) {
-    return <TaskListEmpty />;
-  }
-
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-      <table className="w-full">
-        <thead>
-          <tr className="border-b border-slate-800 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            <th className="px-4 py-3">Issue</th>
-            <th className="px-4 py-3">Status</th>
-            <th className="px-4 py-3">Title</th>
-            <th className="px-4 py-3">Repo</th>
-            <th className="px-4 py-3 text-center">Attempts</th>
-            <th className="px-4 py-3">PR</th>
-            <th className="px-4 py-3">Updated</th>
-          </tr>
-        </thead>
-        <tbody>
-          {tasks.map((task) => (
-            <TaskRow key={task.id} task={task} onSelect={onSelectTask} />
-          ))}
-        </tbody>
-      </table>
+    <div>
+      <TaskFilters
+        filters={filters}
+        onFiltersChange={setFilters}
+        taskCount={filteredAndSortedTasks.length}
+      />
+
+      {filteredAndSortedTasks.length === 0 ? (
+        <TaskListEmpty />
+      ) : (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-slate-800 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                <th
+                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors"
+                  onClick={() => handleSort("issue")}
+                >
+                  <div className="flex items-center gap-1">
+                    Issue <SortIcon field="issue" />
+                  </div>
+                </th>
+                <th
+                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors"
+                  onClick={() => handleSort("status")}
+                >
+                  <div className="flex items-center gap-1">
+                    Status <SortIcon field="status" />
+                  </div>
+                </th>
+                <th
+                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors"
+                  onClick={() => handleSort("title")}
+                >
+                  <div className="flex items-center gap-1">
+                    Title <SortIcon field="title" />
+                  </div>
+                </th>
+                <th
+                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors"
+                  onClick={() => handleSort("repo")}
+                >
+                  <div className="flex items-center gap-1">
+                    Repo <SortIcon field="repo" />
+                  </div>
+                </th>
+                <th
+                  className="px-4 py-3 text-center cursor-pointer hover:text-slate-300 transition-colors"
+                  onClick={() => handleSort("attempts")}
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    Attempts <SortIcon field="attempts" />
+                  </div>
+                </th>
+                <th className="px-4 py-3">PR</th>
+                <th
+                  className="px-4 py-3 cursor-pointer hover:text-slate-300 transition-colors"
+                  onClick={() => handleSort("updated")}
+                >
+                  <div className="flex items-center gap-1">
+                    Updated <SortIcon field="updated" />
+                  </div>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredAndSortedTasks.map((task) => (
+                <TaskRow key={task.id} task={task} onSelect={onSelectTask} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
