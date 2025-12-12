@@ -77,6 +77,83 @@ export class GitHubClient {
   }
 
   /**
+   * Get all source files in repository (for import analysis)
+   * Returns Map of file path -> content
+   */
+  async getSourceFiles(
+    fullName: string,
+    ref?: string,
+    extensions: string[] = [".ts", ".tsx", ".js", ".jsx", ".py"],
+    maxFiles: number = 200,
+  ): Promise<Map<string, string>> {
+    const { owner, repo } = this.parseRepo(fullName);
+    const files = new Map<string, string>();
+
+    try {
+      // Get full tree recursively
+      const tree = await this.octokit.rest.git.getTree({
+        owner,
+        repo,
+        tree_sha: ref || "HEAD",
+        recursive: "true",
+      });
+
+      // Filter source files
+      const sourceFiles = tree.data.tree
+        .filter((item) => {
+          if (item.type !== "blob" || !item.path) return false;
+          return extensions.some((ext) => item.path!.endsWith(ext));
+        })
+        .slice(0, maxFiles);
+
+      // Fetch content for each file (in parallel batches)
+      const batchSize = 10;
+      for (let i = 0; i < sourceFiles.length; i += batchSize) {
+        const batch = sourceFiles.slice(i, i + batchSize);
+        const contents = await Promise.all(
+          batch.map(async (file) => {
+            try {
+              const response = await this.octokit.rest.repos.getContent({
+                owner,
+                repo,
+                path: file.path!,
+                ref,
+              });
+
+              if ("content" in response.data && response.data.type === "file") {
+                return {
+                  path: file.path!,
+                  content: Buffer.from(
+                    response.data.content,
+                    "base64",
+                  ).toString("utf-8"),
+                };
+              }
+            } catch {
+              // Skip files we can't read
+            }
+            return null;
+          }),
+        );
+
+        for (const result of contents) {
+          if (result) {
+            files.set(result.path, result.content);
+          }
+        }
+      }
+
+      console.log(
+        `[GitHub] Fetched ${files.size} source files for import analysis`,
+      );
+    } catch (e) {
+      console.warn("Could not fetch source files for import analysis:", e);
+    }
+
+    return files;
+  }
+
+  /**
    * Obtém conteúdo de arquivos específicos
    */
   async getFilesContent(

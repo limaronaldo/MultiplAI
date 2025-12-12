@@ -25,9 +25,13 @@ import { MultiCoderRunner, MultiFixerRunner } from "./multi-runner";
 import { ConsensusEngine, formatConsensusForComment } from "./consensus";
 import { createTaskLogger, createSystemLogger, Logger } from "./logger";
 import { validateDiff, quickValidateDiff, DiffFile } from "./diff-validator";
+import { buildImportGraph, getRelatedFiles } from "../lib/import-analyzer";
 
 const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
 const VALIDATE_DIFF = process.env.VALIDATE_DIFF !== "false"; // Default to true
+const EXPAND_IMPORTS = process.env.EXPAND_IMPORTS !== "false"; // Default to true
+const IMPORT_DEPTH = parseInt(process.env.IMPORT_DEPTH || "1", 10);
+const MAX_RELATED_FILES = parseInt(process.env.MAX_RELATED_FILES || "10", 10);
 
 export class Orchestrator {
   private config: AutoDevConfig;
@@ -119,6 +123,7 @@ export class Orchestrator {
    */
   private async runPlanning(task: Task): Promise<Task> {
     this.validateTaskState(task, "NEW", [], "Cannot run planning");
+    const logger = this.getLogger(task);
 
     task = this.updateStatus(task, "PLANNING");
     await this.logEvent(task, "PLANNED", "planner");
@@ -140,6 +145,52 @@ export class Orchestrator {
     task.definitionOfDone = plannerOutput.definitionOfDone;
     task.plan = plannerOutput.plan;
     task.targetFiles = plannerOutput.targetFiles;
+
+    // Expand target files with import analysis
+    if (EXPAND_IMPORTS && task.targetFiles && task.targetFiles.length > 0) {
+      try {
+        logger.info(
+          `Expanding target files with import analysis (depth: ${IMPORT_DEPTH})...`,
+        );
+
+        // Fetch source files for import graph
+        const sourceFiles = await this.github.getSourceFiles(task.githubRepo);
+
+        if (sourceFiles.size > 0) {
+          // Build import graph and find related files
+          const graph = buildImportGraph(sourceFiles);
+          const relatedFiles = getRelatedFiles(graph, task.targetFiles, {
+            depth: IMPORT_DEPTH,
+            maxFiles: MAX_RELATED_FILES,
+            includeImports: true,
+            includeImportedBy: true,
+          });
+
+          if (relatedFiles.length > 0) {
+            const originalCount = task.targetFiles.length;
+            // Add related files that aren't already in targetFiles
+            for (const file of relatedFiles) {
+              if (!task.targetFiles.includes(file)) {
+                task.targetFiles.push(file);
+              }
+            }
+            logger.info(
+              `Expanded from ${originalCount} to ${task.targetFiles.length} files (+${relatedFiles.length} related)`,
+            );
+
+            // Log which files were added
+            for (const file of relatedFiles) {
+              logger.debug(`  + ${file}`);
+            }
+          }
+        }
+      } catch (error) {
+        // Import analysis failure shouldn't block planning
+        logger.warn(
+          `Import analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        );
+      }
+    }
 
     // Valida complexidade
     if (
