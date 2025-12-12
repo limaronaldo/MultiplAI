@@ -224,22 +224,33 @@ export class OpenAIDirectClient {
 
     const response = await this.client.responses.create(requestParams);
 
-    // Extract text from response output
-    let content = "";
-    if (response.output && Array.isArray(response.output)) {
-      for (const item of response.output) {
-        if (item.type === "message" && item.content) {
-          for (const block of item.content) {
-            if (block.type === "output_text") {
-              content += block.text;
+    // Extract text from response - GPT-5.2 provides output_text directly
+    const content = (response as any).output_text;
+
+    if (!content) {
+      // Fallback: try extracting from output array (older format)
+      let extractedContent = "";
+      if (response.output && Array.isArray(response.output)) {
+        for (const item of response.output) {
+          if (item.type === "message" && item.content) {
+            for (const block of item.content) {
+              if (block.type === "output_text") {
+                extractedContent += block.text;
+              }
             }
           }
         }
       }
-    }
-
-    if (!content) {
-      throw new Error("No content in responses API response");
+      if (!extractedContent) {
+        throw new Error("No content in responses API response");
+      }
+      return {
+        content: extractedContent,
+        tokens:
+          (response.usage?.input_tokens || 0) +
+          (response.usage?.output_tokens || 0),
+        responseId: response.id,
+      };
     }
 
     const tokensUsed =
