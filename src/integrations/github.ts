@@ -395,6 +395,53 @@ export class GitHubClient {
   }
 
   /**
+   * Preprocess diff to ensure proper file separation for parse-diff
+   * Adds missing 'diff --git' headers before file separators
+   */
+  private preprocessDiff(diff: string): string {
+    const lines = diff.split("\n");
+    const result: string[] = [];
+    let i = 0;
+
+    while (i < lines.length) {
+      const line = lines[i];
+
+      // Check if this is a file header without preceding 'diff --git'
+      // Pattern: "--- a/path" or "--- /dev/null" followed by "+++ b/path"
+      if (
+        (line.startsWith("--- a/") || line.startsWith("--- /dev/null")) &&
+        i + 1 < lines.length &&
+        lines[i + 1].startsWith("+++ b/")
+      ) {
+        // Check if previous non-empty line was 'diff --git'
+        let hasDiffGit = false;
+        for (let j = result.length - 1; j >= 0; j--) {
+          if (result[j].trim() === "") continue;
+          if (result[j].startsWith("diff --git ")) {
+            hasDiffGit = true;
+          }
+          break;
+        }
+
+        // If no 'diff --git' header, add one
+        if (!hasDiffGit) {
+          const toPath = lines[i + 1].replace("+++ b/", "").replace("+++ ", "");
+          const fromPath = line.startsWith("--- /dev/null")
+            ? "/dev/null"
+            : line.replace("--- a/", "").replace("--- ", "");
+          const aPath = fromPath === "/dev/null" ? toPath : fromPath;
+          result.push(`diff --git a/${aPath} b/${toPath}`);
+        }
+      }
+
+      result.push(line);
+      i++;
+    }
+
+    return result.join("\n");
+  }
+
+  /**
    * Parse unified diff and apply changes to get final file contents
    */
   private async parseDiffWithContent(
@@ -402,7 +449,9 @@ export class GitHubClient {
     branch: string,
     diff: string,
   ): Promise<Array<{ path: string; content: string; deleted: boolean }>> {
-    const files = parseDiff(diff);
+    // Preprocess diff to ensure proper file separation
+    const preprocessedDiff = this.preprocessDiff(diff);
+    const files = parseDiff(preprocessedDiff);
     const results: Array<{ path: string; content: string; deleted: boolean }> =
       [];
 
