@@ -1,6 +1,12 @@
-import React from 'react';
-import { Activity, GitPullRequest, CheckCircle, RefreshCw, LucideIcon } from 'lucide-react';
-import { useAnalytics } from '../../hooks';
+import React from "react";
+import {
+  Activity,
+  GitPullRequest,
+  CheckCircle,
+  XCircle,
+  LucideIcon,
+} from "lucide-react";
+import { useTasks } from "@/hooks";
 
 interface KPICardProps {
   icon: LucideIcon;
@@ -10,48 +16,48 @@ interface KPICardProps {
   bgColorClass: string;
 }
 
-const KPICard: React.FC<KPICardProps> = ({
+function KPICard({
   icon: Icon,
   value,
   label,
   colorClass,
   bgColorClass,
-}) => {
+}: KPICardProps) {
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+    <div className="bg-slate-900 rounded-lg border border-slate-800 p-6">
       <div className="flex items-center">
         <div className={`p-3 rounded-lg ${bgColorClass}`}>
           <Icon className={`h-6 w-6 ${colorClass}`} />
         </div>
         <div className="ml-4">
-          <p className="text-2xl font-semibold text-gray-900">{value}</p>
-          <p className="text-sm text-gray-500">{label}</p>
+          <p className="text-2xl font-semibold text-white">{value}</p>
+          <p className="text-sm text-slate-400">{label}</p>
         </div>
       </div>
     </div>
   );
-};
+}
 
-const KPICardSkeleton: React.FC = () => {
+function KPICardSkeleton() {
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 animate-pulse">
+    <div className="bg-slate-900 rounded-lg border border-slate-800 p-6 animate-pulse">
       <div className="flex items-center">
-        <div className="p-3 rounded-lg bg-gray-200">
+        <div className="p-3 rounded-lg bg-slate-800">
           <div className="h-6 w-6" />
         </div>
         <div className="ml-4 space-y-2">
-          <div className="h-6 w-16 bg-gray-200 rounded" />
-          <div className="h-4 w-24 bg-gray-200 rounded" />
+          <div className="h-6 w-16 bg-slate-800 rounded" />
+          <div className="h-4 w-24 bg-slate-800 rounded" />
         </div>
       </div>
     </div>
   );
-};
+}
 
-export const KPICards: React.FC = () => {
-  const { data, loading, error } = useAnalytics();
+export function KPICards() {
+  const { tasks, isLoading, error } = useTasks();
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICardSkeleton />
@@ -64,40 +70,46 @@ export const KPICards: React.FC = () => {
 
   if (error) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-        <p className="text-red-600 text-sm">{error}</p>
+      <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4">
+        <p className="text-red-400 text-sm">{error}</p>
       </div>
     );
   }
 
+  // Calculate KPIs from tasks
+  const totalTasks = tasks.length;
+  const completedTasks = tasks.filter((t) => t.status === "COMPLETED").length;
+  const failedTasks = tasks.filter((t) => t.status === "FAILED").length;
+  const prsCreated = tasks.filter((t) => t.pr_url).length;
+
   const kpiData = [
     {
       icon: Activity,
-      value: data?.activeProjects ?? 0,
-      label: 'Active Projects',
-      colorClass: 'text-blue-600',
-      bgColorClass: 'bg-blue-100',
+      value: totalTasks,
+      label: "Total Tasks",
+      colorClass: "text-blue-400",
+      bgColorClass: "bg-blue-500/10",
     },
     {
       icon: GitPullRequest,
-      value: data?.pullRequests ?? 0,
-      label: 'Pull Requests',
-      colorClass: 'text-purple-600',
-      bgColorClass: 'bg-purple-100',
+      value: prsCreated,
+      label: "PRs Created",
+      colorClass: "text-purple-400",
+      bgColorClass: "bg-purple-500/10",
     },
     {
       icon: CheckCircle,
-      value: data?.completedTasks ?? 0,
-      label: 'Completed Tasks',
-      colorClass: 'text-emerald-600',
-      bgColorClass: 'bg-emerald-100',
+      value: completedTasks,
+      label: "Completed",
+      colorClass: "text-emerald-400",
+      bgColorClass: "bg-emerald-500/10",
     },
     {
-      icon: RefreshCw,
-      value: data?.automationRuns ?? 0,
-      label: 'Automation Runs',
-      colorClass: 'text-amber-600',
-      bgColorClass: 'bg-amber-100',
+      icon: XCircle,
+      value: failedTasks,
+      label: "Failed",
+      colorClass: "text-red-400",
+      bgColorClass: "bg-red-500/10",
     },
   ];
 
@@ -115,6 +127,6 @@ export const KPICards: React.FC = () => {
       ))}
     </div>
   );
-};
+}
 
 export default KPICards;
