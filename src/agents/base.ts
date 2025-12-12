@@ -10,7 +10,7 @@ export interface AgentConfig {
 
 // Default/fallback model - Claude Sonnet 4.5
 const DEFAULT_MODEL =
-  process.env.DEFAULT_LLM_MODEL || "claude-sonnet-4-5-20250514";
+  process.env.DEFAULT_LLM_MODEL || "claude-sonnet-4-5-20250929";
 
 export abstract class BaseAgent<TInput, TOutput> {
   protected llm: LLMClient;

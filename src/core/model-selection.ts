@@ -20,7 +20,7 @@
  * - Coder S/M: gpt-5.2 (high) → gpt-5.2 (xhigh) → Claude Opus 4.5
  * - Fixer: gpt-5.1-codex-max (medium reasoning)
  * - Reviewer: gpt-5.1-codex-max (medium reasoning)
- * - Fallback: claude-sonnet-4-5-20250514
+ * - Fallback: claude-sonnet-4-5-20250929
  *
  * Escalation Path (prevents complete failures):
  * - Attempt 0 (first try): GPT-5.2 with effort-based reasoning
@@ -34,7 +34,7 @@
  * - gpt-5.1-codex-max: Long autonomous coding, high reasoning
  * - gpt-5.1-codex-mini: Fast, lightweight coding tasks
  * - claude-opus-4-5-20251101: High quality, first attempt
- * - claude-sonnet-4-5-20250514: Fallback, general purpose
+ * - claude-sonnet-4-5-20250929: Fallback, general purpose
  * - x-ai/grok-3-mini: Fast, cheap (via OpenRouter)
  *
  * ⚠️ OPENAI: ONLY USE gpt-5.1-codex-* models - NO LEGACY MODELS (gpt-4o, o1, o3, gpt-5.2, etc.)
