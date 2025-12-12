@@ -7,7 +7,6 @@ export interface CodeChunk {
   content: string;
   startLine: number;
   endLine: number;
-  language: string;
   embedding?: number[];
 }
 
@@ -27,7 +26,6 @@ export interface SearchOptions {
   maxResults?: number;
   minScore?: number;
   filePattern?: string;
-  language?: string;
 }
 
 /**
@@ -36,9 +34,13 @@ export interface SearchOptions {
 export interface IndexStats {
   totalChunks: number;
   totalFiles: number;
-  languages: Record<string, number>;
   lastUpdated: Date;
+  embeddingDimension?: number;
 }
-++ b/src/services/rag/index.ts
-// Re-export all types from the RAG module
-export * from './types.js';
+/**
+ * RAG (Retrieval-Augmented Generation) service types and utilities.
+ */
+export type { CodeChunk } from './types.js';
+export type { SearchResult } from './types.js';
+export type { SearchOptions } from './types.js';
+export type { IndexStats } from './types.js';
