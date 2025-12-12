@@ -6,30 +6,9 @@ implementation plan from the current graph state.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, List, Literal, TypedDict
+from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    # TODO: Import GraphState from a shared types module once available.
-    pass
-
-
-class Plan(TypedDict):
-    definition_of_done: List[str]
-    steps: List[str]
-    target_files: List[str]
-    estimated_complexity: Literal["low", "medium", "high"]
-
-
-class GraphState(TypedDict, total=False):
-    """Minimal graph state type for this node.
-
-    This is intentionally permissive (total=False) so the node can preserve any
-    existing keys in the state while adding `status` and `plan`.
-    """
-
-    status: str
-    plan: Plan
-    issue: Any
+from multiplai.types import GraphState, Plan
 
 
 async def plan_issue(state: GraphState) -> GraphState:
