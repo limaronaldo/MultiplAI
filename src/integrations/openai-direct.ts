@@ -241,32 +241,57 @@ export class OpenAIDirectClient {
     const response = await this.client.responses.create(requestParams);
 
     // Extract text from response - GPT-5.2 provides output_text directly
-    const content = (response as any).output_text;
+    let content = (response as any).output_text;
 
     if (!content) {
-      // Fallback: try extracting from output array (older format)
+      // Fallback 1: try extracting from output array (older format)
       let extractedContent = "";
       if (response.output && Array.isArray(response.output)) {
-        for (const item of response.output) {
+        for (const item of response.output as any[]) {
           if (item.type === "message" && item.content) {
-            for (const block of item.content) {
-              if (block.type === "output_text") {
+            for (const block of item.content as any[]) {
+              if (block.type === "output_text" || block.type === "text") {
                 extractedContent += block.text;
               }
             }
           }
+          // Also check for direct text content
+          if (item.type === "text" && item.text) {
+            extractedContent += item.text;
+          }
         }
       }
+
+      // Fallback 2: check for text field directly on response
+      if (!extractedContent && (response as any).text) {
+        extractedContent = (response as any).text;
+      }
+
+      // Fallback 3: check for content field
+      if (!extractedContent && (response as any).content) {
+        const c = (response as any).content;
+        if (typeof c === "string") {
+          extractedContent = c;
+        } else if (Array.isArray(c)) {
+          for (const block of c) {
+            if (block.type === "text" && block.text) {
+              extractedContent += block.text;
+            }
+          }
+        }
+      }
+
       if (!extractedContent) {
+        // Log the response structure for debugging
+        console.error(
+          "[OpenAI] Empty response. Keys:",
+          Object.keys(response),
+          "Status:",
+          (response as any).status,
+        );
         throw new Error("No content in responses API response");
       }
-      return {
-        content: extractedContent,
-        tokens:
-          (response.usage?.input_tokens || 0) +
-          (response.usage?.output_tokens || 0),
-        responseId: response.id,
-      };
+      content = extractedContent;
     }
 
     const tokensUsed =
