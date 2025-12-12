@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from "react";
 import { ChevronUp, ChevronDown } from "lucide-react";
-import { useTasks } from "@/hooks";
+import { useTasks } from "../../hooks";
 import { TaskFilters, type TaskFiltersState } from "./TaskFilters";
-import type { Task, TaskStatus } from "@/types/api";
+import type { Task, TaskStatus } from "../../types/api";
 
 // Sortable columns
 type SortField = "issue" | "status" | "title" | "repo" | "attempts" | "updated";
