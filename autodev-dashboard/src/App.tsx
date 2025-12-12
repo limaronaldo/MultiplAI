@@ -47,6 +47,7 @@ function App() {
   // Handle tab change from sidebar
   const handleTabChange = (tab: TabId) => {
     navigate(tabToPath[tab]);
+    setMobileNavOpen(false);
   };
 
   return (
