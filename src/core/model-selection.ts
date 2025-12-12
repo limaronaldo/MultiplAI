@@ -61,9 +61,9 @@ export const MODEL_TIERS: ModelTier[] = [
   },
   {
     name: "thinking",
-    models: ["gpt-5.2-pro"],
+    models: ["gpt-5.1-codex-max", "gpt-5.2-pro"],
     description:
-      "Deep reasoning. For failures that simpler models can't solve.",
+      "Deep reasoning. Codex-Max for long autonomous coding, 5.2-pro for hard thinking.",
     avgCostPerTask: 2.0,
   },
 ];

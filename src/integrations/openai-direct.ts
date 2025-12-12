@@ -198,12 +198,17 @@ export class OpenAIDirectClient {
     return model.startsWith("gpt-5.2");
   }
 
+  private isCodexModel(model: string): boolean {
+    return model.includes("codex");
+  }
+
   private async completeWithResponses(
     params: CompletionParams,
   ): Promise<CompletionResult> {
     // Responses API uses a different format
-    // GPT-5.2 supports reasoning effort and verbosity controls
+    // GPT-5.2 and Codex models support reasoning effort and verbosity controls
     const isGPT52 = this.isGPT52Model(params.model);
+    const isCodex = this.isCodexModel(params.model);
 
     const requestParams: any = {
       model: params.model,
@@ -218,6 +223,13 @@ export class OpenAIDirectClient {
       requestParams.reasoning = { effort };
       // High verbosity for detailed code output
       requestParams.text = { verbosity: "high" };
+    }
+
+    // Codex models (GPT-5.1-Codex-Max) - optimized for long autonomous coding
+    // Per Codex-Max guide: "medium" for interactive, "high/xhigh" for hard tasks
+    if (isCodex) {
+      const effort = params.reasoningEffort || "high";
+      requestParams.reasoning = { effort };
     }
 
     // Pass previous_response_id to reuse reasoning context between turns
@@ -278,11 +290,15 @@ export class OpenAIDirectClient {
  *
  * Do NOT use legacy models (gpt-4o, gpt-4, o1, o3, etc.)
  * GPT-5.2 is the flagship model for coding and agentic tasks.
- * GPT-5.1-Codex-Max is for specialized coding workflows.
+ * GPT-5.1-Codex-Max is for long-running autonomous coding tasks.
  *
- * All GPT-5.2 models use the Responses API with:
- * - reasoning.effort: "high" (for thorough reasoning)
+ * GPT-5.2 models use the Responses API with:
+ * - reasoning.effort: "high" (default), "xhigh" for Fixer
  * - text.verbosity: "high" (for detailed code output)
+ *
+ * GPT-5.1-Codex-Max uses the Responses API with:
+ * - reasoning.effort: "medium" (interactive), "high/xhigh" (hard tasks)
+ * - First-class compaction support for multi-hour reasoning
  * ═══════════════════════════════════════════════════════════════════════════
  */
 export const OPENAI_DIRECT_MODELS = {
@@ -291,6 +307,7 @@ export const OPENAI_DIRECT_MODELS = {
   "gpt-5.2-pro": "GPT-5.2 Pro - Harder thinking, tougher problems",
   "gpt-5.2-2025-12-11": "GPT-5.2 (Pinned snapshot)",
 
-  // GPT-5.1 Codex (Responses API) - USE THESE FOR SPECIALIZED CODING
-  "gpt-5.1-codex-max": "GPT-5.1 Codex Max - Interactive coding products",
+  // GPT-5.1 Codex (Responses API) - USE FOR LONG AUTONOMOUS CODING
+  "gpt-5.1-codex-max":
+    "GPT-5.1 Codex Max - Long-running autonomous coding, ~30% fewer tokens than GPT-5.1-Codex",
 };

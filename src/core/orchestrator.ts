@@ -45,6 +45,7 @@ import {
   logSelection,
   type SelectionContext,
 } from "./model-selection";
+import { normalizePatch, detectPatchFormat } from "./patch-formats";
 
 const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
 const ENABLE_LEARNING = process.env.ENABLE_LEARNING !== "false"; // Default to true
@@ -653,6 +654,15 @@ export class Orchestrator {
       coderOutput = await this.coder.run(coderInput, selectedModel);
     }
 
+    // Normalize patch format (supports unified diff and Codex-Max apply_patch format)
+    const patchFormat = detectPatchFormat(coderOutput.diff);
+    if (patchFormat === "codex-max") {
+      logger.info(
+        "Detected Codex-Max patch format, converting to unified diff",
+      );
+      coderOutput.diff = normalizePatch(coderOutput.diff);
+    }
+
     // Valida tamanho do diff
     const diffLines = coderOutput.diff.split("\n").length;
     if (diffLines > this.config.maxDiffLines) {
@@ -1032,6 +1042,15 @@ export class Orchestrator {
         `Using single fixer: ${selectedModel} (${modelSelection.tier})`,
       );
       fixerOutput = await this.fixer.run(fixerInput, selectedModel);
+    }
+
+    // Normalize patch format (supports unified diff and Codex-Max apply_patch format)
+    const fixerPatchFormat = detectPatchFormat(fixerOutput.diff);
+    if (fixerPatchFormat === "codex-max") {
+      logger.info(
+        "Detected Codex-Max patch format from fixer, converting to unified diff",
+      );
+      fixerOutput.diff = normalizePatch(fixerOutput.diff);
     }
 
     task.currentDiff = fixerOutput.diff;
