@@ -1,6 +1,6 @@
 import React from "react";
 import { ExternalLink, Clock, GitPullRequest, CheckCircle } from "lucide-react";
-import { usePendingReviews, type PendingReview } from "@/hooks/usePendingReviews";
+import { usePendingReviews, type PendingReview } from "@/hooks/useLinear";
 
 function formatWaitTime(dateString?: string): string {
   if (!dateString) return "";
