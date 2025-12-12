@@ -59,6 +59,9 @@ const FOREMAN_MAX_ATTEMPTS = parseInt(
   10,
 );
 
+// Simple in-memory lock to prevent concurrent processing of the same task
+const processingTasks = new Set<string>();
+
 export class Orchestrator {
   private config: AutoDevConfig;
   private multiAgentConfig: MultiAgentConfig;
@@ -121,10 +124,20 @@ export class Orchestrator {
   async process(task: Task): Promise<Task> {
     const logger = this.getLogger(task);
 
+    // Prevent concurrent processing of the same task
+    if (processingTasks.has(task.id)) {
+      logger.warn(`Task ${task.id} is already being processed, skipping`);
+      return task;
+    }
+
     if (isTerminal(task.status)) {
       logger.info(`Task is in terminal state: ${task.status}`);
       return task;
     }
+
+    // Acquire lock
+    processingTasks.add(task.id);
+    logger.info(`Acquired lock for task ${task.id}`);
 
     const action = getNextAction(task.status);
     logger.info(`${task.status} -> action: ${action}`);
@@ -161,6 +174,10 @@ export class Orchestrator {
         `Error processing task: ${error instanceof Error ? error.message : "Unknown error"}`,
       );
       return this.failTask(task, this.toOrchestratorError(error, task.id));
+    } finally {
+      // Release lock
+      processingTasks.delete(task.id);
+      logger.info(`Released lock for task ${task.id}`);
     }
   }
 
