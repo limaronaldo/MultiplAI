@@ -36,15 +36,15 @@ export const MODEL_TIERS: ModelTier[] = [
     name: "multi",
     models: [
       "claude-opus-4-5-20251101",
-      "gpt-5.2",
-      "google/gemini-3-pro-preview",
+      "gpt-4o",
+      "google/gemini-2.0-flash-exp",
     ],
     description: "Multi-agent consensus. For complex features, refactors.",
     avgCostPerTask: 0.5,
   },
   {
     name: "thinking",
-    models: ["gpt-5.2-thinking", "gpt-5.2-pro"],
+    models: ["o1", "o3-mini"],
     description:
       "Deep reasoning. For failures that simpler models can't solve.",
     avgCostPerTask: 2.0,
