@@ -109,8 +109,12 @@ Complexity guide:
 
 export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
   constructor() {
-    // Sonnet for planning - can be overridden via PLANNER_MODEL env var
-    super({ model: DEFAULT_PLANNER_MODEL, temperature: 0.3 });
+    // gpt-5.2 with reasoning for planning
+    super({
+      model: DEFAULT_PLANNER_MODEL,
+      temperature: 0.3,
+      reasoningEffort: "medium",
+    });
   }
 
   async run(input: PlannerInput): Promise<PlannerOutput> {
