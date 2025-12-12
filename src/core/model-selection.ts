@@ -15,13 +15,20 @@
  * 3. User has specific preferences for cost/quality tradeoffs
  *
  * Current approved models (as of 2025-12-12):
- * - Fast tier: x-ai/grok-code-fast-1 (via OpenRouter)
- * - Standard tier: claude-opus-4-5-20251101 (direct Anthropic API)
- * - Multi tier: claude-opus-4-5-20251101, gpt-5.2, x-ai/grok-code-fast-1
- * - Thinking tier: gpt-5.2-pro (Responses API with high reasoning)
- * - Fixer tier: gpt-5.2 with reasoning.effort: "xhigh"
+ * - Planner: gpt-5.1-codex-max (high reasoning)
+ * - Coder: claude-opus-4-5-20251101 → gpt-5.1-codex-mini → gpt-5.1-codex-max (escalation)
+ * - Fixer: gpt-5.1-codex-max (medium reasoning)
+ * - Reviewer: gpt-5.1-codex-max (medium reasoning)
+ * - Fallback: claude-sonnet-4-5-20250514
  *
- * ⚠️ OPENAI: ONLY USE GPT-5.2 OR GPT-5.1-CODEX - NO LEGACY MODELS (gpt-4o, o1, o3, etc.)
+ * Available models:
+ * - gpt-5.1-codex-max: Long autonomous coding, high reasoning
+ * - gpt-5.1-codex-mini: Fast, lightweight coding tasks
+ * - claude-opus-4-5-20251101: High quality, first attempt
+ * - claude-sonnet-4-5-20250514: Fallback, general purpose
+ * - x-ai/grok-3-mini: Fast, cheap (via OpenRouter)
+ *
+ * ⚠️ OPENAI: ONLY USE gpt-5.1-codex-* models - NO LEGACY MODELS (gpt-4o, o1, o3, gpt-5.2, etc.)
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
@@ -43,27 +50,25 @@ export const MODEL_TIERS: ModelTier[] = [
   {
     name: "fast",
     models: ["x-ai/grok-code-fast-1"],
-    description: "Ultra-fast, cheap. For typos, comments, simple renames.",
+    description: "Ultra-fast, cheap. For XS low effort tasks.",
     avgCostPerTask: 0.01,
+  },
+  {
+    name: "medium",
+    models: ["gpt-5.1-codex-mini"],
+    description: "Fast codex model with high reasoning. For XS medium effort.",
+    avgCostPerTask: 0.05,
   },
   {
     name: "standard",
     models: ["claude-opus-4-5-20251101"],
-    description:
-      "High quality single agent. For simple features, bug fixes, tests.",
+    description: "High quality. For XS high effort, S, M tasks.",
     avgCostPerTask: 0.15,
   },
   {
-    name: "multi",
-    models: ["claude-opus-4-5-20251101", "gpt-5.2", "x-ai/grok-code-fast-1"],
-    description: "Multi-agent consensus. For complex features, refactors.",
-    avgCostPerTask: 0.5,
-  },
-  {
     name: "thinking",
-    models: ["gpt-5.1-codex-max", "gpt-5.2-pro"],
-    description:
-      "Deep reasoning. Codex-Max for long autonomous coding, 5.2-pro for hard thinking.",
+    models: ["gpt-5.1-codex-max"],
+    description: "Deep reasoning. For escalation after failures.",
     avgCostPerTask: 2.0,
   },
 ];
@@ -101,22 +106,14 @@ export function selectModels(context: SelectionContext): ModelSelection {
     };
   }
 
-  // M tasks: Opus → GPT-5.2 → Thinking
+  // M tasks: Opus → gpt-5.1-codex-max (escalation)
   if (complexity === "M") {
-    if (attemptCount >= 2) {
+    if (attemptCount >= 1) {
       return {
         tier: "thinking",
         models: ["gpt-5.1-codex-max"],
         useMultiAgent: false,
-        reason: "M complexity with 2+ failures → thinking (gpt-5.1-codex-max)",
-      };
-    }
-    if (attemptCount >= 1) {
-      return {
-        tier: "standard",
-        models: ["gpt-5.2"],
-        useMultiAgent: false,
-        reason: "M complexity with 1 failure → GPT-5.2",
+        reason: "M complexity with failures → gpt-5.1-codex-max",
       };
     }
     return {
@@ -127,22 +124,14 @@ export function selectModels(context: SelectionContext): ModelSelection {
     };
   }
 
-  // S tasks: Opus → GPT-5.2 → Thinking
+  // S tasks: Opus → gpt-5.1-codex-max (escalation)
   if (complexity === "S") {
-    if (attemptCount >= 2) {
+    if (attemptCount >= 1) {
       return {
         tier: "thinking",
         models: ["gpt-5.1-codex-max"],
         useMultiAgent: false,
-        reason: "S complexity with 2+ failures → thinking (gpt-5.1-codex-max)",
-      };
-    }
-    if (attemptCount >= 1) {
-      return {
-        tier: "standard",
-        models: ["gpt-5.2"],
-        useMultiAgent: false,
-        reason: "S complexity with 1 failure → GPT-5.2",
+        reason: "S complexity with failures → gpt-5.1-codex-max",
       };
     }
     return {
@@ -158,79 +147,81 @@ export function selectModels(context: SelectionContext): ModelSelection {
 }
 
 /**
- * Select models for XS tasks based on effort and escalation
+ * Select models for XS tasks based on effort level
  *
- * NOTE: Multi-agent disabled - using single agent escalation:
- * Opus 4.5 → GPT-5.2 → Thinking (gpt-5.1-codex-max)
+ * Effort-based selection:
+ * - low: x-ai/grok-code-fast-1 (fast, cheap)
+ * - medium: gpt-5.1-codex-mini (high reasoning)
+ * - high: claude-opus-4-5-20251101 (high quality)
+ *
+ * Escalation after failures → gpt-5.1-codex-max
  */
 function selectForXS(
   effort: EffortLevel | undefined,
   attemptCount: number,
 ): ModelSelection {
-  // Escalation chain based on attempts (single agent only)
+  // Escalation after failures
   if (attemptCount >= 2) {
     return {
       tier: "thinking",
       models: ["gpt-5.1-codex-max"],
       useMultiAgent: false,
-      reason: "XS with 2+ failures → thinking (gpt-5.1-codex-max)",
+      reason: "XS with 2+ failures → gpt-5.1-codex-max",
     };
   }
 
   if (attemptCount >= 1) {
     return {
-      tier: "standard",
-      models: ["gpt-5.2"],
+      tier: "thinking",
+      models: ["gpt-5.1-codex-max"],
       useMultiAgent: false,
-      reason: "XS with 1 failure → GPT-5.2",
+      reason: "XS with 1 failure → gpt-5.1-codex-max",
     };
   }
 
-  // First attempt: Claude Opus 4.5
+  // First attempt: effort-based selection
+  if (effort === "low") {
+    return {
+      tier: "fast",
+      models: ["x-ai/grok-code-fast-1"],
+      useMultiAgent: false,
+      reason: "XS low effort → grok-code-fast-1",
+    };
+  }
+
+  if (effort === "medium") {
+    return {
+      tier: "medium",
+      models: ["gpt-5.1-codex-mini"],
+      useMultiAgent: false,
+      reason: "XS medium effort → gpt-5.1-codex-mini (high reasoning)",
+    };
+  }
+
+  // high effort or undefined → Opus 4.5
   return {
     tier: "standard",
     models: ["claude-opus-4-5-20251101"],
     useMultiAgent: false,
-    reason: "XS → Claude Opus 4.5",
+    reason: "XS high effort → Claude Opus 4.5",
   };
 }
 
 /**
  * Select models for Fixer agent
  *
- * Escalation chain:
- * - First attempt: GPT-5.2 with xhigh reasoning
- * - After 1 failure: Claude Opus 4.5 (single)
- * - After 2+ failures: Thinking models (gpt-5.1-codex-max)
+ * Uses gpt-5.1-codex-max with medium reasoning for all attempts.
+ * Fixer model is configured in fixer.ts, this is for escalation tracking.
  */
 export function selectFixerModels(context: SelectionContext): ModelSelection {
   const { attemptCount } = context;
 
-  // Escalation for fixer: GPT-5.2 → Opus 4.5 → Thinking
-  if (attemptCount >= 2) {
-    return {
-      tier: "thinking",
-      models: MODEL_TIERS[3].models,
-      useMultiAgent: false,
-      reason: "Fixer with 2+ failures → thinking models (gpt-5.1-codex-max)",
-    };
-  }
-
-  if (attemptCount >= 1) {
-    return {
-      tier: "standard",
-      models: ["claude-opus-4-5-20251101"],
-      useMultiAgent: false,
-      reason: "Fixer with 1 failure → Claude Opus 4.5 (single)",
-    };
-  }
-
-  // First fix attempt: GPT-5.2 with xhigh reasoning
+  // All fix attempts use gpt-5.1-codex-max (configured in fixer.ts)
   return {
-    tier: "fixer",
-    models: ["gpt-5.2"],
+    tier: "thinking",
+    models: ["gpt-5.1-codex-max"],
     useMultiAgent: false,
-    reason: "Fixer uses GPT-5.2 with xhigh reasoning effort",
+    reason: `Fixer attempt ${attemptCount + 1} → gpt-5.1-codex-max (medium reasoning)`,
   };
 }
 

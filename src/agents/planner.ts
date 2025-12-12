@@ -2,8 +2,8 @@ import { BaseAgent } from "./base";
 import { PlannerOutput, PlannerOutputSchema } from "../core/types";
 
 // Default planner model - can be overridden via env var
-const DEFAULT_PLANNER_MODEL =
-  process.env.PLANNER_MODEL || process.env.DEFAULT_LLM_MODEL || "gpt-5.2";
+// Planner uses gpt-5.1-codex-max with high reasoning for thorough analysis
+const DEFAULT_PLANNER_MODEL = process.env.PLANNER_MODEL || "gpt-5.1-codex-max";
 
 interface PlannerInput {
   issueTitle: string;
@@ -109,11 +109,11 @@ Complexity guide:
 
 export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
   constructor() {
-    // gpt-5.2 with reasoning for planning
+    // gpt-5.1-codex-max with high reasoning for thorough planning
     super({
       model: DEFAULT_PLANNER_MODEL,
       temperature: 0.3,
-      reasoningEffort: "medium",
+      reasoningEffort: "high",
     });
   }
 

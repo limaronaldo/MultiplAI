@@ -9,9 +9,8 @@ interface FixerInput {
   fileContents: Record<string, string>;
 }
 
-// Default fixer model - GPT-5.2 with xhigh reasoning for thorough debugging
-// Changed from Opus to GPT-5.2 per user request (2025-12-12)
-const DEFAULT_FIXER_MODEL = process.env.FIXER_MODEL || "gpt-5.2";
+// Default fixer model - gpt-5.1-codex-max with medium reasoning for debugging
+const DEFAULT_FIXER_MODEL = process.env.FIXER_MODEL || "gpt-5.1-codex-max";
 
 const SYSTEM_PROMPT = `You are an expert debugger fixing failing code.
 
@@ -43,22 +42,31 @@ If the code needs to work with diffs, use proper string escaping:
 
 Common error: "Contains git diff markers in content" means you put raw diff syntax inside code.
 
-Respond ONLY with valid JSON:
+## OUTPUT FORMAT - MANDATORY
+
+You MUST respond with ONLY a JSON object. No explanations, no prose, no markdown.
+Even if the error logs are incomplete, you must still output valid JSON.
+If you cannot determine the exact fix, make your best attempt based on the code structure.
+
+\`\`\`json
 {
   "diff": "complete unified diff with fixes",
   "commitMessage": "fix: description of what was fixed",
   "fixDescription": "explanation of what was wrong and how it was fixed",
   "filesModified": ["array of file paths touched"]
-}`;
+}
+\`\`\`
+
+IMPORTANT: Your entire response must be valid JSON wrapped in a code block. Never write prose before or after the JSON.`;
 
 export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
   constructor(modelOverride?: string) {
-    // GPT-5.2 with xhigh reasoning for thorough error analysis
+    // gpt-5.1-codex-max with medium reasoning for debugging
     super({
       model: modelOverride || DEFAULT_FIXER_MODEL,
       maxTokens: 8192,
       temperature: 0.2,
-      reasoningEffort: "xhigh", // Maximum reasoning depth for debugging
+      reasoningEffort: "medium",
     });
   }
 

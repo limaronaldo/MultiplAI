@@ -8,53 +8,74 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**AutoDev (MultiplAI)** is an autonomous development system that uses LLMs to resolve GitHub issues automatically. Key features:
+**AutoDev** is an autonomous development system that uses LLMs to resolve small, well-defined GitHub issues automatically. It receives issues via webhook, plans the implementation, generates code as unified diffs, creates PRs, and handles test failures with automatic fixes.
 
-- **Effort-Based Model Selection** - Routes tasks to optimal models based on complexity
+**Key Features:**
+- **Effort-Based Model Selection** - Routes XS tasks to optimal models based on effort level
 - **Automatic Escalation** - Failures trigger progressively more capable models
-- **Multi-Agent Consensus** - 3 parallel coders vote on best solution for complex tasks
+- **Multi-Agent Consensus** - 3 parallel coders vote on best solution (optional)
 - **Task Orchestration** - Breaks M/L/XL issues into XS subtasks
 - **Learning Memory** - Persists fix patterns across tasks
-- **Local Testing** - Foreman runs tests before GitHub push
 - **Real-time Dashboard** - React UI for monitoring
 
-**Stack:** TypeScript + Bun + Neon PostgreSQL + Multi-LLM (Claude, GPT-5.2, Gemini, Grok) + GitHub API + Linear API
+**Stack:** TypeScript + Bun runtime + Neon PostgreSQL + Multi-LLM (Claude, GPT-5.1 Codex, Grok) + GitHub API + Linear API
 
 ---
 
-## Quick Reference
+## Development Commands
 
-### Model Selection Strategy (NEW)
+```bash
+# Setup & Installation
+bun install
+cp .env.example .env
+bun run db:migrate
 
-The system automatically selects models based on **effort level** and **escalation state**:
+# Development
+bun run dev              # Auto-reload
+bun run typecheck        # Type check
+bun test                 # Run tests
 
-```
-┌─────────────┬─────────────────────────────┬─────────────┬─────────────────┐
-│   EFFORT    │        MODEL TIER           │    COST     │   ESCALATION    │
-├─────────────┼─────────────────────────────┼─────────────┼─────────────────┤
-│   LOW       │ Grok Code Fast (single)     │ ~$0.01/task │ → standard      │
-│   MEDIUM    │ Sonnet / GPT-5.2-instant    │ ~$0.10/task │ → multi-agent   │
-│   HIGH      │ Multi-agent (3 models)      │ ~$0.50/task │ → thinking      │
-│  THINKING   │ GPT-5.2-thinking/pro        │ ~$2.00/task │ → meta-analysis │
-└─────────────┴─────────────────────────────┴─────────────┴─────────────────┘
-```
-
-**Escalation Chain:**
-```
-Attempt 1 → Use effort-based tier (cheap for simple tasks)
-Attempt 2 → Escalate one tier (e.g., standard → multi-agent)
-Attempt 3 → Multi-agent consensus
-Attempt 4 → Thinking models (last resort)
+# Production
+bun run start
+fly deploy               # Deploy to Fly.io
+fly logs                 # View logs
 ```
 
-### Current Model Configuration
+---
 
-| Agent | Default Model | Notes |
-|-------|---------------|-------|
-| **Planner** | `gpt-5.2-thinking` | Deep reasoning for planning |
-| **Coder** | Effort-based | See model selection above |
-| **Fixer** | `gpt-5.2` (xhigh reasoning) | Deep debugging with max reasoning effort |
-| **Reviewer** | `gpt-5.2` | Fast, accurate reviews |
+## Current Model Configuration (2025-12-12)
+
+⚠️ **CRITICAL: DO NOT CHANGE MODELS WITHOUT EXPRESS USER APPROVAL**
+
+| Agent | Model | Reasoning | Purpose |
+|-------|-------|-----------|---------|
+| **Planner** | `gpt-5.1-codex-max` | high | Deep reasoning for thorough analysis |
+| **Fixer** | `gpt-5.1-codex-max` | medium | Debugging with reasoning |
+| **Reviewer** | `gpt-5.1-codex-max` | medium | Pragmatic code review |
+| **Base/Fallback** | `claude-sonnet-4-5-20250514` | - | Default for other agents |
+
+### XS Task Model Selection (Effort-Based)
+
+| Effort Level | Model | Cost | Use Case |
+|--------------|-------|------|----------|
+| **low** | `x-ai/grok-code-fast-1` | ~$0.01/task | Typos, comments, simple renames |
+| **medium** | `gpt-5.1-codex-mini` | ~$0.05/task | Helper functions, simple bugs |
+| **high** | `claude-opus-4-5-20251101` | ~$0.15/task | New features, refactors |
+| **escalation** | `gpt-5.1-codex-max` | ~$2.00/task | After failure, deep reasoning |
+
+### Provider Routing
+
+```typescript
+// Anthropic Direct API
+claude-opus-4-5-*, claude-sonnet-4-5-* → AnthropicClient
+
+// OpenAI Responses API (for Codex models)
+gpt-5.1-codex-max, gpt-5.1-codex-mini → OpenAIDirectClient
+
+// OpenRouter (for Grok, Gemini, etc.)
+x-ai/grok-code-fast-1 → OpenRouterClient
+google/gemini-* → OpenRouterClient
+```
 
 ---
 
@@ -65,34 +86,112 @@ Attempt 4 → Thinking models (last resort)
 ```
 GitHub Issue (labeled "auto-dev")
     ↓ webhook
-Orchestrator receives event
+Router receives event
+    ↓
+Orchestrator.process(task)
     ↓
 PlannerAgent → DoD + plan + targetFiles + effort estimate
     ↓
 [Model Selection] → Choose tier based on effort + attempts
     ↓
-┌─────────────────────────────────────────────────────────┐
-│ LOW EFFORT          │ MEDIUM EFFORT    │ HIGH EFFORT    │
-│ Grok Fast (single)  │ Sonnet (single)  │ Multi-agent    │
-│ $0.01/task          │ $0.10/task       │ $0.50/task     │
-└─────────────────────────────────────────────────────────┘
-    ↓
 CoderAgent → unified diff
-    ↓
-[If USE_FOREMAN] Foreman → runs tests locally
     ↓
 Apply diff → push to GitHub → GitHub Actions
     ↓ (if failed)
-[Escalate Model Tier] → FixerAgent → retry
+FixerAgent → corrected diff → retry (max 3×)
     ↓ (if passed)
 ReviewerAgent → verdict
-    ↓
-Create PR → update Linear → notify human
+    ↓ (if approved)
+Create PR → update Linear → WAITING_HUMAN
 ```
 
-### Multi-Agent Consensus System
+### State Machine
 
-When effort is HIGH or after escalation, runs **3 models in parallel**:
+```
+NEW → PLANNING → PLANNING_DONE → {CODING | BREAKING_DOWN}
+                                    ↓
+                        BREAKDOWN_DONE → ORCHESTRATING
+                                    ↓
+                        CODING_DONE → TESTING
+                                    ↓
+                        {TESTS_PASSED | TESTS_FAILED}
+                        ↓                        ↓
+                    REVIEWING              FIXING → CODING_DONE (loop)
+                        ↓
+                {REVIEW_APPROVED | REVIEW_REJECTED}
+                        ↓                          ↓
+                    PR_CREATED                CODING (rerun)
+                        ↓
+                    WAITING_HUMAN
+                        ↓
+                    {COMPLETED | FAILED}
+```
+
+**Fix Loop:** `TESTS_FAILED` → `FIXING` → `CODING_DONE` → `TESTING` (max 3 attempts)  
+**Review Loop:** `REVIEW_REJECTED` → `CODING` (with feedback) → `CODING_DONE`  
+**Terminal States:** `COMPLETED`, `FAILED`
+
+---
+
+## Agents (9 total)
+
+### Core Agents
+
+| Agent | File | Model | Purpose |
+|-------|------|-------|---------|
+| **PlannerAgent** | `agents/planner.ts` | gpt-5.1-codex-max (high) | Issue → DoD + plan + targetFiles + effort |
+| **CoderAgent** | `agents/coder.ts` | Effort-based | Plan → unified diff |
+| **FixerAgent** | `agents/fixer.ts` | gpt-5.1-codex-max (medium) | Error logs → corrected diff |
+| **ReviewerAgent** | `agents/reviewer.ts` | gpt-5.1-codex-max (medium) | Diff → verdict + comments |
+
+### Orchestration Agents
+
+| Agent | File | Purpose |
+|-------|------|---------|
+| **OrchestratorAgent** | `agents/orchestrator/` | M/L/XL → XS subtask coordination |
+| **InitializerAgent** | `agents/initializer/` | Session memory bootstrap |
+| **ValidatorAgent** | `agents/validator/` | Deterministic validation (tsc, eslint, tests) |
+
+### Breakdown Agents
+
+| Agent | File | Purpose |
+|-------|------|---------|
+| **BreakdownAgent** | `agents/breakdown.ts` | Issue → XS subtasks |
+| **IssueBreakdownAgent** | `agents/issue-breakdown/` | Advanced decomposition with DAG |
+
+---
+
+## Memory Systems (3 Layers)
+
+### 1. Static Memory (per-repo)
+- **Storage:** File or database
+- **Contents:** Repo config, blocked paths, allowed paths, constraints
+- **Files:** `src/core/memory/static-memory-store.ts`
+
+### 2. Session Memory (per-task)
+- **Storage:** Database
+- **Contents:** Task phase, progress log, attempt history, agent outputs
+- **Key:** Progress log is append-only ledger for audit trail
+- **Files:** `src/core/memory/session-memory-store.ts`
+
+### 3. Learning Memory (cross-task)
+- **Storage:** Database with time-decay
+- **Contents:**
+  - **Fix patterns** - error → solution mappings
+  - **Codebase conventions** - recurring patterns
+  - **Failure modes** - what NOT to do
+- **Files:** `src/core/memory/learning-memory-store.ts`
+
+### Memory Manager
+- **Purpose:** Context compiler that produces minimal, focused context per agent call
+- **Principle:** "Context is computed, not accumulated"
+- **Files:** `src/core/memory/memory-manager.ts`
+
+---
+
+## Multi-Agent Consensus System
+
+When enabled (`MULTI_AGENT_MODE=true`), runs 3 models in parallel:
 
 ```
 Issue/Plan
@@ -101,301 +200,126 @@ Issue/Plan
 │              PARALLEL EXECUTION               │
 ├───────────────┬───────────────┬───────────────┤
 │ Claude Opus   │ GPT-5.2       │ Gemini 3 Pro  │
-│ (via direct)  │ (400K ctx)    │ (via Router)  │
 └───────┬───────┴───────┬───────┴───────┬───────┘
         │               │               │
         └───────────────┼───────────────┘
                         ↓
                  CONSENSUS ENGINE
                         ↓
-           ┌────────────┴────────────┐
-           │   Score-based voting    │
-           │   OR Reviewer tiebreak  │
-           └────────────┬────────────┘
-                        ↓
                   BEST SOLUTION
 ```
 
-### State Machine
+**Consensus Strategy:**
+- Score-based voting (diff size, structure, quality)
+- Reviewer tiebreak for close scores
+- Winner selected with full transparency
 
-```
-NEW → PLANNING → PLANNING_DONE → CODING → CODING_DONE → TESTING
-    → TESTS_PASSED → REVIEWING → REVIEW_APPROVED → PR_CREATED → WAITING_HUMAN
-
-Orchestration States:
-    BREAKING_DOWN → BREAKDOWN_DONE → ORCHESTRATING
-
-Fix Loop (with escalation):
-    TESTS_FAILED → FIXING → CODING_DONE → TESTING
-    (each iteration escalates model tier)
-
-Review Loop:
-    REVIEW_REJECTED → CODING (with feedback)
-
-Terminal:
-    COMPLETED, FAILED
-```
+**Files:** `src/core/multi-runner.ts`, `src/core/consensus.ts`
 
 ---
 
-## Agents (9 total)
+## API Endpoints
 
-### Core Agents
+### Webhooks
 
-| Agent | File | Purpose |
-|-------|------|---------|
-| **PlannerAgent** | `agents/planner.ts` | Issue → DoD + plan + targetFiles + **effort estimate** |
-| **CoderAgent** | `agents/coder.ts` | Plan → unified diff (accepts runtime model override) |
-| **FixerAgent** | `agents/fixer.ts` | Error logs → corrected diff (accepts runtime model override) |
-| **ReviewerAgent** | `agents/reviewer.ts` | Diff → verdict + comments |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/webhooks/github` | GitHub webhook receiver (issues, check_run, PR review) |
 
-### Orchestration Agents
+### Tasks
 
-| Agent | File | Purpose |
-|-------|------|---------|
-| **OrchestratorAgent** | `agents/orchestrator/` | M/L/XL → XS subtask decomposition |
-| **InitializerAgent** | `agents/initializer/` | Session memory setup |
-| **ValidatorAgent** | `agents/validator/` | Diff validation before PR |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/tasks` | List pending tasks |
+| GET | `/api/tasks/:id` | Get task details + events |
+| POST | `/api/tasks/:id/process` | Manually trigger processing |
+| POST | `/api/tasks/:id/reject` | Manual rejection with feedback |
 
-### Breakdown Agents
+### Jobs (Batch Processing)
 
-| Agent | File | Purpose |
-|-------|------|---------|
-| **BreakdownAgent** | `agents/breakdown.ts` | Legacy task breakdown |
-| **IssueBreakdownAgent** | `agents/issue-breakdown/` | Advanced issue decomposition |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/jobs` | Create job for multiple issues |
+| GET | `/api/jobs` | List recent jobs |
+| GET | `/api/jobs/:id` | Get job status + task summaries |
+| GET | `/api/jobs/:id/events` | Aggregated events |
+| POST | `/api/jobs/:id/run` | Start job processing |
+| POST | `/api/jobs/:id/cancel` | Cancel running job |
 
----
+### Analytics & Monitoring
 
-## LLM Provider Routing
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/health` | Health check (Fly.io) |
+| GET | `/api/analytics/costs` | Cost breakdown by day/agent/model |
+| GET | `/api/logs/stream` | SSE real-time event stream |
 
-The system routes to providers based on model name:
+### Linear Integration
 
-```typescript
-// Anthropic Direct API
-"claude-opus-4-5-*", "claude-sonnet-4-5-*" → AnthropicClient
-
-// OpenAI Direct API (Responses API for GPT-5.2)
-"gpt-5.2", "gpt-5.2-thinking", "gpt-5.2-instant", "gpt-5.2-pro" → OpenAIDirectClient
-
-// OpenRouter (for Gemini, Grok, others)
-"google/gemini-3-pro-preview" → OpenRouterClient
-"x-ai/grok-code-fast-1" → OpenRouterClient
-```
-
-**Files:**
-- `src/integrations/llm.ts` - Unified routing
-- `src/integrations/anthropic.ts` - Claude SDK
-- `src/integrations/openai-direct.ts` - GPT-5.2 Responses API
-- `src/integrations/openrouter.ts` - Multi-provider access
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/review/pending` | Issues awaiting human review |
+| POST | `/api/linear/sync` | Sync GitHub issues to Linear |
 
 ---
 
-## Model Selection System (NEW)
-
-### How It Works
-
-1. **Planner estimates effort**: `low`, `medium`, or `high`
-2. **Model selector chooses tier** based on effort + attempt count
-3. **On failure, escalate** to next tier automatically
-
-### File: `src/core/model-selection.ts`
-
-```typescript
-interface SelectionContext {
-  complexity: "XS" | "S" | "M" | "L" | "XL";
-  effort: "low" | "medium" | "high" | undefined;
-  attemptCount: number;
-  lastError?: string;
-}
-
-// Returns which models to use and whether to use multi-agent
-function selectModels(context: SelectionContext): ModelSelection;
-```
-
-### Model Tiers
-
-| Tier | Models | Use Case |
-|------|--------|----------|
-| **fast** | `x-ai/grok-code-fast-1` | Typos, comments, simple renames |
-| **standard** | `claude-opus-4-5-20251101` | Helper functions, simple bugs |
-| **multi** | Opus + GPT-5.2 + Grok (parallel) | New features, refactors |
-| **thinking** | `gpt-5.1-codex-max`, `gpt-5.2-pro` | Autonomous coding, deep reasoning |
-| **fixer** | `gpt-5.2` (xhigh) | Error analysis with maximum reasoning |
-
-### Effort Estimation Guidelines
-
-The Planner estimates effort based on:
-
-- **LOW**: Typo fixes, add comments, rename variables, update strings
-- **MEDIUM**: Add helper function, simple bug fix, add test
-- **HIGH**: New feature, refactor logic, complex fix, multi-step changes
-
----
-
-## Memory Systems
-
-### 1. Static Memory (per-repo)
-Long-lived repository configuration:
-- Blocked paths, allowed paths
-- Repo-specific constraints
-
-**File:** `src/core/memory/static-memory-store.ts`
-
-### 2. Session Memory (per-task)
-Task-specific context:
-- Issue details, plan, DoD
-- Progress log, attempts
-- Agent outputs
-
-**File:** `src/core/memory/session-memory-store.ts`
-
-### 3. Learning Memory (cross-task)
-Patterns learned from previous tasks:
-- **Fix Patterns** - error → solution mappings
-- **Codebase Conventions** - style, patterns
-- **Failure Modes** - common errors to avoid
-
-**File:** `src/core/memory/learning-memory-store.ts`
-
----
-
-## Temporal Knowledge Graph (Planned)
-
-> **Status:** Implementation planned - see issues #230-#237
-
-A graph-based memory system that tracks code entities with temporal validity, enabling queries like "What changed since last week?" and "What breaks if I modify this function?"
-
-### Why Knowledge Graph?
-
-Traditional RAG limitations:
-- Stale information stays in vector store
-- No time awareness for "when was this true?"
-- Contradictions between old/new versions
-- No relationship traversal
-
-### Architecture
+## Directory Structure
 
 ```
-Document/Code Ingestion
-         ↓
-┌──────────────────┐
-│ Entity Extractor │ ← LLM extracts functions, classes, APIs
-└────────┬─────────┘
-         ↓
-┌──────────────────┐
-│ Entity Resolver  │ ← Deduplicates, links to existing
-└────────┬─────────┘
-         ↓
-┌──────────────────┐
-│ Temporal Tracker │ ← Assigns valid_from/valid_until
-└────────┬─────────┘
-         ↓
-┌──────────────────┐
-│ Invalidation     │ ← Marks contradicted entities
-│ Agent            │
-└────────┬─────────┘
-         ↓
-    PostgreSQL (Neon)
-         ↓
-┌──────────────────┐
-│ Multi-Hop        │ ← Query-time relationship traversal
-│ Retriever        │
-└──────────────────┘
+src/
+├── index.ts                    # Bun HTTP server entry
+├── router.ts                   # API routes (~1200 lines)
+├── agents/
+│   ├── base.ts                 # BaseAgent abstract class
+│   ├── planner.ts              # Issue analysis + effort estimation
+│   ├── coder.ts                # Code generation
+│   ├── fixer.ts                # Error fixing
+│   ├── reviewer.ts             # Code review
+│   ├── breakdown.ts            # Task decomposition
+│   ├── initializer/            # Session bootstrap agent
+│   ├── validator/              # Deterministic validation
+│   ├── orchestrator/           # M/L/XL coordination
+│   └── issue-breakdown/        # Advanced decomposition
+├── core/
+│   ├── types.ts                # Zod schemas, interfaces
+│   ├── state-machine.ts        # State transitions
+│   ├── orchestrator.ts         # Main processing loop
+│   ├── model-selection.ts      # Effort-based model routing
+│   ├── patch-formats.ts        # Unified diff & Codex-Max conversion
+│   ├── multi-agent-types.ts    # Multi-agent config
+│   ├── multi-runner.ts         # Parallel execution
+│   ├── consensus.ts            # Consensus voting
+│   ├── diff-validator.ts       # Diff validation
+│   ├── job-runner.ts           # Batch job processor
+│   ├── logger.ts               # Task/system logging
+│   ├── aggregator/             # Subtask diff combining
+│   │   ├── conflict-detector.ts
+│   │   ├── diff-combiner.ts
+│   │   └── session-integration.ts
+│   └── memory/                 # Memory systems
+│       ├── static-memory-store.ts
+│       ├── session-memory-store.ts
+│       ├── learning-memory-store.ts
+│       └── memory-manager.ts
+├── integrations/
+│   ├── llm.ts                  # LLM routing
+│   ├── anthropic.ts            # Claude SDK
+│   ├── openai.ts               # OpenAI Chat API
+│   ├── openai-direct.ts        # OpenAI Responses API (Codex)
+│   ├── openrouter.ts           # Multi-provider access
+│   ├── github.ts               # Octokit wrapper
+│   ├── linear.ts               # Linear SDK
+│   └── db.ts                   # Tasks/events CRUD
+├── services/
+│   ├── foreman.ts              # Local test runner
+│   └── command-executor.ts     # Shell commands
+└── lib/
+    ├── migrate.ts              # DB migrations
+    └── import-analyzer.ts      # Dependency analysis
+
+autodev-dashboard/              # React monitoring UI
+prompts/                        # LLM prompt templates
 ```
-
-### Key Components
-
-| Component | Issue | Purpose |
-|-----------|-------|---------|
-| Entity Extraction Agent | #230 | Extract structured entities from code |
-| Entity Resolution | #231 | Deduplicate and link entities |
-| Temporal Validity Tracker | #232 | Time-bounded facts (valid_from/until) |
-| Invalidation Agent | #233 | Detect contradictions, mark superseded |
-| Multi-Hop Retrieval | #234 | Traverse relationships for impact analysis |
-| Database Schema | #235 | PostgreSQL tables and migrations |
-| Orchestrator Integration | #236 | Connect to AutoDev workflow |
-| Repository Sync | #237 | Full sync on clone, incremental on push |
-
-### Entity Types
-
-```typescript
-type EntityType = "function" | "class" | "api" | "constant" | "type";
-
-interface TemporalEntity {
-  id: string;
-  canonicalId: string;
-  type: EntityType;
-  name: string;
-  filePath: string;
-  
-  // Temporal bounds
-  validFrom: Date;
-  validUntil: Date | null;  // null = currently valid
-  commitSha: string;
-  
-  // Relationships
-  dependencies: string[];   // Entity IDs this depends on
-  dependents: string[];     // Entity IDs that depend on this
-}
-```
-
-### Use Cases for AutoDev
-
-| Use Case | Benefit |
-|----------|---------|
-| **Pre-Coding Context** | Query related entities before generating code |
-| **Impact Analysis** | "What breaks if I change X?" via multi-hop |
-| **Fix Patterns** | Link fixes to specific codebase states |
-| **Change History** | "When did this function last change?" |
-| **Dependency Tracking** | Full dependency chain with temporal validity |
-
-### Database Schema (Planned)
-
-```sql
--- Core entities table
-CREATE TABLE knowledge_entities (
-  id UUID PRIMARY KEY,
-  canonical_id UUID NOT NULL,
-  entity_type VARCHAR(50) NOT NULL,
-  name VARCHAR(255) NOT NULL,
-  file_path TEXT NOT NULL,
-  valid_from TIMESTAMPTZ NOT NULL,
-  valid_until TIMESTAMPTZ,
-  commit_sha VARCHAR(40),
-  entity_data JSONB NOT NULL
-);
-
--- Relationships between entities
-CREATE TABLE entity_relationships (
-  source_id UUID REFERENCES knowledge_entities(id),
-  target_id UUID REFERENCES knowledge_entities(id),
-  relationship_type VARCHAR(50),  -- imports, extends, uses
-  valid_from TIMESTAMPTZ,
-  valid_until TIMESTAMPTZ
-);
-```
-
-### Configuration (Planned)
-
-```bash
-ENABLE_KNOWLEDGE_GRAPH=true
-KNOWLEDGE_GRAPH_MAX_HOPS=3
-KNOWLEDGE_GRAPH_SYNC_ON_PUSH=true
-```
-
----
-
-## Local Test Runner (Foreman)
-
-Runs tests locally before pushing to GitHub:
-
-```bash
-USE_FOREMAN=true  # Enable local testing
-```
-
-**Supported:** Node.js (npm/bun/pnpm/yarn test), Rust (cargo test), Python (pytest)
-
-**File:** `src/services/foreman.ts`
 
 ---
 
@@ -412,170 +336,184 @@ DATABASE_URL=postgresql://...   # Neon connection
 ### Optional - Providers
 
 ```bash
-OPENAI_API_KEY=sk-xxx          # GPT-5.2 models
-OPENROUTER_API_KEY=sk-or-xxx   # Gemini, Grok via OpenRouter
+OPENAI_API_KEY=sk-xxx          # GPT-5.1 Codex models
+OPENROUTER_API_KEY=sk-or-xxx   # Grok, Gemini via OpenRouter
 LINEAR_API_KEY=lin_api_xxx     # Linear sync
+GITHUB_WEBHOOK_SECRET=xxx      # Webhook validation
 ```
 
-### Model Selection
+### Model Selection (override defaults)
 
 ```bash
-DEFAULT_LLM_MODEL=gpt-5.2
-PLANNER_MODEL=gpt-5.2-thinking
-REVIEWER_MODEL=gpt-5.2
-# Coder/Fixer use effort-based selection (automatic)
-```
-
-### Multi-Agent (for XS-high and escalated tasks)
-
-```bash
-MULTI_AGENT_MODE=true          # Enable multi-agent consensus
-MULTI_AGENT_CODER_COUNT=3      # Number of parallel coders
-MULTI_AGENT_FIXER_COUNT=3      # Number of parallel fixers
+PLANNER_MODEL=gpt-5.1-codex-max
+FIXER_MODEL=gpt-5.1-codex-max
+REVIEWER_MODEL=gpt-5.1-codex-max
+DEFAULT_LLM_MODEL=claude-sonnet-4-5-20250514
 ```
 
 ### Features
 
 ```bash
+MULTI_AGENT_MODE=false         # Enable multi-agent consensus
+MULTI_AGENT_CODER_COUNT=3      # Number of parallel coders
 ENABLE_LEARNING=true           # Cross-task learning
-USE_FOREMAN=true               # Local test runner
-VALIDATE_DIFF=true             # Diff validation
-EXPAND_IMPORTS=true            # Analyze imports
+USE_FOREMAN=false              # Local test runner
+VALIDATE_DIFF=true             # Diff validation before apply
+EXPAND_IMPORTS=true            # Analyze imports for context
 ```
 
-### Safety
+### Safety Limits
 
 ```bash
-MAX_ATTEMPTS=3                 # Max fix attempts (with escalation)
-MAX_DIFF_LINES=400             # Max diff size
+MAX_ATTEMPTS=3                 # Max fix attempts
+MAX_DIFF_LINES=300             # Max diff size
+MAX_RELATED_FILES=10           # Import expansion limit
+IMPORT_DEPTH=1                 # Import analysis depth
 ```
 
 ---
 
-## Directory Structure
+## Safety Constraints
 
+### Allowed Paths
 ```
-src/
-├── index.ts                    # Bun HTTP server entry
-├── router.ts                   # API routes (~1200 lines)
-├── agents/
-│   ├── base.ts                 # BaseAgent abstract class
-│   ├── planner.ts              # Issue analysis + effort estimation
-│   ├── coder.ts                # Code generation (runtime model override)
-│   ├── fixer.ts                # Error fixing (runtime model override)
-│   ├── reviewer.ts             # Code review
-│   ├── breakdown.ts            # Legacy breakdown
-│   ├── initializer/            # Session setup agent
-│   ├── validator/              # Diff validation agent
-│   ├── orchestrator/           # Task decomposition
-│   └── issue-breakdown/        # Advanced decomposition
-├── core/
-│   ├── types.ts                # Zod schemas, interfaces
-│   ├── state-machine.ts        # State transitions
-│   ├── orchestrator.ts         # Main processing loop
-│   ├── model-selection.ts      # Effort-based model routing
-│   ├── patch-formats.ts        # Unified diff & Codex-Max conversion
-│   ├── multi-agent-types.ts    # Multi-agent config
-│   ├── multi-runner.ts         # Parallel execution
-│   ├── consensus.ts            # Consensus voting
-│   ├── diff-validator.ts       # Diff validation
-│   ├── job-runner.ts           # Batch job processor
-│   └── memory/                 # Memory systems
-│       ├── learning-memory-store.ts
-│       ├── session-memory-store.ts
-│       └── static-memory-store.ts
-├── integrations/
-│   ├── llm.ts                  # LLM routing
-│   ├── anthropic.ts            # Claude SDK
-│   ├── openai.ts               # OpenAI API
-│   ├── openai-direct.ts        # GPT-5.2 Responses API
-│   ├── openrouter.ts           # Multi-provider
-│   ├── github.ts               # Octokit wrapper
-│   ├── linear.ts               # Linear SDK (two-way sync)
-│   └── db.ts                   # Tasks/events CRUD
-├── services/
-│   ├── foreman.ts              # Local test runner
-│   └── command-executor.ts     # Shell commands
-└── lib/
-    ├── migrate.ts              # DB migrations
-    └── import-analyzer.ts      # Dependency analysis
+src/, lib/, tests/, test/, app/, components/, utils/
+```
 
-autodev-dashboard/              # React monitoring UI
-prompts/                        # LLM prompt templates
+### Blocked Paths
 ```
+.env, .env.*, secrets/, .github/workflows/
+Dockerfile, docker-compose.yml, *.pem, *.key
+```
+
+### Complexity Limits
+- **XS/S**: Auto-processed with effort-based routing
+- **M/L**: Broken into XS subtasks via orchestration
+- **XL**: Rejected (too large)
 
 ---
 
-## API Endpoints
+## Key Files Reference
 
-### Tasks
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/tasks` | List all tasks |
-| GET | `/api/tasks/:id` | Get task details + events |
-| POST | `/api/tasks/:id/process` | Manually trigger processing |
-| POST | `/api/tasks/:id/reject` | Reject task with feedback |
-
-### Jobs (Batch Processing)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/jobs` | Create job for multiple issues |
-| GET | `/api/jobs/:id` | Get job status + task summaries |
-| POST | `/api/jobs/:id/run` | Start job processing |
-| POST | `/api/jobs/:id/cancel` | Cancel running job |
-
-### Analytics & Monitoring
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/health` | Health check |
-| GET | `/api/analytics/costs` | Cost breakdown by day/agent/model |
-| GET | `/api/logs/stream` | SSE real-time event stream |
-
-### Linear Integration
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/review/pending` | Issues awaiting human review |
-| POST | `/api/linear/sync` | Sync GitHub issues to Linear |
-
----
-
-## Development Commands
-
-```bash
-# Setup
-bun install
-cp .env.example .env
-bun run db:migrate
-
-# Development
-bun run dev              # Auto-reload
-bun run typecheck        # Type check
-bun test                 # Run tests
-
-# Production
-bun run start
-fly deploy               # Deploy to Fly.io
-```
+| Purpose | File |
+|---------|------|
+| Main orchestrator | `src/core/orchestrator.ts` |
+| Model selection | `src/core/model-selection.ts` |
+| State machine | `src/core/state-machine.ts` |
+| Patch format conversion | `src/core/patch-formats.ts` |
+| Multi-agent config | `src/core/multi-agent-types.ts` |
+| Consensus voting | `src/core/consensus.ts` |
+| Memory manager | `src/core/memory/memory-manager.ts` |
+| API routes | `src/router.ts` |
+| GitHub client | `src/integrations/github.ts` |
+| LLM routing | `src/integrations/llm.ts` |
+| OpenAI Direct (Codex) | `src/integrations/openai-direct.ts` |
+| Local testing | `src/services/foreman.ts` |
 
 ---
 
 ## Deployment (Fly.io)
 
-**Region:** `gru` (São Paulo)
+**Region:** `gru` (São Paulo)  
 **VM:** 512MB RAM, 1 shared CPU
 
 ```bash
 fly deploy
-fly secrets set GITHUB_TOKEN=xxx
-fly secrets set ANTHROPIC_API_KEY=xxx
-fly secrets set OPENAI_API_KEY=xxx
-fly secrets set OPENROUTER_API_KEY=xxx
+fly secrets set GITHUB_TOKEN=xxx ANTHROPIC_API_KEY=xxx OPENAI_API_KEY=xxx
 fly logs
+fly ssh console -C "bun run src/scripts/reset-tasks.ts 23 24"
 ```
+
+---
+
+## Common Development Tasks
+
+### Adding a New Agent
+
+1. Create `src/agents/new-agent.ts` extending `BaseAgent<Input, Output>`
+2. Define Zod schema in `src/core/types.ts`
+3. Add prompt template in `prompts/new-agent.md`
+4. Implement `run(input: Input): Promise<Output>`
+5. Add to orchestrator workflow in `src/core/orchestrator.ts`
+
+### Adding a New State
+
+1. Add to `TaskStatus` enum in `src/core/types.ts`
+2. Update transition rules in `src/core/state-machine.ts`
+3. Add action handler in `src/core/orchestrator.ts`
+
+### Debugging Failed Tasks
+
+```sql
+-- Query task
+SELECT * FROM tasks WHERE id = 'uuid';
+
+-- Check events
+SELECT * FROM task_events WHERE task_id = 'uuid' ORDER BY created_at;
+
+-- View diff
+SELECT current_diff FROM tasks WHERE id = 'uuid';
+```
+
+---
+
+## Critical Rules for Claude
+
+### ⚠️ DO NOT CHANGE MODELS WITHOUT EXPRESS USER APPROVAL
+
+Model configuration is in `src/core/model-selection.ts` and individual agent files. **Never modify without explicit user confirmation.**
+
+Reasons:
+1. Different providers have different billing/credits
+2. Model naming conventions vary between providers
+3. User has specific cost/quality preferences
+
+### ⚠️ OPENAI: ONLY USE GPT-5.1 CODEX MODELS
+
+**Approved OpenAI models:**
+- `gpt-5.1-codex-max` - Deep reasoning for planning/fixing/review
+- `gpt-5.1-codex-mini` - Fast codex for medium effort tasks
+
+**Do NOT use:** gpt-4o, gpt-4, o1, o3, legacy models
+
+### ⚠️ NEVER USE SONNET-4, USE SONNET-4.5
+
+User explicitly stated: "never use sonnet-4, we have sonnet-4.5"
+
+- ✅ `claude-sonnet-4-5-20250514`
+- ❌ `claude-sonnet-4-20250514`
+
+---
+
+## Troubleshooting
+
+### Task stuck in "TESTING"
+
+**Cause:** Webhook from GitHub Actions not received or CI didn't run.  
+**Fix:** Check GitHub Actions status, then update manually:
+```sql
+UPDATE tasks SET status = 'TESTS_PASSED' WHERE id = 'uuid';
+```
+
+### Empty API responses
+
+**Cause:** Transient API issue without retry.  
+**Fix:** All LLM clients have retry logic with exponential backoff. Check logs for max retries exceeded.
+
+### File truncation on GitHub
+
+**Cause:** LLMs generate incorrect hunk line counts.  
+**Fix:** `fixHunkLineCounts()` in `github.ts` recalculates actual counts before parsing.
+
+### Agent returns invalid JSON
+
+**Cause:** LLM output doesn't match Zod schema.  
+**Fix:** Check prompt in `prompts/`, add more examples. `BaseAgent.parseJSON()` strips markdown fences automatically.
+
+### REVIEW_REJECTED not retrying
+
+**Cause:** `runCoding()` accepts `["PLANNING_DONE", "REVIEW_REJECTED"]`.  
+**Fix:** Already fixed - validates array of valid states.
 
 ---
 
@@ -596,510 +534,37 @@ fly logs
 
 ---
 
-## Troubleshooting
-
-### Task using wrong model tier
-
-Check effort estimation in task events:
-```sql
-SELECT estimated_complexity, estimated_effort, attempt_count 
-FROM tasks WHERE id = 'uuid';
-```
-
-Model selection logs show routing decisions:
-```
-[ModelSelection] XS-low (attempt 0) → fast: XS-low effort → Grok Fast (cheapest)
-```
-
-### Multi-agent not triggering
-
-Verify effort is HIGH or attempts >= 2:
-- XS-low starts with Grok Fast
-- XS-medium starts with Sonnet
-- XS-high starts with multi-agent
-
-### Escalation not working
-
-Check `attemptCount` is incrementing:
-```sql
-SELECT id, attempt_count, last_error FROM tasks WHERE id = 'uuid';
-```
-
-Each failure should increase attempt count, triggering next tier.
-
----
-
 ## Cost Optimization
 
 The effort-based system significantly reduces costs:
 
-| Workload | Before (all multi-agent) | After (effort-based) |
-|----------|--------------------------|----------------------|
-| Typo fix | $0.50 | $0.01 |
-| Simple bug | $0.50 | $0.10 |
-| New feature | $0.50 | $0.50 |
-| With 1 retry | $1.00 | $0.60 |
+| Workload | Before (all Opus) | After (effort-based) |
+|----------|-------------------|----------------------|
+| Typo fix (low) | $0.15 | $0.01 |
+| Simple bug (medium) | $0.15 | $0.05 |
+| New feature (high) | $0.15 | $0.15 |
+| With 1 retry | $0.30 | $0.16 |
 
 **Estimated savings:** 60-80% for repos with many simple issues.
 
 ---
 
-## Model Performance Reference
-
-See `LEARNINGS.md` for detailed benchmarks. Quick reference:
-
-| Use Case | Best Model | Why |
-|----------|------------|-----|
-| Code Review | Claude Opus 4.5 | Top SWE-bench Verified |
-| Math/Logic | GPT-5.2-pro | 100% AIME 2025 |
-| Large Context | GPT-5.2 | 400K context |
-| Fast/Cheap | Grok Code Fast | $0.20/$1.50 per M tokens |
-| Budget All-round | Claude Sonnet 4.5 | Good balance |
-
----
-
-## Critical Rules for Claude
-
-### ⚠️ DO NOT CHANGE MODELS WITHOUT EXPRESS USER APPROVAL
-
-Model configuration is in `src/core/model-selection.ts`. **Never modify MODEL_TIERS without explicit user confirmation.**
-
-Reasons:
-1. Different providers have different billing/credits (Anthropic vs OpenRouter vs OpenAI)
-2. Model naming conventions vary (`anthropic/claude-opus-...` for OpenRouter vs `claude-opus-...` for direct API)
-3. User has specific preferences for cost/quality tradeoffs
-
-**Current approved models (2025-12-12):**
-| Tier | Model | Provider |
-|------|-------|----------|
-| Fast | `x-ai/grok-code-fast-1` | OpenRouter |
-| Standard | `claude-opus-4-5-20251101` | Anthropic Direct |
-| Multi | `claude-opus-4-5-20251101`, `gpt-5.2`, `x-ai/grok-code-fast-1` | Mixed |
-| Thinking | `gpt-5.1-codex-max`, `gpt-5.2-pro` | OpenAI Responses API |
-| Fixer | `gpt-5.2` (reasoning.effort: xhigh) | OpenAI Responses API |
-
-### ⚠️ OPENAI: ONLY USE GPT-5.2 OR GPT-5.1-CODEX
-
-**Do NOT use legacy OpenAI models** (gpt-4o, gpt-4, o1, o3, etc.)
-
-Approved OpenAI models:
-- `gpt-5.2` - Best for coding and agentic tasks (400K context, 128K output)
-- `gpt-5.2-pro` - Harder thinking, tougher problems
-- `gpt-5.1-codex-max` - Specialized interactive coding products
-
-GPT-5.2 uses the **Responses API** (`/v1/responses`) with:
-- `reasoning.effort` - `"high"` for coding, `"xhigh"` for fixer (max debugging depth)
-- `text.verbosity: "high"` - detailed code output
-
-**GPT-5.1-Codex-Max** (thinking tier):
-- Specialized for long-running autonomous coding tasks
-- ~30% fewer tokens than GPT-5.2
-- First-class compaction support for long contexts
-- Uses apply_patch format (auto-converted to unified diff)
-
----
-
 ## Patch Format Conversion
 
-The system supports multiple diff formats and auto-converts to unified diff internally.
-
-### Supported Formats
+Supports multiple diff formats with auto-conversion to unified diff:
 
 | Format | Detection | Example |
 |--------|-----------|---------|
-| **Unified Diff** | `diff --git` or `---` prefix | Standard git diff output |
+| **Unified Diff** | `diff --git` or `---` prefix | Standard git diff |
 | **Codex-Max apply_patch** | `*** Begin Patch` prefix | GPT-5.1-Codex-Max output |
 
-### Codex-Max Format
-
-```
-*** Begin Patch
-*** Update File: src/example.ts
-@@
-   context line
-+  added line
--  removed line
-*** Add File: src/new-file.ts
-+new file content
-+line 2
-*** Delete File: src/old-file.ts
-*** End Patch
-```
-
-### Auto-Conversion
-
-The orchestrator automatically detects and converts patches:
-
+The orchestrator automatically detects and normalizes patches:
 ```typescript
-// In orchestrator.ts
 import { normalizePatch, detectPatchFormat } from "./patch-formats";
-
-// After coder/fixer output:
 const format = detectPatchFormat(output.diff);
 if (format === "codex-max") {
   output.diff = normalizePatch(output.diff);
 }
-```
-
-**File:** `src/core/patch-formats.ts`
-
----
-
-## Safety Constraints
-
-### Allowed Paths
-```
-src/, lib/, tests/, test/, app/, components/, utils/
-```
-
-### Blocked Paths
-```
-.env, .env.*, secrets/, .github/workflows/
-Dockerfile, docker-compose.yml, *.pem, *.key
-```
-
-### Complexity Limits
-- **XS/S**: Auto-processed with effort-based routing
-- **M/L**: Broken into XS subtasks
-- **XL**: Rejected (too large)
-
----
-
-## Key Files Reference
-
-| Purpose | File |
-|---------|------|
-| Main orchestrator | `src/core/orchestrator.ts` |
-| Model selection | `src/core/model-selection.ts` |
-| Patch format conversion | `src/core/patch-formats.ts` |
-| State machine | `src/core/state-machine.ts` |
-| Multi-agent config | `src/core/multi-agent-types.ts` |
-| Consensus voting | `src/core/consensus.ts` |
-| Learning memory | `src/core/memory/learning-memory-store.ts` |
-| API routes | `src/router.ts` |
-| GitHub client | `src/integrations/github.ts` |
-| LLM routing | `src/integrations/llm.ts` |
-| OpenAI Direct (GPT-5.2) | `src/integrations/openai-direct.ts` |
-| Local testing | `src/services/foreman.ts` |
-
-### Planned (Knowledge Graph)
-
-| Purpose | File |
-|---------|------|
-| Entity extraction | `src/agents/entity-extractor.ts` |
-| Entity resolution | `src/core/knowledge-graph/entity-resolver.ts` |
-| Temporal tracking | `src/core/knowledge-graph/temporal-tracker.ts` |
-| Multi-hop retrieval | `src/core/knowledge-graph/multi-hop-retriever.ts` |
-| Invalidation agent | `src/agents/invalidation-agent.ts` |
-| KG service | `src/core/knowledge-graph/service.ts` |
-
----
-
-## Production Optimization Roadmap (Planned)
-
-> **Status:** Issues created - see #238-#245
-
-Based on OpenAI's production best practices, the following optimizations are planned:
-
-### Cost Optimization (50% savings potential)
-
-| Feature | Issue | Description | Savings |
-|---------|-------|-------------|---------|
-| **Batch API** | #242 | Async processing for non-urgent tasks | 50% |
-| **Flex Processing** | #243 | Sync requests at batch prices | 50% |
-| **Prompt Caching** | #240 | Cache repeated context (system prompts, repo info) | 20-30% |
-| **Distillation** | #241 | Train smaller models from successful outputs | 70-90% |
-
-### Quality & Reliability
-
-| Feature | Issue | Description |
-|---------|-------|-------------|
-| **Evals Framework** | #238 | Track task success rates, diff quality, model performance |
-| **Input Guardrails** | #239 | Validate issues before processing (moderation, clarity) |
-| **Prompt Optimizer** | #244 | Auto-improve prompts using OpenAI Platform |
-
-### Advanced Capabilities
-
-| Feature | Issue | Description |
-|---------|-------|-------------|
-| **Computer Use Agent** | #245 | Visual testing with CUA for UI verification |
-
-### The Evaluation Flywheel
-
-OpenAI recommends continuous improvement via:
-
-```
-    ┌─────────────┐
-    │   ANALYZE   │ ← Review failures, annotate
-    └──────┬──────┘
-           ↓
-    ┌─────────────┐
-    │   MEASURE   │ ← Automated graders, evals
-    └──────┬──────┘
-           ↓
-    ┌─────────────┐
-    │   IMPROVE   │ ← Prompt optimization
-    └──────┬──────┘
-           └────→ Repeat
-```
-
-### OpenAI API Features to Leverage
-
-| Feature | API | Use Case |
-|---------|-----|----------|
-| **Batch API** | `/v1/batches` | Overnight processing, evals |
-| **Flex Processing** | `service_tier: "flex"` | Low-priority tasks |
-| **Responses API** | `/v1/responses` | GPT-5.2 with reasoning.effort |
-| **Computer Use** | `computer-use-preview` | Visual testing |
-| **Prompt Optimizer** | Platform UI | Auto-improve prompts |
-| **Datasets** | Platform UI | Collect data for optimization |
-
-### Cost Optimization Strategies
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    COST REDUCTION LEVERS                     │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  1. Effort-Based Routing (IMPLEMENTED)                      │
-│     XS-low → Grok Fast ($0.01) vs Multi-agent ($0.50)       │
-│                                                             │
-│  2. Batch API (PLANNED #242)                                │
-│     50% discount for async processing                       │
-│                                                             │
-│  3. Flex Processing (PLANNED #243)                          │
-│     50% discount for slower sync requests                   │
-│                                                             │
-│  4. Prompt Caching (PLANNED #240)                           │
-│     Reduce repeated tokens (system prompts, repo context)   │
-│                                                             │
-│  5. Distillation (PLANNED #241)                             │
-│     Fine-tune smaller models from successful outputs        │
-│     Opus → gpt-4o-mini for XS tasks                         │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Implementation Priority
-
-**Phase 1: Quick Wins**
-- #240 Prompt Caching (low effort, immediate benefit)
-- #243 Flex Processing (simple flag, 50% savings)
-
-**Phase 2: Infrastructure**
-- #238 Evals Framework (foundation for optimization)
-- #239 Input Guardrails (reduce wasted compute)
-
-**Phase 3: Advanced**
-- #242 Batch API (async infrastructure)
-- #241 Distillation Pipeline (training infrastructure)
-- #244 Prompt Optimizer (Platform integration)
-
-**Phase 4: Experimental**
-- #245 Computer Use Agent (visual testing)
-
----
-
-## Computer Use Agent (CUA) - Visual Testing
-
-> **Status:** Planned - see issue #245
-> **Reference:** `docs/computer-use.md` for full implementation details
-
-### Overview
-
-OpenAI's Computer Use Agent (CUA) uses the `computer-use-preview` model to interact with computer interfaces via screenshots. AutoDev can use this for visual verification of UI changes.
-
-### CUA Loop
-
-```
-Goal: "Verify the new button appears on the homepage"
-         ↓
-┌─────────────────────────────────────┐
-│           CUA LOOP                  │
-├─────────────────────────────────────┤
-│ 1. Capture screenshot               │
-│ 2. Send to computer-use-preview     │
-│ 3. Model returns action             │
-│ 4. Execute action (Playwright)      │
-│ 5. Capture new screenshot           │
-│ 6. Repeat until goal achieved       │
-└─────────────────────────────────────┘
-```
-
-### Action Types
-
-| Action | Parameters | Description |
-|--------|------------|-------------|
-| `click` | x, y, button | Single click at coordinates |
-| `double_click` | x, y, button | Double click |
-| `type` | text | Type text via keyboard |
-| `keypress` | keys[] | Press key combination |
-| `scroll` | x, y, scrollX, scrollY | Scroll at position |
-| `drag` | startX, startY, path[] | Drag operation |
-| `wait` | - | Wait 2 seconds |
-| `screenshot` | - | Capture only |
-
-### Safety Checks
-
-The model may return `pending_safety_checks` that must be handled:
-
-| Code | Action | Description |
-|------|--------|-------------|
-| `malicious_instructions` | **Block** | Never acknowledge |
-| `sensitive_domain` | **Block** | Banking, gov, healthcare |
-| `irrelevant_domain` | Check allowlist | Navigating away from task |
-
-### Integration with Foreman
-
-```typescript
-// After applying diff, run visual tests
-const foreman = new Foreman();
-const results = await foreman.runVisualTests(
-  "http://localhost:3000",
-  [
-    { goal: "Verify homepage loads correctly", expectedOutcome: "success" },
-    { goal: "Click login and verify form appears", expectedOutcome: "form visible" }
-  ]
-);
-```
-
-### Use Cases for AutoDev
-
-1. **Visual Regression Testing** - Verify UI after diff application
-2. **E2E Test Execution** - Run acceptance criteria visually
-3. **Screenshot Documentation** - Capture new features for PRs
-
-### Configuration
-
-```bash
-ENABLE_COMPUTER_USE=true
-OPENAI_API_KEY=sk-...
-CUA_TIMEOUT_MS=900000              # 15 minutes
-CUA_MAX_ACTIONS=50
-CUA_BROWSER_HEADLESS=true
-CUA_ALLOWED_URLS=localhost,staging.example.com
-```
-
-### Limitations
-
-- Model accuracy is ~38% on OSWorld (not fully reliable)
-- Best for browser-based tasks
-- Requires human oversight for critical operations
-- Safety checks must be properly handled
-
-### Files (Planned)
-
-| File | Purpose |
-|------|---------|
-| `src/agents/computer-use.ts` | CUA agent implementation |
-| `src/services/cua-worker.ts` | Docker worker process |
-| `Dockerfile.cua` | Sandboxed execution container |
-| `docs/computer-use.md` | Full implementation reference |
-
----
-
-## LLM Judge Alignment (Evals Quality)
-
-> **Status:** Planned - extends issue #238
-
-### The Problem
-
-When using LLMs to grade task outputs (code quality, correctness), the judge must be **aligned** with human judgment to be useful.
-
-### Alignment Metrics
-
-| Metric | Formula | Target |
-|--------|---------|--------|
-| **TPR** (True Positive Rate) | Correct positives / All positives | > 80% |
-| **TNR** (True Negative Rate) | Correct negatives / All negatives | > 80% |
-| **Accuracy** | (TP + TN) / Total | > 85% |
-
-### Data Split Strategy
-
-```
-Human-labeled examples (100 total)
-         ↓
-┌────────────────────────────────────────┐
-│  TRAIN (20%)   │  VAL (40%)  │ TEST (40%) │
-│  Few-shot      │  Tune       │  Final     │
-│  examples      │  prompts    │  metrics   │
-└────────────────────────────────────────┘
-```
-
-- **Train (20%)**: Use as few-shot examples in judge prompts
-- **Validation (40%)**: Iterate on prompt until metrics pass
-- **Test (40%)**: Final evaluation (never tune on this)
-
-### Grader Types
-
-| Type | Use Case | Example |
-|------|----------|---------|
-| **String Check** | Exact/contains match | `output.contains("PASS")` |
-| **Text Similarity** | Fuzzy matching | Cosine similarity > 0.85 |
-| **Score Model** | Numeric rating | 1-5 code quality |
-| **Label Model** | Classification | `correct` / `incorrect` |
-| **Python Code** | Custom logic | Parse JSON, check structure |
-
-### Failure Mode Analysis
-
-Use **Open Coding → Axial Coding** to categorize failures:
-
-```
-1. OPEN CODING: Tag each failure
-   - "Missing import statement"
-   - "Wrong function signature"
-   - "Syntax error in diff"
-   
-2. AXIAL CODING: Group into categories
-   - Import errors (15%)
-   - Signature errors (10%)
-   - Syntax errors (25%)
-   - Logic errors (50%)
-   
-3. TARGETED FIXES
-   - Add import validation step
-   - Improve signature matching in prompts
-```
-
-### Implementation for AutoDev
-
-```typescript
-// src/core/evals/judge.ts
-interface JudgeConfig {
-  trainExamples: LabeledExample[];  // 20% - few-shot
-  validationSet: LabeledExample[];  // 40% - tune
-  testSet: LabeledExample[];        // 40% - final
-  targetTPR: number;                // e.g., 0.8
-  targetTNR: number;                // e.g., 0.8
-}
-
-async function alignJudge(config: JudgeConfig): Promise<AlignedJudge> {
-  // Iterate on validation set until metrics pass
-  while (tpr < config.targetTPR || tnr < config.targetTNR) {
-    // Adjust prompt, few-shot examples
-    // Re-evaluate on validation set
-  }
-  // Final evaluation on test set
-  return new AlignedJudge(finalPrompt);
-}
-```
-
-### Grader Examples for AutoDev
-
-| Task Output | Grader Type | Criteria |
-|-------------|-------------|----------|
-| Diff validity | Python code | Parses without error |
-| Test pass/fail | String check | Contains "PASS" |
-| Code quality | Score model | 1-5 rating |
-| DoD completion | Label model | All criteria met |
-
-### Configuration
-
-```bash
-ENABLE_EVALS=true
-EVAL_JUDGE_MODEL=gpt-5.2
-EVAL_TARGET_TPR=0.8
-EVAL_TARGET_TNR=0.8
 ```
 
 ---

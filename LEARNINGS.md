@@ -5,41 +5,47 @@
 
 ---
 
-## Configuração Atual de Modelos (Atualizado 2025-12-12 09:30 UTC)
+## Configuração Atual de Modelos (Atualizado 2025-12-12 21:00 UTC)
 
-### Configuração em Produção ✅ (MULTI-AGENT MODE)
+### Configuração em Produção ✅ (SINGLE MODE com GPT-5.1 Codex)
 
-**IMPORTANTE**: Sistema rodando em modo **MULTI-AGENT** (`MULTI_AGENT_MODE=true`)
+**IMPORTANTE**: Sistema atualizado para usar **GPT-5.1 Codex** para reasoning tasks
 
-| Agente | Modelo(s) | Provider | Modo | Razão da Escolha |
-|--------|-----------|----------|------|------------------|
-| **Planner** | `claude-sonnet-4-5-20250929` | Anthropic Direct | Single | Planejamento estruturado |
-| **Coder** | Opus 4.5, GPT-5.2, Gemini 3 Pro | Multi-provider | **MULTI** (3 parallel) | Consensus de 3 modelos, melhor qualidade |
-| **Fixer** | Opus 4.5, GPT-5.2, Gemini 3 Pro | Multi-provider | **MULTI** (3 parallel) | Consensus, maior confiabilidade |
-| **Reviewer** | `claude-sonnet-4-5-20250929` | Anthropic Direct | Single + Consensus | Code review + tie-breaking |
+| Agente | Modelo | Provider | Reasoning | Razão da Escolha |
+|--------|--------|----------|-----------|------------------|
+| **Planner** | `gpt-5.1-codex-max` | OpenAI Responses API | **high** | Deep reasoning para análise completa |
+| **Fixer** | `gpt-5.1-codex-max` | OpenAI Responses API | **medium** | Debugging com reasoning |
+| **Reviewer** | `gpt-5.1-codex-max` | OpenAI Responses API | **medium** | Code review pragmático |
+| **Coder** | Effort-based (see below) | Mixed | - | Model selection por esforço |
+| **Base/Fallback** | `claude-sonnet-4-5-20250514` | Anthropic Direct | - | Default para outros agentes |
 
-**Multi-Agent Coder** (3 modelos em paralelo):
-1. `claude-opus-4-5-20251101` - ⭐ **Frequentemente vencedor** (rápido + qualidade)
-2. `gpt-5.2` - 400K context, 128K output - best for large diffs
-3. `google/gemini-3-pro-preview` - Google latest (mais lento ~60s)
+### XS Task Model Selection (Effort-Based)
 
-**Multi-Agent Fixer** (3 modelos em paralelo):
-1. `claude-opus-4-5-20251101` - Debugging expert
-2. `gpt-5.2` - 400K context for full error context
-3. `google/gemini-3-pro-preview` - Google latest
+| Effort Level | Model | Provider | Cost | Use Case |
+|--------------|-------|----------|------|----------|
+| **low** | `x-ai/grok-code-fast-1` | OpenRouter | ~$0.01/task | Typos, comments, renames |
+| **medium** | `gpt-5.1-codex-mini` | OpenAI Responses | ~$0.05/task | Helper functions, simple bugs |
+| **high** | `claude-opus-4-5-20251101` | Anthropic Direct | ~$0.15/task | New features, refactors |
+| **escalation** | `gpt-5.1-codex-max` | OpenAI Responses | ~$2.00/task | After failure, deep reasoning |
 
-### GPT-5.2 Model Selection (2025-12-12)
+### GPT-5.1 Codex Selection (2025-12-12)
 
-**Why `gpt-5.2` over alternatives:**
-- ✅ 400K context / 128K output - handles large codebases and diffs
-- ✅ 500K TPM rate limit - supports parallel multi-agent execution
-- ✅ Supports distillation and predicted outputs
-- ✅ Can pin to dated snapshot for reproducibility (`gpt-5.2-2025-12-11`)
+**Why `gpt-5.1-codex-max` for reasoning tasks:**
+- ✅ Specialized for interactive coding products
+- ✅ ~30% fewer tokens than GPT-5.2
+- ✅ First-class compaction support for long contexts
+- ✅ Uses apply_patch format (auto-converted to unified diff)
+- ✅ Reasoning effort levels: none, low, medium, high, xhigh
 
-**Alternatives considered:**
-- ❌ `gpt-5.2-pro` - Responses API only, different integration
-- ❌ `gpt-5.2-chat-latest` - Only 128K context/16K output, 30K TPM, unstable
-- 🤔 `gpt-5.2-thinking` - Could improve Planner with reasoning (future consideration)
+**Why `gpt-5.1-codex-mini` for medium XS tasks:**
+- ✅ Fast execution with high reasoning capability
+- ✅ Good balance of speed and quality
+- ✅ Cost-effective for straightforward tasks
+
+**User Directive (2025-12-12):**
+> "never use sonnet-4, we have sonnet-4.5"
+- ✅ All Claude references use `claude-sonnet-4-5-*` or `claude-opus-4-5-*`
+- ❌ Never use `claude-sonnet-4-*` (old version)
 
 ### Por Que Esta Configuração é a Melhor
 

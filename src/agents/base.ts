@@ -8,8 +8,9 @@ export interface AgentConfig {
   reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
 }
 
-// Default model - can be overridden via env var
-const DEFAULT_MODEL = process.env.DEFAULT_LLM_MODEL || "gpt-5.2";
+// Default/fallback model - Claude Sonnet 4.5
+const DEFAULT_MODEL =
+  process.env.DEFAULT_LLM_MODEL || "claude-sonnet-4-5-20250514";
 
 export abstract class BaseAgent<TInput, TOutput> {
   protected llm: LLMClient;

@@ -399,6 +399,7 @@ export class GitHubClient {
    * Adds missing 'diff --git' headers before file separators
    */
   private preprocessDiff(diff: string): string {
+    // Step 1: Split into file sections and fix each one
     const lines = diff.split("\n");
     const result: string[] = [];
     let i = 0;
@@ -435,6 +436,81 @@ export class GitHubClient {
       }
 
       result.push(line);
+      i++;
+    }
+
+    // Step 2: Fix hunk line counts (LLMs often get these wrong)
+    return this.fixHunkLineCounts(result.join("\n"));
+  }
+
+  /**
+   * Fix incorrect hunk line counts in a diff.
+   * LLMs often generate diffs with wrong line counts (e.g., @@ -0,0 +1,55 @@ when there are only 12 lines).
+   * This causes parse-diff to consume content from the next file.
+   */
+  private fixHunkLineCounts(diff: string): string {
+    const lines = diff.split("\n");
+    const result: string[] = [];
+    let i = 0;
+
+    while (i < lines.length) {
+      const line = lines[i];
+
+      // Check if this is a hunk header
+      const hunkMatch = line.match(/^@@ -(\d+),?(\d*) \+(\d+),?(\d*) @@(.*)$/);
+      if (hunkMatch) {
+        // Count actual lines until next hunk or file header
+        let addCount = 0;
+        let delCount = 0;
+        let j = i + 1;
+
+        while (j < lines.length) {
+          const nextLine = lines[j];
+          // Stop at next hunk header
+          if (nextLine.startsWith("@@ ")) break;
+          // Stop at next file (diff --git, ---, or +++ that starts a new file)
+          if (nextLine.startsWith("diff --git ")) break;
+          if (
+            (nextLine.startsWith("--- ") || nextLine.startsWith("+++ ")) &&
+            j + 1 < lines.length &&
+            (lines[j + 1].startsWith("+++ ") || lines[j + 1].startsWith("@@ "))
+          ) {
+            break;
+          }
+
+          // Count lines
+          if (nextLine.startsWith("+") && !nextLine.startsWith("+++")) {
+            addCount++;
+          } else if (nextLine.startsWith("-") && !nextLine.startsWith("---")) {
+            delCount++;
+          } else if (
+            !nextLine.startsWith("\\") &&
+            nextLine !== "" &&
+            !nextLine.startsWith("diff --git")
+          ) {
+            // Context line (counts for both)
+            addCount++;
+            delCount++;
+          }
+          j++;
+        }
+
+        // Reconstruct hunk header with correct counts
+        const oldStart = hunkMatch[1];
+        const newStart = hunkMatch[3];
+        const context = hunkMatch[5] || "";
+
+        // For new files, old count should be 0
+        const actualDelCount = lines[i - 2]?.startsWith("--- /dev/null")
+          ? 0
+          : delCount;
+
+        result.push(
+          `@@ -${oldStart},${actualDelCount} +${newStart},${addCount} @@${context}`,
+        );
+      } else {
+        result.push(line);
+      }
       i++;
     }
 
@@ -694,11 +770,48 @@ export class GitHubClient {
         if (failed.length === 0) {
           return { success: true };
         } else {
-          const errorSummary = failed
-            .map(
-              (f) => `${f.name}: ${f.conclusion} - ${f.output?.summary || ""}`,
-            )
-            .join("\n");
+          // Get annotations for better error details
+          const errorParts: string[] = [];
+          for (const f of failed) {
+            let detail = `${f.name}: ${f.conclusion}`;
+
+            // Try to get annotations (contains actual error messages)
+            if (f.output?.annotations_count && f.output.annotations_count > 0) {
+              try {
+                const annotations =
+                  await this.octokit.rest.checks.listAnnotations({
+                    owner,
+                    repo,
+                    check_run_id: f.id,
+                  });
+                const errorAnnotations = annotations.data
+                  .filter(
+                    (a) =>
+                      a.annotation_level === "failure" ||
+                      a.annotation_level === "warning",
+                  )
+                  .slice(0, 5) // Limit to first 5 errors
+                  .map((a) => `  ${a.path}:${a.start_line}: ${a.message}`)
+                  .join("\n");
+                if (errorAnnotations) {
+                  detail += `\n${errorAnnotations}`;
+                }
+              } catch (e) {
+                // Annotations not available, use summary
+              }
+            }
+
+            // Fallback to output summary or text
+            if (!detail.includes("\n") && f.output?.summary) {
+              detail += ` - ${f.output.summary}`;
+            } else if (!detail.includes("\n") && f.output?.text) {
+              // Get first 500 chars of text output
+              detail += `\n${f.output.text.slice(0, 500)}`;
+            }
+
+            errorParts.push(detail);
+          }
+          const errorSummary = errorParts.join("\n\n");
           return { success: false, errorSummary };
         }
       }
