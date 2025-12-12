@@ -6,6 +6,15 @@ interface CompletionParams {
   temperature: number;
   systemPrompt: string;
   userPrompt: string;
+  // GPT-5.2 Responses API: pass previous_response_id to reuse reasoning context
+  previousResponseId?: string;
+}
+
+interface CompletionResult {
+  content: string;
+  tokens: number;
+  // Return response ID for context reuse in subsequent calls
+  responseId?: string;
 }
 
 // Models that use the responses API (GPT-5.2 and Codex models)
@@ -84,33 +93,48 @@ export class OpenAIDirectClient {
     return REASONING_MODELS.some((m) => model.includes(m));
   }
 
+  /**
+   * Complete a prompt and return the content.
+   * For backward compatibility, returns just the string content.
+   */
   async complete(params: CompletionParams): Promise<string> {
+    const result = await this.completeWithResult(params);
+    return result.content;
+  }
+
+  /**
+   * Complete a prompt and return full result including response ID.
+   * Use this when you need to chain requests with previous_response_id.
+   *
+   * GPT-5.2 Best Practice: Pass previousResponseId to reuse reasoning context
+   * between turns. This improves intelligence, reduces tokens, and lowers latency.
+   */
+  async completeWithResult(
+    params: CompletionParams,
+  ): Promise<CompletionResult> {
     const startTime = Date.now();
     let lastError: Error | null = null;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
-        let content: string;
-        let tokensUsed: number;
+        let result: CompletionResult;
 
         if (this.isResponsesModel(params.model)) {
-          // Use responses API for Codex models
-          const result = await this.completeWithResponses(params);
-          content = result.content;
-          tokensUsed = result.tokens;
+          // Use responses API for GPT-5.2 and Codex models
+          result = await this.completeWithResponses(params);
         } else {
           // Use chat completions API for other models
-          const result = await this.completeWithChat(params);
-          content = result.content;
-          tokensUsed = result.tokens;
+          result = await this.completeWithChat(params);
         }
 
         const duration = Date.now() - startTime;
-        console.log(
-          `[LLM] OpenAI/${params.model} | ${tokensUsed} tokens | ${duration}ms`,
-        );
+        let logMsg = `[LLM] OpenAI/${params.model} | ${result.tokens} tokens | ${duration}ms`;
+        if (result.responseId) {
+          logMsg += ` | response_id: ${result.responseId.slice(0, 20)}...`;
+        }
+        console.log(logMsg);
 
-        return content;
+        return result;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
 
@@ -133,7 +157,7 @@ export class OpenAIDirectClient {
 
   private async completeWithChat(
     params: CompletionParams,
-  ): Promise<{ content: string; tokens: number }> {
+  ): Promise<CompletionResult> {
     const isReasoning = this.isReasoningModel(params.model);
 
     const requestParams: any = {
@@ -173,7 +197,7 @@ export class OpenAIDirectClient {
 
   private async completeWithResponses(
     params: CompletionParams,
-  ): Promise<{ content: string; tokens: number }> {
+  ): Promise<CompletionResult> {
     // Responses API uses a different format
     // GPT-5.2 supports reasoning effort and verbosity controls
     const isGPT52 = this.isGPT52Model(params.model);
@@ -184,12 +208,18 @@ export class OpenAIDirectClient {
       max_output_tokens: params.maxTokens,
     };
 
-    // GPT-5.2 specific parameters
+    // GPT-5.2 specific parameters (from GPT-5 prompting guide best practices)
     if (isGPT52) {
       // Use high reasoning effort for coding tasks (user approved)
       requestParams.reasoning = { effort: "high" };
       // High verbosity for detailed code output
       requestParams.text = { verbosity: "high" };
+    }
+
+    // Pass previous_response_id to reuse reasoning context between turns
+    // This improves intelligence, reduces tokens, and lowers latency
+    if (params.previousResponseId) {
+      requestParams.previous_response_id = params.previousResponseId;
     }
 
     const response = await this.client.responses.create(requestParams);
@@ -216,7 +246,11 @@ export class OpenAIDirectClient {
       (response.usage?.input_tokens || 0) +
       (response.usage?.output_tokens || 0);
 
-    return { content, tokens: tokensUsed };
+    return {
+      content,
+      tokens: tokensUsed,
+      responseId: response.id, // Return for context reuse in subsequent calls
+    };
   }
 }
 
