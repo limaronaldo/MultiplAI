@@ -17,6 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Task Orchestration** - Breaks M/L/XL issues into XS subtasks
 - **Learning Memory** - Persists fix patterns across tasks
 - **Real-time Dashboard** - React UI for monitoring
+- **AI Super Review** - Multi-agent PR review with Copilot, Codex, and Jules
 
 **Stack:** TypeScript + Bun runtime + Neon PostgreSQL + Multi-LLM (Claude, GPT-5.1 Codex, Grok) + GitHub API + Linear API
 
@@ -52,7 +53,7 @@ fly logs                 # View logs
 | **Planner** | `gpt-5.1-codex-max` | high | Deep reasoning for thorough analysis |
 | **Fixer** | `gpt-5.1-codex-max` | medium | Debugging with reasoning |
 | **Reviewer** | `gpt-5.1-codex-max` | medium | Pragmatic code review |
-| **Base/Fallback** | `claude-sonnet-4-5-20250514` | - | Default for other agents |
+| **Base/Fallback** | `claude-sonnet-4-5-20250929` | - | Default for other agents |
 
 ### XS Task Model Selection (Effort-Based)
 
@@ -77,6 +78,12 @@ x-ai/grok-code-fast-1 → OpenRouterClient
 google/gemini-* → OpenRouterClient
 ```
 
+### Model Version Notes
+
+- **Claude Sonnet 4.5**: Use `claude-sonnet-4-5-20250929` (NOT `20250514` - returns 404)
+- **Claude Opus 4.5**: Use `claude-opus-4-5-20251101`
+- **GPT-5.1 Codex**: Uses OpenAI Responses API (`/v1/responses`) with `reasoning.effort`
+
 ---
 
 ## Architecture
@@ -91,6 +98,8 @@ Router receives event
 Orchestrator.process(task)
     ↓
 PlannerAgent → DoD + plan + targetFiles + effort estimate
+    ↓
+[Complexity Check] → XS/S direct, M/L breakdown
     ↓
 [Model Selection] → Choose tier based on effort + attempts
     ↓
@@ -129,7 +138,42 @@ NEW → PLANNING → PLANNING_DONE → {CODING | BREAKING_DOWN}
 
 **Fix Loop:** `TESTS_FAILED` → `FIXING` → `CODING_DONE` → `TESTING` (max 3 attempts)  
 **Review Loop:** `REVIEW_REJECTED` → `CODING` (with feedback) → `CODING_DONE`  
+**Orchestration Loop:** `BREAKDOWN_DONE` → `ORCHESTRATING` → processes subtasks → `CODING_DONE`  
 **Terminal States:** `COMPLETED`, `FAILED`
+
+---
+
+## Task Orchestration (M/L Issues)
+
+Medium and Large complexity issues are broken into XS subtasks:
+
+### Flow
+```
+M/L Issue → BreakdownAgent → subtasks[] → orchestrationState
+    ↓
+BREAKDOWN_DONE → save to session_memory
+    ↓
+ORCHESTRATING → process each subtask
+    ↓
+Aggregate diffs → single PR
+```
+
+### Key Implementation Details
+
+1. **Orchestration State Persistence** (Fixed 2025-12-12)
+   - `orchestrationState` saved to `session_memory` table via UPSERT
+   - Loaded from database when resuming orchestration
+   - Files: `src/core/orchestrator.ts`, `src/integrations/db.ts`
+
+2. **Subtask Processing**
+   - Each subtask runs through CoderAgent independently
+   - Diffs aggregated at the end
+   - Conflicts detected and resolved
+
+### Related Tables
+- `tasks` - Main task record
+- `session_memory` - Stores `orchestration` JSONB column
+- `task_events` - Audit log
 
 ---
 
@@ -169,8 +213,8 @@ NEW → PLANNING → PLANNING_DONE → {CODING | BREAKING_DOWN}
 - **Files:** `src/core/memory/static-memory-store.ts`
 
 ### 2. Session Memory (per-task)
-- **Storage:** Database
-- **Contents:** Task phase, progress log, attempt history, agent outputs
+- **Storage:** Database (`session_memory` table)
+- **Contents:** Task phase, progress log, attempt history, orchestration state
 - **Key:** Progress log is append-only ledger for audit trail
 - **Files:** `src/core/memory/session-memory-store.ts`
 
@@ -189,32 +233,59 @@ NEW → PLANNING → PLANNING_DONE → {CODING | BREAKING_DOWN}
 
 ---
 
-## Multi-Agent Consensus System
+## AI Super Review (Multi-Agent PR Review)
 
-When enabled (`MULTI_AGENT_MODE=true`), runs 3 models in parallel:
+Orchestrates Copilot, Codex, and Jules for comprehensive PR reviews.
 
-```
-Issue/Plan
-    ↓
-┌───────────────────────────────────────────────┐
-│              PARALLEL EXECUTION               │
-├───────────────┬───────────────┬───────────────┤
-│ Claude Opus   │ GPT-5.2       │ Gemini 3 Pro  │
-└───────┬───────┴───────┬───────┴───────┬───────┘
-        │               │               │
-        └───────────────┼───────────────┘
-                        ↓
-                 CONSENSUS ENGINE
-                        ↓
-                  BEST SOLUTION
-```
+### Workflow Location
+`.github/workflows/ai-super-review.yml`
 
-**Consensus Strategy:**
-- Score-based voting (diff size, structure, quality)
-- Reviewer tiebreak for close scores
-- Winner selected with full transparency
+### Trigger Events
+- `pull_request: ready_for_review` - Initial trigger
+- `issue_comment: /ai rerun` - Manual retrigger
+- `issue_comment: /ai finalize` - Complete the check
 
-**Files:** `src/core/multi-runner.ts`, `src/core/consensus.ts`
+### Design Principles
+1. **Idempotent** - One trigger per SHA per agent (prevents spam)
+2. **Single Tracker** - One comment edited in place
+3. **Merge Gate** - Creates Check Run for branch protection
+4. **Fork Safe** - Blocks fork PRs by default
+
+### Agent Responsibilities
+
+| Agent | Trigger | Focus |
+|-------|---------|-------|
+| **Copilot** | Repo rules (auto) | Style, tests, edge cases, suggested fixes |
+| **Codex** | `@codex review` | Security, API contracts, downstream impact |
+| **Jules** | `@Jules` (Reactive Mode) | Correctness, alternatives, improvements |
+
+### Commands
+- `/ai rerun` - Retrigger Codex + Jules for latest commits
+- `/ai finalize` - Complete AI Super Review check
+
+### Configuration
+- `CODEX_ENABLED` - Enable/disable Codex (default: true)
+- `JULES_ENABLED` - Enable/disable Jules (default: true)
+
+### Related Files
+- `.github/workflows/ai-super-review.yml` - Workflow
+- `AGENTS.md` - Review guidelines for AI agents
+- `.github/copilot-instructions.md` - Copilot instructions
+
+---
+
+## GitHub Copilot Custom Instructions
+
+### Repository-Wide
+`.github/copilot-instructions.md` - Project context for Copilot
+
+### Path-Specific
+- `src/agents/.instructions.md` - Agent development patterns
+- `src/core/.instructions.md` - Orchestration and state machine
+- `src/integrations/.instructions.md` - LLM providers and APIs
+
+### Agent Instructions
+`AGENTS.md` - Instructions for all AI coding agents (Copilot, Codex, Jules, Claude)
 
 ---
 
@@ -309,7 +380,7 @@ src/
 │   ├── openrouter.ts           # Multi-provider access
 │   ├── github.ts               # Octokit wrapper
 │   ├── linear.ts               # Linear SDK
-│   └── db.ts                   # Tasks/events CRUD
+│   └── db.ts                   # Tasks/events/session_memory CRUD
 ├── services/
 │   ├── foreman.ts              # Local test runner
 │   └── command-executor.ts     # Shell commands
@@ -317,8 +388,15 @@ src/
     ├── migrate.ts              # DB migrations
     └── import-analyzer.ts      # Dependency analysis
 
+.github/
+├── workflows/
+│   ├── ci.yml                  # CI pipeline
+│   └── ai-super-review.yml     # Multi-agent PR review
+└── copilot-instructions.md     # Copilot repo instructions
+
 autodev-dashboard/              # React monitoring UI
 prompts/                        # LLM prompt templates
+AGENTS.md                       # AI agent instructions
 ```
 
 ---
@@ -348,7 +426,7 @@ GITHUB_WEBHOOK_SECRET=xxx      # Webhook validation
 PLANNER_MODEL=gpt-5.1-codex-max
 FIXER_MODEL=gpt-5.1-codex-max
 REVIEWER_MODEL=gpt-5.1-codex-max
-DEFAULT_LLM_MODEL=claude-sonnet-4-5-20250514
+DEFAULT_LLM_MODEL=claude-sonnet-4-5-20250929
 ```
 
 ### Features
@@ -408,7 +486,10 @@ Dockerfile, docker-compose.yml, *.pem, *.key
 | GitHub client | `src/integrations/github.ts` |
 | LLM routing | `src/integrations/llm.ts` |
 | OpenAI Direct (Codex) | `src/integrations/openai-direct.ts` |
+| Database operations | `src/integrations/db.ts` |
 | Local testing | `src/services/foreman.ts` |
+| AI Super Review | `.github/workflows/ai-super-review.yml` |
+| Agent instructions | `AGENTS.md` |
 
 ---
 
@@ -453,6 +534,9 @@ SELECT * FROM task_events WHERE task_id = 'uuid' ORDER BY created_at;
 
 -- View diff
 SELECT current_diff FROM tasks WHERE id = 'uuid';
+
+-- Check orchestration state
+SELECT orchestration FROM session_memory WHERE task_id = 'uuid';
 ```
 
 ---
@@ -476,12 +560,13 @@ Reasons:
 
 **Do NOT use:** gpt-4o, gpt-4, o1, o3, legacy models
 
-### ⚠️ NEVER USE SONNET-4, USE SONNET-4.5
+### ⚠️ CLAUDE SONNET VERSION
 
-User explicitly stated: "never use sonnet-4, we have sonnet-4.5"
+Use `claude-sonnet-4-5-20250929` (NOT `20250514` - returns 404 errors)
 
-- ✅ `claude-sonnet-4-5-20250514`
-- ❌ `claude-sonnet-4-20250514`
+- ✅ `claude-sonnet-4-5-20250929`
+- ❌ `claude-sonnet-4-5-20250514`
+- ❌ `claude-sonnet-4-20250514` (missing the 5)
 
 ---
 
@@ -495,10 +580,29 @@ User explicitly stated: "never use sonnet-4, we have sonnet-4.5"
 UPDATE tasks SET status = 'TESTS_PASSED' WHERE id = 'uuid';
 ```
 
-### Empty API responses
+### Task stuck in "BREAKDOWN_DONE"
 
-**Cause:** Transient API issue without retry.  
-**Fix:** All LLM clients have retry logic with exponential backoff. Check logs for max retries exceeded.
+**Cause:** Orchestration state not saved to database.  
+**Fix:** Fixed in 2025-12-12 - `initializeOrchestration` now uses UPSERT.  
+**Verify:** Check `session_memory` table has orchestration data:
+```sql
+SELECT orchestration FROM session_memory WHERE task_id = 'uuid';
+```
+
+### Empty API responses / JSON parse errors
+
+**Cause:** LLM returned malformed JSON or incomplete response.  
+**Fix:** 
+1. Check `parseJSON()` in `src/agents/base.ts` handles the format
+2. Retry with escalation model
+3. Check prompt templates in `prompts/`
+
+### Model returns 404
+
+**Cause:** Wrong model version string.  
+**Fix:** Use exact model IDs:
+- Claude: `claude-sonnet-4-5-20250929`, `claude-opus-4-5-20251101`
+- OpenAI: `gpt-5.1-codex-max`, `gpt-5.1-codex-mini`
 
 ### File truncation on GitHub
 
@@ -510,10 +614,26 @@ UPDATE tasks SET status = 'TESTS_PASSED' WHERE id = 'uuid';
 **Cause:** LLM output doesn't match Zod schema.  
 **Fix:** Check prompt in `prompts/`, add more examples. `BaseAgent.parseJSON()` strips markdown fences automatically.
 
-### REVIEW_REJECTED not retrying
+---
 
-**Cause:** `runCoding()` accepts `["PLANNING_DONE", "REVIEW_REJECTED"]`.  
-**Fix:** Already fixed - validates array of valid states.
+## Recent Fixes (2025-12-12)
+
+### 1. Claude Sonnet Model Version
+- **Issue:** `claude-sonnet-4-5-20250514` returning 404
+- **Fix:** Updated to `claude-sonnet-4-5-20250929` in `src/agents/base.ts`
+
+### 2. Orchestration State Persistence
+- **Issue:** Tasks in `BREAKDOWN_DONE` failed with "orchestrationState is missing"
+- **Cause:** `initializeOrchestration` used UPDATE but no row existed
+- **Fix:** Changed to UPSERT in `src/integrations/db.ts`
+
+### 3. Orchestration State Loading
+- **Issue:** State not loaded when resuming orchestration
+- **Fix:** Added `db.getOrchestrationState()` call before validation in `src/core/orchestrator.ts`
+
+### 4. AI Super Review Workflow
+- **Issue:** Spam on every push, wrong Jules trigger
+- **Fix:** Complete rewrite with idempotency, proper `@Jules` trigger, `/ai finalize` command
 
 ---
 
@@ -569,58 +689,21 @@ if (format === "codex-max") {
 
 ---
 
-## Next Steps (2025-12-12)
+## Pending Work
 
-### 1. Test New Model Configuration
-Run a test task to verify GPT-5.1 Codex models work correctly:
-```bash
-curl -X POST https://multiplai.fly.dev/api/jobs \
-  -H "Content-Type: application/json" \
-  -d '{"repo": "limaronaldo/MultiplAI", "issueNumbers": [<issue-number>]}'
-```
+### Issues #6 and #7
+Currently in NEW status, ready for processing:
+- **#6**: [Wave 2] Webhook GitHub para criar Jobs automaticamente por label/milestone (M complexity)
+- **#7**: [Wave 3] Criar boilerplate do serviço LangGraph em Python (S complexity)
 
-### 2. Dashboard Implementation (Wave 3)
-55 XS dashboard issues ready (#80-#130):
-- **Phase 1**: API Client (#80, #81, #82)
-- **Phase 2**: Task List (#83, #84, #85)
-- **Phase 3**: Task Detail (#58, #59, #60, #86, #87)
-- **Phase 4**: Jobs (#88-#94)
-- **Phase 5**: Analytics (#95-#98)
-- **Phase 6**: Logs (#99-#101)
-- **Phase 7**: Refactoring (#102-#107)
-- **Phase 8**: Costs (#75, #108, #109)
-- **Phase 9**: Theme/Mobile (#110-#113)
-- **Phase 10**: Features (#114-#118)
-- **Verification**: #119-#130
+### Dashboard Implementation (Wave 3)
+55 XS dashboard issues ready (#80-#130)
 
-Start with Phase 1:
-```bash
-curl -X POST https://multiplai.fly.dev/api/jobs \
-  -H "Content-Type: application/json" \
-  -d '{"repo": "limaronaldo/MultiplAI", "issueNumbers": [80, 81, 82]}'
-```
-
-### 3. Check Pending Issues
-Issues #23, #24 were in REVIEW_REJECTED cycle - check status:
-```bash
-curl -s https://multiplai.fly.dev/api/tasks | jq '.[] | select(.githubIssueNumber == 23 or .githubIssueNumber == 24)'
-```
-
-Reset if needed:
-```bash
-fly ssh console -a multiplai -C "bun run src/scripts/reset-tasks.ts 23 24"
-```
-
-### 4. Monitor First Task
-Watch logs during first task with new config:
-```bash
-fly logs -a multiplai
-```
-
-Verify:
-- Planner uses `gpt-5.1-codex-max` with high reasoning
-- Fixer/Reviewer use `gpt-5.1-codex-max` with medium reasoning
-- XS effort-based selection routes correctly
+### AI Super Review Setup
+1. Enable Copilot auto-review in repo Settings → Rules → Rulesets
+2. Connect Codex via codex.openai.com
+3. Connect Jules via jules.google
+4. Add `AI Super Review` as required check in branch protection
 
 ---
 
