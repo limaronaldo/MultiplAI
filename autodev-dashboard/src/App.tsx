@@ -15,6 +15,8 @@ import {
   LogsPage,
   SettingsPage,
 } from "@/pages";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { ShortcutsModal } from "@/components/ui/ShortcutsModal";
 
 type TabId = "dashboard" | "tasks" | "jobs" | "logs" | "settings";
 
@@ -40,6 +42,10 @@ function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  // Initialize keyboard shortcuts
+  const { shortcuts, isShortcutsModalOpen, setIsShortcutsModalOpen } =
+    useKeyboardShortcuts();
 
   // Determine active tab from current path
   const activeTab = pathToTab[location.pathname] || "dashboard";
@@ -77,6 +83,13 @@ function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+
+      {/* Keyboard shortcuts modal */}
+      <ShortcutsModal
+        isOpen={isShortcutsModalOpen}
+        onClose={() => setIsShortcutsModalOpen(false)}
+        shortcuts={shortcuts}
+      />
 
       {/* Notifications */}
       <NotificationToast />
