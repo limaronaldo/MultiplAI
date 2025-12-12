@@ -17,6 +17,11 @@ FROM oven/bun:1-slim
 
 WORKDIR /app
 
+# Create npm -> bun compatibility wrapper
+# This allows commands like "npm install X" to work via "bun add X"
+RUN echo '#!/bin/sh\nif [ "$1" = "install" ]; then shift; exec bun add "$@"; fi\nexec bun "$@"' > /usr/local/bin/npm && \
+    chmod +x /usr/local/bin/npm
+
 # Copy from builder
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/src ./src
