@@ -38,8 +38,10 @@ import {
   type AllowedCommand,
   type CommandResult,
 } from "../services/command-executor";
+import { getLearningMemoryStore } from "./memory/learning-memory-store";
 
 const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
+const ENABLE_LEARNING = process.env.ENABLE_LEARNING !== "false"; // Default to true
 const VALIDATE_DIFF = process.env.VALIDATE_DIFF !== "false"; // Default to true
 const EXPAND_IMPORTS = process.env.EXPAND_IMPORTS !== "false"; // Default to true
 const IMPORT_DEPTH = parseInt(process.env.IMPORT_DEPTH || "1", 10);
@@ -70,6 +72,9 @@ export class Orchestrator {
 
   // Foreman tracking
   private foremanAttempts: number = 0;
+
+  // Learning memory - track error before fix for pattern learning
+  private errorBeforeFix?: string;
 
   constructor(config: Partial<AutoDevConfig> = {}) {
     this.config = { ...defaultConfig, ...config };
@@ -168,10 +173,55 @@ export class Orchestrator {
       task.targetFiles || [],
     );
 
+    // Query for known failure modes and conventions (Issue #195)
+    let learningContext = "";
+    if (ENABLE_LEARNING) {
+      try {
+        const learningStore = getLearningMemoryStore();
+
+        // Check for known failure modes for this type of issue
+        const issueType = this.inferIssueType(task);
+        const knownFailures = await learningStore.checkFailures(
+          task.githubRepo,
+          issueType,
+        );
+
+        if (knownFailures.length > 0) {
+          const failuresContext = knownFailures
+            .slice(0, 3)
+            .map(
+              (f, i) =>
+                `${i + 1}. Approach: "${f.attemptedApproach}"\n   Why failed: ${f.whyFailed}\n   Avoid: ${f.avoidanceStrategy}`,
+            )
+            .join("\n");
+          learningContext += `\n\n## Known Failure Modes (avoid these approaches)\n${failuresContext}`;
+        }
+
+        // Get codebase conventions
+        const conventions = await learningStore.getConventions(
+          task.githubRepo,
+          0.6,
+        );
+        if (conventions.length > 0) {
+          const conventionsContext = conventions
+            .slice(0, 5)
+            .map((c) => `- [${c.category}] ${c.pattern}`)
+            .join("\n");
+          learningContext += `\n\n## Codebase Conventions (follow these patterns)\n${conventionsContext}`;
+        }
+      } catch (err) {
+        // Don't fail if learning query fails
+        logger.warn(
+          `Failed to query learning context: ${err instanceof Error ? err.message : "Unknown"}`,
+        );
+      }
+    }
+
     // Chama o Planner Agent
+    const enrichedIssueBody = task.githubIssueBody + learningContext;
     const plannerOutput = await this.planner.run({
       issueTitle: task.githubIssueTitle,
-      issueBody: task.githubIssueBody,
+      issueBody: enrichedIssueBody,
       repoContext,
     });
 
@@ -715,6 +765,9 @@ export class Orchestrator {
         logger.info("Local tests passed! Pushing to GitHub...");
         this.foremanAttempts = 0; // Reset for next task
 
+        // Record fix pattern if this was a fix (Issue #195)
+        await this.recordFixPattern(task);
+
         // Push the changes now that local tests pass
         await this.github.applyDiff(
           task.githubRepo,
@@ -764,6 +817,8 @@ export class Orchestrator {
     );
 
     if (checkResult.success) {
+      // Record fix pattern if this was a fix (Issue #195)
+      await this.recordFixPattern(task);
       return this.updateStatus(task, "TESTS_PASSED");
     } else {
       task.lastError = checkResult.errorSummary;
@@ -833,6 +888,9 @@ export class Orchestrator {
       "Cannot run fix",
     );
 
+    // Store error before fix for learning (Issue #195)
+    this.errorBeforeFix = task.lastError;
+
     task = this.updateStatus(task, "FIXING");
     await this.logEvent(task, "FIXED", "fixer");
 
@@ -842,11 +900,37 @@ export class Orchestrator {
       task.branchName,
     );
 
+    // Query for known fix patterns (Issue #195)
+    let enrichedErrorLogs = task.lastError || "";
+    if (ENABLE_LEARNING) {
+      try {
+        const learningStore = getLearningMemoryStore();
+        const knownPatterns = await learningStore.findFixPatterns(
+          task.githubRepo,
+          task.lastError || "",
+          3, // Top 3 matching patterns
+        );
+
+        if (knownPatterns.length > 0) {
+          const patternsContext = knownPatterns
+            .map(
+              (p, i) =>
+                `${i + 1}. Error: "${p.errorPattern}"\n   Fix type: ${p.fixType}\n   Strategy: ${p.fixStrategy}\n   Success rate: ${(p.successRate * 100).toFixed(0)}%`,
+            )
+            .join("\n");
+
+          enrichedErrorLogs += `\n\n## Known Fix Patterns (from previous similar errors)\n${patternsContext}`;
+        }
+      } catch (err) {
+        // Don't fail if learning query fails
+      }
+    }
+
     const fixerInput = {
       definitionOfDone: task.definitionOfDone || [],
       plan: task.plan || [],
       currentDiff: task.currentDiff || "",
-      errorLogs: task.lastError || "",
+      errorLogs: enrichedErrorLogs,
       fileContents,
     };
 
@@ -1250,6 +1334,9 @@ export class Orchestrator {
       logger.error(`Stack trace: ${error.stack}`);
     }
 
+    // Record failure mode for learning (Issue #195)
+    await this.recordFailureMode(task, error);
+
     // Post comment to GitHub issue if enabled
     if (COMMENT_ON_FAILURE) {
       try {
@@ -1450,5 +1537,125 @@ This PR was generated automatically. Please review carefully before merging.
 `;
 
     return body.trim();
+  }
+
+  // ============================================
+  // Learning Memory (Issue #195)
+  // ============================================
+
+  /**
+   * Record a successful fix pattern for future learning
+   */
+  private async recordFixPattern(task: Task): Promise<void> {
+    if (!ENABLE_LEARNING || !this.errorBeforeFix || !task.currentDiff) {
+      return;
+    }
+
+    const logger = this.getLogger(task);
+
+    try {
+      const learningStore = getLearningMemoryStore();
+      await learningStore.storeFixPattern(
+        task.githubRepo,
+        this.errorBeforeFix,
+        task.currentDiff,
+        task.id,
+      );
+      logger.info("Recorded fix pattern for learning");
+      this.errorBeforeFix = undefined; // Clear after recording
+    } catch (error) {
+      // Don't fail the task if learning fails
+      logger.warn(
+        `Failed to record fix pattern: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+    }
+  }
+
+  /**
+   * Record a failure mode when max attempts reached
+   */
+  private async recordFailureMode(
+    task: Task,
+    error: OrchestratorError,
+  ): Promise<void> {
+    if (!ENABLE_LEARNING) {
+      return;
+    }
+
+    const logger = this.getLogger(task);
+
+    try {
+      const learningStore = getLearningMemoryStore();
+
+      // Infer issue type from title/body
+      const issueType = this.inferIssueType(task);
+
+      await learningStore.storeFailure(
+        task.githubRepo,
+        issueType,
+        [task.githubIssueTitle], // Issue patterns
+        task.plan?.join("; ") || "Unknown approach", // Attempted approach
+        error.message, // Why it failed
+        [task.lastError || error.message].filter(Boolean), // Error messages
+        this.suggestAvoidanceStrategy(error), // Avoidance strategy
+        undefined, // Alternative approach - could be enhanced later
+      );
+      logger.info("Recorded failure mode for learning");
+    } catch (err) {
+      // Don't fail the task if learning fails
+      logger.warn(
+        `Failed to record failure mode: ${err instanceof Error ? err.message : "Unknown error"}`,
+      );
+    }
+  }
+
+  /**
+   * Infer issue type from task metadata
+   */
+  private inferIssueType(task: Task): string {
+    const title = task.githubIssueTitle.toLowerCase();
+    const body = (task.githubIssueBody || "").toLowerCase();
+
+    if (
+      title.includes("bug") ||
+      title.includes("fix") ||
+      body.includes("error")
+    ) {
+      return "bug_fix";
+    }
+    if (
+      title.includes("feat") ||
+      title.includes("add") ||
+      title.includes("implement")
+    ) {
+      return "feature";
+    }
+    if (title.includes("refactor") || title.includes("improve")) {
+      return "refactor";
+    }
+    if (title.includes("test")) {
+      return "test";
+    }
+    return "other";
+  }
+
+  /**
+   * Suggest how to avoid this failure in the future
+   */
+  private suggestAvoidanceStrategy(error: OrchestratorError): string {
+    switch (error.code) {
+      case "MAX_ATTEMPTS_REACHED":
+        return "Issue may be too complex for automated resolution. Consider breaking into smaller tasks.";
+      case "INVALID_DIFF":
+        return "Diff generation or application failed. Ensure target files exist and diff format is valid.";
+      case "TYPECHECK_FAILED":
+        return "Type errors persisted. Include type definitions in context and verify imports.";
+      case "COMMAND_FAILED":
+        return "Command execution failed. Verify command is allowed and dependencies are installed.";
+      case "SUBTASK_FAILED":
+        return "Subtask processing failed. Consider simpler decomposition or manual intervention.";
+      default:
+        return "Review error logs and consider manual intervention or simplified approach.";
+    }
   }
 }

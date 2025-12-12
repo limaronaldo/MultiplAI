@@ -123,6 +123,41 @@ async function migrate() {
   `;
   console.log("✅ Added metadata column to task_events");
 
+  // Learning memory tables (v0.5) - cross-task learning
+  await sql`
+    CREATE TABLE IF NOT EXISTS learning_fix_patterns (
+      id UUID PRIMARY KEY,
+      repo VARCHAR(255) NOT NULL,
+      data JSONB NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_fix_patterns_repo ON learning_fix_patterns(repo)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS learning_conventions (
+      id UUID PRIMARY KEY,
+      repo VARCHAR(255) NOT NULL,
+      data JSONB NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_conventions_repo ON learning_conventions(repo)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS learning_failures (
+      id UUID PRIMARY KEY,
+      repo VARCHAR(255) NOT NULL,
+      data JSONB NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_failures_repo ON learning_failures(repo)`;
+  console.log("✅ Created learning memory tables");
+
   console.log("\n✨ Migrations complete!");
 
   await sql.end();

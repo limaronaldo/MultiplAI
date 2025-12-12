@@ -134,3 +134,38 @@ export {
   initMemoryManager,
   resetMemoryManager,
 } from "./memory-manager";
+
+// =============================================================================
+// LEARNING MEMORY - Cross-task patterns and knowledge
+// =============================================================================
+
+export {
+  // Schemas
+  FixPatternSchema,
+  CodebaseConventionSchema,
+  FailureModeSchema,
+  LearningSummarySchema,
+
+  // Types
+  type FixPattern,
+  type CodebaseConvention,
+  type FailureMode,
+  type LearningSummary,
+
+  // Helpers
+  createFixPattern,
+  createConvention,
+  createFailureMode,
+  updateFixPatternStats,
+  updateConventionConfidence,
+  applyFixPatternDecay,
+  extractErrorPattern,
+  categorizeError,
+} from "./learning-types";
+
+// Learning Memory Store
+export {
+  LearningMemoryStore,
+  getLearningMemoryStore,
+  resetLearningMemoryStore,
+} from "./learning-memory-store";
