@@ -569,4 +569,59 @@ if (format === "codex-max") {
 
 ---
 
+## Next Steps (2025-12-12)
+
+### 1. Test New Model Configuration
+Run a test task to verify GPT-5.1 Codex models work correctly:
+```bash
+curl -X POST https://multiplai.fly.dev/api/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"repo": "limaronaldo/MultiplAI", "issueNumbers": [<issue-number>]}'
+```
+
+### 2. Dashboard Implementation (Wave 3)
+55 XS dashboard issues ready (#80-#130):
+- **Phase 1**: API Client (#80, #81, #82)
+- **Phase 2**: Task List (#83, #84, #85)
+- **Phase 3**: Task Detail (#58, #59, #60, #86, #87)
+- **Phase 4**: Jobs (#88-#94)
+- **Phase 5**: Analytics (#95-#98)
+- **Phase 6**: Logs (#99-#101)
+- **Phase 7**: Refactoring (#102-#107)
+- **Phase 8**: Costs (#75, #108, #109)
+- **Phase 9**: Theme/Mobile (#110-#113)
+- **Phase 10**: Features (#114-#118)
+- **Verification**: #119-#130
+
+Start with Phase 1:
+```bash
+curl -X POST https://multiplai.fly.dev/api/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"repo": "limaronaldo/MultiplAI", "issueNumbers": [80, 81, 82]}'
+```
+
+### 3. Check Pending Issues
+Issues #23, #24 were in REVIEW_REJECTED cycle - check status:
+```bash
+curl -s https://multiplai.fly.dev/api/tasks | jq '.[] | select(.githubIssueNumber == 23 or .githubIssueNumber == 24)'
+```
+
+Reset if needed:
+```bash
+fly ssh console -a multiplai -C "bun run src/scripts/reset-tasks.ts 23 24"
+```
+
+### 4. Monitor First Task
+Watch logs during first task with new config:
+```bash
+fly logs -a multiplai
+```
+
+Verify:
+- Planner uses `gpt-5.1-codex-max` with high reasoning
+- Fixer/Reviewer use `gpt-5.1-codex-max` with medium reasoning
+- XS effort-based selection routes correctly
+
+---
+
 _Last updated: 2025-12-12_
