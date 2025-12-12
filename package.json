@@ -22,6 +22,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
     "@linear/sdk": "^29.0.0",
+    "@modelcontextprotocol/sdk": "^1.24.3",
     "@openrouter/sdk": "^0.2.9",
     "octokit": "^4.0.2",
     "openai": "^6.10.0",
@@ -30,6 +31,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@cfworker/json-schema": "^4.1.1",
     "@types/bun": "^1.1.14",
     "typescript": "^5.7.2"
   }
