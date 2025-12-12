@@ -1617,4 +1617,37 @@ gh issue create --repo limaronaldo/MultiplAI \
 
 ---
 
-_Última atualização: 2025-12-11 21:00 UTC_
+## Known Architectural Issues (2025-12-12)
+
+These issues were identified during the #195 learning memory implementation:
+
+### Critical Issues
+
+| Issue | Location | Impact | Priority |
+|-------|----------|--------|----------|
+| **Single-step processing** | `router.ts:189-213`, `orchestrator.ts:109-147` | Tasks stop at PLANNING_DONE, never advance | P0 |
+| **Missing DB persistence** | `db.ts:57-202` | commit_message, commands, multi_file_plan, orchestration_state lost on restart | P0 |
+| **Orchestration not persisted** | `orchestrator.ts:206-246` | Parent tasks can't resume after crash | P0 |
+
+### High Priority Issues
+
+| Issue | Location | Impact | Priority |
+|-------|----------|--------|----------|
+| **CI check handling broken** | `router.ts:219-283`, `state-machine.ts:73-105` | TESTING tasks stuck, no PR/SHA correlation | P1 |
+| **Foreman shell injection risk** | `foreman.ts:172-210, 265-304, 452-456` | Token in process list, unsanitized branch/repo | P1 |
+| **Invalid aggregated diffs** | `aggregator.ts:56-94, 164-185` | Deletions dropped, can't apply combined diffs | P1 |
+| **Safety config unenforced** | `types.ts:546-562` | allowedRepos/allowedPaths never checked | P1 |
+
+### Recommended Fixes
+
+1. **Task Runner Loop**: Add a runner that keeps calling `process()` until terminal/waiting state
+2. **Full DB Persistence**: Add missing columns and update `updateTask()` to persist all state
+3. **Orchestration State**: Use `initializeOrchestration` and store in session_memory
+4. **CI Correlation**: Match check_run to specific branch/PR, update from conclusion
+5. **Foreman Security**: Use `spawn` with args array, pass token via env
+6. **Diff Aggregation**: Implement proper hunk merging or re-apply each patch
+7. **Safety Enforcement**: Add path/repo checks in orchestrator before processing
+
+---
+
+_Última atualização: 2025-12-12 09:30 UTC_
