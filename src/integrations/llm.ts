@@ -107,14 +107,15 @@ export function getProviderForModel(model: string): LLMProvider {
     return MODEL_PROVIDERS[model];
   }
 
+  // Check if it's an OpenAI Direct model (GPT-5.1 Codex, O4) - MUST be checked BEFORE GPT52_MODELS
+  // because GPT52_MODELS includes "gpt-5.1" which would match "gpt-5.1-codex-max" via startsWith
+  if (OPENAI_DIRECT_MODELS.some((m) => model.includes(m) || model === m)) {
+    return "openai-direct";
+  }
+
   // Check if it's a GPT-5.2 model - route to OpenRouter
   if (GPT52_MODELS.some((m) => model === m || model.startsWith(m))) {
     return "openrouter";
-  }
-
-  // Check if it's an OpenAI Direct model (GPT-5.1 Codex, O4)
-  if (OPENAI_DIRECT_MODELS.some((m) => model.includes(m) || model === m)) {
-    return "openai-direct";
   }
 
   // OpenRouter models have provider prefix (e.g., "anthropic/claude-3.5-sonnet")
