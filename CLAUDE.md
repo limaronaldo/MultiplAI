@@ -795,4 +795,109 @@ Dockerfile, docker-compose.yml, *.pem, *.key
 
 ---
 
+## Production Optimization Roadmap (Planned)
+
+> **Status:** Issues created - see #238-#245
+
+Based on OpenAI's production best practices, the following optimizations are planned:
+
+### Cost Optimization (50% savings potential)
+
+| Feature | Issue | Description | Savings |
+|---------|-------|-------------|---------|
+| **Batch API** | #242 | Async processing for non-urgent tasks | 50% |
+| **Flex Processing** | #243 | Sync requests at batch prices | 50% |
+| **Prompt Caching** | #240 | Cache repeated context (system prompts, repo info) | 20-30% |
+| **Distillation** | #241 | Train smaller models from successful outputs | 70-90% |
+
+### Quality & Reliability
+
+| Feature | Issue | Description |
+|---------|-------|-------------|
+| **Evals Framework** | #238 | Track task success rates, diff quality, model performance |
+| **Input Guardrails** | #239 | Validate issues before processing (moderation, clarity) |
+| **Prompt Optimizer** | #244 | Auto-improve prompts using OpenAI Platform |
+
+### Advanced Capabilities
+
+| Feature | Issue | Description |
+|---------|-------|-------------|
+| **Computer Use Agent** | #245 | Visual testing with CUA for UI verification |
+
+### The Evaluation Flywheel
+
+OpenAI recommends continuous improvement via:
+
+```
+    ┌─────────────┐
+    │   ANALYZE   │ ← Review failures, annotate
+    └──────┬──────┘
+           ↓
+    ┌─────────────┐
+    │   MEASURE   │ ← Automated graders, evals
+    └──────┬──────┘
+           ↓
+    ┌─────────────┐
+    │   IMPROVE   │ ← Prompt optimization
+    └──────┬──────┘
+           └────→ Repeat
+```
+
+### OpenAI API Features to Leverage
+
+| Feature | API | Use Case |
+|---------|-----|----------|
+| **Batch API** | `/v1/batches` | Overnight processing, evals |
+| **Flex Processing** | `service_tier: "flex"` | Low-priority tasks |
+| **Responses API** | `/v1/responses` | GPT-5.2 with reasoning.effort |
+| **Computer Use** | `computer-use-preview` | Visual testing |
+| **Prompt Optimizer** | Platform UI | Auto-improve prompts |
+| **Datasets** | Platform UI | Collect data for optimization |
+
+### Cost Optimization Strategies
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    COST REDUCTION LEVERS                     │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  1. Effort-Based Routing (IMPLEMENTED)                      │
+│     XS-low → Grok Fast ($0.01) vs Multi-agent ($0.50)       │
+│                                                             │
+│  2. Batch API (PLANNED #242)                                │
+│     50% discount for async processing                       │
+│                                                             │
+│  3. Flex Processing (PLANNED #243)                          │
+│     50% discount for slower sync requests                   │
+│                                                             │
+│  4. Prompt Caching (PLANNED #240)                           │
+│     Reduce repeated tokens (system prompts, repo context)   │
+│                                                             │
+│  5. Distillation (PLANNED #241)                             │
+│     Fine-tune smaller models from successful outputs        │
+│     Opus → gpt-4o-mini for XS tasks                         │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Implementation Priority
+
+**Phase 1: Quick Wins**
+- #240 Prompt Caching (low effort, immediate benefit)
+- #243 Flex Processing (simple flag, 50% savings)
+
+**Phase 2: Infrastructure**
+- #238 Evals Framework (foundation for optimization)
+- #239 Input Guardrails (reduce wasted compute)
+
+**Phase 3: Advanced**
+- #242 Batch API (async infrastructure)
+- #241 Distillation Pipeline (training infrastructure)
+- #244 Prompt Optimizer (Platform integration)
+
+**Phase 4: Experimental**
+- #245 Computer Use Agent (visual testing)
+
+---
+
 _Last updated: 2025-12-12_
