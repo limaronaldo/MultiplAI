@@ -83,18 +83,22 @@ function getOpenAIDirectClient(): OpenAIDirectClient {
 }
 
 // Models that should use OpenAI Direct client (responses API for Codex)
+// Note: gpt-5.2 models are routed to OpenRouter with openai/ prefix
 const OPENAI_DIRECT_MODELS = [
-  "gpt-5.2",
-  "gpt-5.2-thinking",
-  "gpt-5.2-instant",
-  "gpt-5.2-2025-12-11",
   "gpt-5.1-codex",
   "gpt-5.1-codex-max",
   "gpt-5.1-codex-mini",
-  "gpt-5.1-2025-11-13",
-  "gpt-5.1",
   "o4-mini",
   "o4",
+];
+
+// GPT-5.2 models - route to OpenRouter with openai/ prefix
+const GPT52_MODELS = [
+  "gpt-5.2",
+  "gpt-5.2-instant",
+  "gpt-5.2-2025-12-11",
+  "gpt-5.1",
+  "gpt-5.1-2025-11-13",
 ];
 
 export function getProviderForModel(model: string): LLMProvider {
@@ -103,7 +107,12 @@ export function getProviderForModel(model: string): LLMProvider {
     return MODEL_PROVIDERS[model];
   }
 
-  // Check if it's an OpenAI Direct model (GPT-5.1, Codex, O4)
+  // Check if it's a GPT-5.2 model - route to OpenRouter
+  if (GPT52_MODELS.some((m) => model === m || model.startsWith(m))) {
+    return "openrouter";
+  }
+
+  // Check if it's an OpenAI Direct model (GPT-5.1 Codex, O4)
   if (OPENAI_DIRECT_MODELS.some((m) => model.includes(m) || model === m)) {
     return "openai-direct";
   }
@@ -148,8 +157,18 @@ export class LLMClient {
           userPrompt: params.userPrompt,
           reasoningEffort: params.reasoningEffort,
         });
-      case "openrouter":
-        return getOpenRouterClient().complete(params);
+      case "openrouter": {
+        // Add openai/ prefix for gpt-5.2 models going through OpenRouter
+        let model = params.model;
+        if (
+          GPT52_MODELS.some(
+            (m) => params.model === m || params.model.startsWith(m),
+          )
+        ) {
+          model = `openai/${params.model}`;
+        }
+        return getOpenRouterClient().complete({ ...params, model });
+      }
       case "anthropic":
       default:
         return getAnthropicClient().complete(params);

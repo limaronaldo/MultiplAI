@@ -24,7 +24,6 @@ interface CompletionResult {
 // GPT-5.2 works best with Responses API for CoT passing
 const RESPONSES_API_MODELS = [
   "gpt-5.2",
-  "gpt-5.2-thinking",
   "gpt-5.2-instant",
   "gpt-5.2-2025-12-11",
   "gpt-5.2-pro",
@@ -36,7 +35,6 @@ const RESPONSES_API_MODELS = [
 // Models that require max_completion_tokens instead of max_tokens
 const REASONING_MODELS = [
   "gpt-5.2",
-  "gpt-5.2-thinking",
   "gpt-5.2-instant",
   "gpt-5.2-2025-12-11",
   "gpt-5.1-2025-11-13",
