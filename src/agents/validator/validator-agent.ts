@@ -727,7 +727,8 @@ export class ValidatorAgent {
     return new Promise((resolve) => {
       const child = spawn(cmd, args, {
         cwd: options.cwd,
-        shell: true,
+        shell: false,
+        env: { ...process.env, CI: "true", FORCE_COLOR: "0" },
         timeout: this.timeout,
       });
 

@@ -546,7 +546,7 @@ Reasons:
 |------|-------|----------|
 | Fast | `x-ai/grok-code-fast-1` | OpenRouter |
 | Standard | `claude-opus-4-5-20251101` | Anthropic Direct |
-| Multi | `claude-opus-4-5-20251101`, `gpt-4o`, `google/gemini-2.0-flash-exp` | Mixed |
+| Multi | `claude-opus-4-5-20251101`, `gpt-5.2`, `x-ai/grok-code-fast-1` | Mixed |
 | Thinking | `o1`, `o3-mini` | OpenAI Direct |
 
 ---

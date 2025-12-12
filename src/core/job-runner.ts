@@ -7,6 +7,7 @@ import {
   defaultJobRunnerConfig,
 } from "./types";
 import { Orchestrator } from "./orchestrator";
+import { getNextAction } from "./state-machine";
 import { db } from "../integrations/db";
 import { dbJobs } from "../integrations/db-jobs";
 
@@ -165,6 +166,14 @@ export class JobRunner {
         currentTask.status !== "FAILED" &&
         currentTask.status !== "WAITING_HUMAN"
       ) {
+        // Stop if the state machine indicates we're waiting on external input
+        if (getNextAction(currentTask.status) === "WAIT") {
+          console.log(
+            `[JobRunner] Task ${taskId} reached WAIT state (${currentTask.status}), stopping`,
+          );
+          break;
+        }
+
         // Check if job was cancelled
         const job = await dbJobs.getJob(jobId);
         if (job?.status === "cancelled") {

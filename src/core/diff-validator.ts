@@ -67,9 +67,14 @@ async function runCommand(
   args: string[],
   cwd: string,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  envOverrides: Record<string, string | undefined> = {},
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const proc = spawn(command, args, { cwd, shell: true });
+    const proc = spawn(command, args, {
+      cwd,
+      shell: false,
+      env: { ...process.env, ...envOverrides },
+    });
     let stdout = "";
     let stderr = "";
     let killed = false;
@@ -131,50 +136,44 @@ async function cloneRepo(
   // This prevents token leakage in error messages/logs
   const repoUrl = `https://github.com/${repoFullName}.git`;
 
-  // Set up git to use token via credential helper
-  await runCommand(
-    "git",
-    ["config", "--global", "credential.helper", "store"],
-    tempDir,
-    10000,
-  );
-
   // Write credentials to temp file that git will use
   const credentialFile = path.join(tempDir, ".git-credentials");
   fs.writeFileSync(credentialFile, `https://oauth2:${token}@github.com\n`, {
     mode: 0o600,
   });
 
-  // Configure git to use this credential file
   const envWithCredentials = {
-    ...process.env,
     GIT_ASKPASS: "echo",
     GIT_TERMINAL_PROMPT: "0",
   };
 
   // Try cloning the specific branch first
-  const cloneResult = await runCommand(
-    "git",
-    [
-      "-c",
-      `credential.helper=store --file=${credentialFile}`,
-      "clone",
-      "--depth",
-      "1",
-      "--branch",
-      branch,
-      repoUrl,
-      ".",
-    ],
-    tempDir,
-    60000, // 1 minute timeout for clone
-  );
-
-  // Clean up credentials file immediately
+  let cloneResult: { exitCode: number; stdout: string; stderr: string };
   try {
-    fs.unlinkSync(credentialFile);
-  } catch {
-    // Ignore
+    cloneResult = await runCommand(
+      "git",
+      [
+        "-c",
+        `credential.helper=store --file=${credentialFile}`,
+        "clone",
+        "--depth",
+        "1",
+        "--branch",
+        branch,
+        repoUrl,
+        ".",
+      ],
+      tempDir,
+      60000, // 1 minute timeout for clone
+      envWithCredentials,
+    );
+  } finally {
+    // Clean up credentials file immediately
+    try {
+      fs.unlinkSync(credentialFile);
+    } catch {
+      // Ignore
+    }
   }
 
   if (cloneResult.exitCode !== 0) {
@@ -184,25 +183,29 @@ async function cloneRepo(
       mode: 0o600,
     });
 
-    const mainResult = await runCommand(
-      "git",
-      [
-        "-c",
-        `credential.helper=store --file=${credentialFile2}`,
-        "clone",
-        "--depth",
-        "1",
-        repoUrl,
-        ".",
-      ],
-      tempDir,
-      60000,
-    );
-
+    let mainResult: { exitCode: number; stdout: string; stderr: string };
     try {
-      fs.unlinkSync(credentialFile2);
-    } catch {
-      // Ignore
+      mainResult = await runCommand(
+        "git",
+        [
+          "-c",
+          `credential.helper=store --file=${credentialFile2}`,
+          "clone",
+          "--depth",
+          "1",
+          repoUrl,
+          ".",
+        ],
+        tempDir,
+        60000,
+        envWithCredentials,
+      );
+    } finally {
+      try {
+        fs.unlinkSync(credentialFile2);
+      } catch {
+        // Ignore
+      }
     }
 
     if (mainResult.exitCode !== 0) {

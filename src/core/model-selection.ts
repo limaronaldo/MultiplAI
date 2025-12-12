@@ -17,7 +17,7 @@
  * Current approved models (as of 2025-12-12):
  * - Fast tier: x-ai/grok-code-fast-1 (via OpenRouter)
  * - Standard tier: claude-opus-4-5-20251101 (direct Anthropic API)
- * - Multi tier: claude-opus-4-5-20251101, gpt-4o, google/gemini-2.0-flash-exp
+ * - Multi tier: claude-opus-4-5-20251101, gpt-5.2, x-ai/grok-code-fast-1
  * - Thinking tier: o1, o3-mini (direct OpenAI API)
  * ═══════════════════════════════════════════════════════════════════════════
  */
@@ -52,11 +52,7 @@ export const MODEL_TIERS: ModelTier[] = [
   },
   {
     name: "multi",
-    models: [
-      "claude-opus-4-5-20251101",
-      "gpt-4o",
-      "google/gemini-2.0-flash-exp",
-    ],
+    models: ["claude-opus-4-5-20251101", "gpt-5.2", "x-ai/grok-code-fast-1"],
     description: "Multi-agent consensus. For complex features, refactors.",
     avgCostPerTask: 0.5,
   },
