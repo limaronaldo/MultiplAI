@@ -2,6 +2,26 @@ import { AnthropicClient } from "./anthropic";
 import { OpenAIClient } from "./openai";
 import { OpenRouterClient } from "./openrouter";
 import { OpenAIDirectClient } from "./openai-direct";
+import { GPT52_CONFIGS } from "../core/model-selection";
+
+/**
+ * Resolve GPT-5.2 config name to actual model + reasoningEffort
+ *
+ * Config names like "gpt-5.2-medium" map to:
+ * - model: "gpt-5.2"
+ * - reasoningEffort: "medium"
+ */
+function resolveGPT52Config(configName: string): {
+  model: string;
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
+} {
+  const config = GPT52_CONFIGS[configName as keyof typeof GPT52_CONFIGS];
+  if (config) {
+    return config;
+  }
+  // Not a config name, return as-is
+  return { model: configName };
+}
 
 export type LLMProvider =
   | "anthropic"
@@ -82,23 +102,24 @@ function getOpenAIDirectClient(): OpenAIDirectClient {
   return openaiDirectClient;
 }
 
-// Models that should use OpenAI Direct client (responses API for Codex)
-// Note: gpt-5.2 models are routed to OpenRouter with openai/ prefix
+// Models that should use OpenAI Direct client (responses API)
+// GPT-5.2 and GPT-5.1 Codex models use OpenAI SDK directly
 const OPENAI_DIRECT_MODELS = [
+  "gpt-5.2",
+  "gpt-5.2-instant",
+  "gpt-5.2-2025-12-11",
+  // GPT-5.2 config names (internal)
+  "gpt-5.2-none",
+  "gpt-5.2-low",
+  "gpt-5.2-medium",
+  "gpt-5.2-high",
+  "gpt-5.2-xhigh",
+  // GPT-5.1 Codex
   "gpt-5.1-codex",
   "gpt-5.1-codex-max",
   "gpt-5.1-codex-mini",
   "o4-mini",
   "o4",
-];
-
-// GPT-5.2 models - route to OpenRouter with openai/ prefix
-const GPT52_MODELS = [
-  "gpt-5.2",
-  "gpt-5.2-instant",
-  "gpt-5.2-2025-12-11",
-  "gpt-5.1",
-  "gpt-5.1-2025-11-13",
 ];
 
 export function getProviderForModel(model: string): LLMProvider {
@@ -107,15 +128,9 @@ export function getProviderForModel(model: string): LLMProvider {
     return MODEL_PROVIDERS[model];
   }
 
-  // Check if it's an OpenAI Direct model (GPT-5.1 Codex, O4) - MUST be checked BEFORE GPT52_MODELS
-  // because GPT52_MODELS includes "gpt-5.1" which would match "gpt-5.1-codex-max" via startsWith
+  // Check if it's an OpenAI Direct model (GPT-5.2, GPT-5.1 Codex, O4)
   if (OPENAI_DIRECT_MODELS.some((m) => model.includes(m) || model === m)) {
     return "openai-direct";
-  }
-
-  // Check if it's a GPT-5.2 model - route to OpenRouter
-  if (GPT52_MODELS.some((m) => model === m || model.startsWith(m))) {
-    return "openrouter";
   }
 
   // OpenRouter models have provider prefix (e.g., "anthropic/claude-3.5-sonnet")
@@ -143,36 +158,34 @@ export function getProviderForModel(model: string): LLMProvider {
 
 export class LLMClient {
   async complete(params: CompletionParams): Promise<string> {
-    const provider = getProviderForModel(params.model);
+    // Resolve GPT-5.2 config names (e.g., gpt-5.2-medium → model: gpt-5.2, effort: medium)
+    const resolved = resolveGPT52Config(params.model);
+    const actualModel = resolved.model;
+    const reasoningEffort = resolved.reasoningEffort || params.reasoningEffort;
+
+    const provider = getProviderForModel(actualModel);
 
     switch (provider) {
       case "openai":
-        return getOpenAIClient().complete(params);
+        return getOpenAIClient().complete({ ...params, model: actualModel });
       case "openai-direct":
         // Pass reasoningEffort for GPT-5.2 models
         return getOpenAIDirectClient().complete({
-          model: params.model,
+          model: actualModel,
           maxTokens: params.maxTokens,
           temperature: params.temperature,
           systemPrompt: params.systemPrompt,
           userPrompt: params.userPrompt,
-          reasoningEffort: params.reasoningEffort,
+          reasoningEffort,
         });
-      case "openrouter": {
-        // Add openai/ prefix for gpt-5.2 models going through OpenRouter
-        let model = params.model;
-        if (
-          GPT52_MODELS.some(
-            (m) => params.model === m || params.model.startsWith(m),
-          )
-        ) {
-          model = `openai/${params.model}`;
-        }
-        return getOpenRouterClient().complete({ ...params, model });
-      }
+      case "openrouter":
+        return getOpenRouterClient().complete({
+          ...params,
+          model: actualModel,
+        });
       case "anthropic":
       default:
-        return getAnthropicClient().complete(params);
+        return getAnthropicClient().complete({ ...params, model: actualModel });
     }
   }
 }

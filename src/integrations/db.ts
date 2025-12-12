@@ -391,7 +391,11 @@ export const db = {
       outputSummary: row.output_summary,
       tokensUsed: row.tokens_used,
       durationMs: row.duration_ms,
-      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+      metadata: row.metadata
+        ? typeof row.metadata === "string"
+          ? JSON.parse(row.metadata)
+          : row.metadata
+        : null,
       createdAt: new Date(row.created_at),
     };
   },

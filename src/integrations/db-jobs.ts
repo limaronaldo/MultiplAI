@@ -268,6 +268,11 @@ export const dbJobs = {
       tokensUsed: row.tokens_used,
       durationMs: row.duration_ms,
       createdAt: new Date(row.created_at),
+      metadata: row.metadata
+        ? typeof row.metadata === "string"
+          ? JSON.parse(row.metadata)
+          : row.metadata
+        : null,
     };
   },
 };

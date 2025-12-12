@@ -16,10 +16,19 @@
  *
  * Current approved models (as of 2025-12-12):
  * - Planner: gpt-5.1-codex-max (high reasoning)
- * - Coder: claude-opus-4-5-20251101 → gpt-5.1-codex-mini → gpt-5.1-codex-max (escalation)
+ * - Coder XS: gpt-5.2 (effort-based) → gpt-5.2 (xhigh) → Claude Opus 4.5
+ * - Coder S/M: gpt-5.2 (high) → gpt-5.2 (xhigh) → Claude Opus 4.5
  * - Fixer: gpt-5.1-codex-max (medium reasoning)
  * - Reviewer: gpt-5.1-codex-max (medium reasoning)
  * - Fallback: claude-sonnet-4-5-20250514
+ *
+ * Escalation Path (prevents complete failures):
+ * - Attempt 0 (first try): GPT-5.2 with effort-based reasoning
+ * - Attempt 1 (1st failure): GPT-5.2 xhigh (maximum reasoning)
+ * - Attempt 2+ (2nd failure): Claude Opus 4.5 (final fallback)
+ *
+ * GPT-5.2 configurations use internal config names (e.g., gpt-5.2-medium)
+ * which map to model "gpt-5.2" with specific reasoning effort levels.
  *
  * Available models:
  * - gpt-5.1-codex-max: Long autonomous coding, high reasoning
@@ -42,34 +51,71 @@ export interface ModelTier {
 }
 
 /**
+ * GPT-5.2 Configurations
+ *
+ * All use model "gpt-5.2" but with different reasoning effort levels.
+ * Internal config names for selection logic.
+ *
+ * GPT-5.2 Reasoning Effort Levels:
+ * - none: Minimal reasoning, fastest, cheapest
+ * - low: Light reasoning
+ * - medium: Balanced reasoning
+ * - high: Thorough reasoning (default for gpt-5.2)
+ * - xhigh: Maximum reasoning (hardest problems)
+ */
+export const GPT52_CONFIGS = {
+  "gpt-5.2-none": { model: "gpt-5.2", reasoningEffort: "none" as const },
+  "gpt-5.2-low": { model: "gpt-5.2", reasoningEffort: "low" as const },
+  "gpt-5.2-medium": { model: "gpt-5.2", reasoningEffort: "medium" as const },
+  "gpt-5.2-high": { model: "gpt-5.2", reasoningEffort: "high" as const },
+  "gpt-5.2-xhigh": { model: "gpt-5.2", reasoningEffort: "xhigh" as const },
+} as const;
+
+export type GPT52ConfigName = keyof typeof GPT52_CONFIGS;
+
+/**
  * Model tiers from cheapest to most expensive
  *
  * ⚠️ DO NOT MODIFY without user approval - see header comment
  */
 export const MODEL_TIERS: ModelTier[] = [
   {
-    name: "fast",
-    models: ["x-ai/grok-code-fast-1"],
-    description: "Ultra-fast, cheap. For XS low effort tasks.",
+    name: "nano",
+    models: ["gpt-5.2-none"],
+    description: "GPT-5.2 (reasoning: none). Ultra-fast, minimal thinking.",
     avgCostPerTask: 0.01,
   },
   {
+    name: "fast",
+    models: ["gpt-5.2-low"],
+    description: "GPT-5.2 (reasoning: low). Quick with light reasoning.",
+    avgCostPerTask: 0.03,
+  },
+  {
     name: "medium",
-    models: ["gpt-5.1-codex-mini"],
-    description: "Fast codex model with high reasoning. For XS medium effort.",
-    avgCostPerTask: 0.05,
+    models: ["gpt-5.2-medium"],
+    description: "GPT-5.2 (reasoning: medium). Balanced speed/quality.",
+    avgCostPerTask: 0.08,
   },
   {
     name: "standard",
-    models: ["claude-opus-4-5-20251101"],
-    description: "High quality. For XS high effort, S, M tasks.",
+    models: ["gpt-5.2-high"],
+    description: "GPT-5.2 (reasoning: high). Thorough reasoning for coding.",
     avgCostPerTask: 0.15,
   },
   {
     name: "thinking",
-    models: ["gpt-5.1-codex-max"],
-    description: "Deep reasoning. For escalation after failures.",
-    avgCostPerTask: 2.0,
+    models: ["gpt-5.2-xhigh"],
+    description:
+      "GPT-5.2 (reasoning: xhigh). Maximum reasoning for hard problems.",
+    avgCostPerTask: 0.5,
+  },
+  {
+    name: "fallback",
+    models: ["claude-opus-4-5-20251101"],
+    description:
+      "Claude Opus 4.5. Final fallback when GPT-5.2 escalation fails.",
+    avgCostPerTask: 0.75,
   },
 ];
 
@@ -106,39 +152,55 @@ export function selectModels(context: SelectionContext): ModelSelection {
     };
   }
 
-  // M tasks: Opus → gpt-5.1-codex-max (escalation)
+  // M tasks: gpt-5.2 (high) → gpt-5.2 (xhigh) → Claude Opus
   if (complexity === "M") {
+    if (attemptCount >= 2) {
+      return {
+        tier: "fallback",
+        models: ["claude-opus-4-5-20251101"],
+        useMultiAgent: false,
+        reason: "M complexity with 2+ failures → Claude Opus 4.5 (fallback)",
+      };
+    }
     if (attemptCount >= 1) {
       return {
         tier: "thinking",
-        models: ["gpt-5.1-codex-max"],
+        models: ["gpt-5.2-xhigh"],
         useMultiAgent: false,
-        reason: "M complexity with failures → gpt-5.1-codex-max",
+        reason: "M complexity with 1 failure → gpt-5.2 (xhigh reasoning)",
       };
     }
     return {
       tier: "standard",
-      models: ["claude-opus-4-5-20251101"],
+      models: ["gpt-5.2-high"],
       useMultiAgent: false,
-      reason: "M complexity → Claude Opus 4.5",
+      reason: "M complexity → gpt-5.2 (high reasoning)",
     };
   }
 
-  // S tasks: Opus → gpt-5.1-codex-max (escalation)
+  // S tasks: gpt-5.2 (high) → gpt-5.2 (xhigh) → Claude Opus
   if (complexity === "S") {
+    if (attemptCount >= 2) {
+      return {
+        tier: "fallback",
+        models: ["claude-opus-4-5-20251101"],
+        useMultiAgent: false,
+        reason: "S complexity with 2+ failures → Claude Opus 4.5 (fallback)",
+      };
+    }
     if (attemptCount >= 1) {
       return {
         tier: "thinking",
-        models: ["gpt-5.1-codex-max"],
+        models: ["gpt-5.2-xhigh"],
         useMultiAgent: false,
-        reason: "S complexity with failures → gpt-5.1-codex-max",
+        reason: "S complexity with 1 failure → gpt-5.2 (xhigh reasoning)",
       };
     }
     return {
       tier: "standard",
-      models: ["claude-opus-4-5-20251101"],
+      models: ["gpt-5.2-high"],
       useMultiAgent: false,
-      reason: "S complexity → Claude Opus 4.5",
+      reason: "S complexity → gpt-5.2 (high reasoning)",
     };
   }
 
@@ -149,33 +211,38 @@ export function selectModels(context: SelectionContext): ModelSelection {
 /**
  * Select models for XS tasks based on effort level
  *
- * Effort-based selection:
- * - low: x-ai/grok-code-fast-1 (fast, cheap)
- * - medium: gpt-5.1-codex-mini (high reasoning)
- * - high: claude-opus-4-5-20251101 (high quality)
+ * Effort-based selection using GPT-5.2 with different reasoning levels:
+ * - low: gpt-5.2-low (reasoning: low)
+ * - medium: gpt-5.2-medium (reasoning: medium)
+ * - high: gpt-5.2-high (reasoning: high)
+ * - undefined: gpt-5.2-medium (default)
  *
- * Escalation after failures → gpt-5.1-codex-max
+ * Escalation path:
+ * - Attempt 1: gpt-5.2 (effort-based)
+ * - Attempt 2: gpt-5.2-xhigh (max reasoning)
+ * - Attempt 3: Claude Opus 4.5 (fallback to different model)
  */
 function selectForXS(
   effort: EffortLevel | undefined,
   attemptCount: number,
 ): ModelSelection {
-  // Escalation after failures
+  // Final fallback: Claude Opus after GPT-5.2 xhigh fails
   if (attemptCount >= 2) {
     return {
-      tier: "thinking",
-      models: ["gpt-5.1-codex-max"],
+      tier: "fallback",
+      models: ["claude-opus-4-5-20251101"],
       useMultiAgent: false,
-      reason: "XS with 2+ failures → gpt-5.1-codex-max",
+      reason: "XS with 2+ failures → Claude Opus 4.5 (final fallback)",
     };
   }
 
+  // First escalation: GPT-5.2 xhigh
   if (attemptCount >= 1) {
     return {
       tier: "thinking",
-      models: ["gpt-5.1-codex-max"],
+      models: ["gpt-5.2-xhigh"],
       useMultiAgent: false,
-      reason: "XS with 1 failure → gpt-5.1-codex-max",
+      reason: "XS with 1 failure → gpt-5.2 (xhigh reasoning)",
     };
   }
 
@@ -183,27 +250,37 @@ function selectForXS(
   if (effort === "low") {
     return {
       tier: "fast",
-      models: ["x-ai/grok-code-fast-1"],
+      models: ["gpt-5.2-low"],
       useMultiAgent: false,
-      reason: "XS low effort → grok-code-fast-1",
+      reason: "XS low effort → gpt-5.2 (low reasoning)",
     };
   }
 
   if (effort === "medium") {
     return {
       tier: "medium",
-      models: ["gpt-5.1-codex-mini"],
+      models: ["gpt-5.2-medium"],
       useMultiAgent: false,
-      reason: "XS medium effort → gpt-5.1-codex-mini (high reasoning)",
+      reason: "XS medium effort → gpt-5.2 (medium reasoning)",
     };
   }
 
-  // high effort or undefined → Opus 4.5
+  // high effort
+  if (effort === "high") {
+    return {
+      tier: "standard",
+      models: ["gpt-5.2-high"],
+      useMultiAgent: false,
+      reason: "XS high effort → gpt-5.2 (high reasoning)",
+    };
+  }
+
+  // undefined effort → default to medium reasoning
   return {
-    tier: "standard",
-    models: ["claude-opus-4-5-20251101"],
+    tier: "medium",
+    models: ["gpt-5.2-medium"],
     useMultiAgent: false,
-    reason: "XS high effort → Claude Opus 4.5",
+    reason: "XS (no effort specified) → gpt-5.2 (medium reasoning)",
   };
 }
 
