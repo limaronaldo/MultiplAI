@@ -259,6 +259,132 @@ Patterns learned from previous tasks:
 
 ---
 
+## Temporal Knowledge Graph (Planned)
+
+> **Status:** Implementation planned - see issues #230-#237
+
+A graph-based memory system that tracks code entities with temporal validity, enabling queries like "What changed since last week?" and "What breaks if I modify this function?"
+
+### Why Knowledge Graph?
+
+Traditional RAG limitations:
+- Stale information stays in vector store
+- No time awareness for "when was this true?"
+- Contradictions between old/new versions
+- No relationship traversal
+
+### Architecture
+
+```
+Document/Code Ingestion
+         ↓
+┌──────────────────┐
+│ Entity Extractor │ ← LLM extracts functions, classes, APIs
+└────────┬─────────┘
+         ↓
+┌──────────────────┐
+│ Entity Resolver  │ ← Deduplicates, links to existing
+└────────┬─────────┘
+         ↓
+┌──────────────────┐
+│ Temporal Tracker │ ← Assigns valid_from/valid_until
+└────────┬─────────┘
+         ↓
+┌──────────────────┐
+│ Invalidation     │ ← Marks contradicted entities
+│ Agent            │
+└────────┬─────────┘
+         ↓
+    PostgreSQL (Neon)
+         ↓
+┌──────────────────┐
+│ Multi-Hop        │ ← Query-time relationship traversal
+│ Retriever        │
+└──────────────────┘
+```
+
+### Key Components
+
+| Component | Issue | Purpose |
+|-----------|-------|---------|
+| Entity Extraction Agent | #230 | Extract structured entities from code |
+| Entity Resolution | #231 | Deduplicate and link entities |
+| Temporal Validity Tracker | #232 | Time-bounded facts (valid_from/until) |
+| Invalidation Agent | #233 | Detect contradictions, mark superseded |
+| Multi-Hop Retrieval | #234 | Traverse relationships for impact analysis |
+| Database Schema | #235 | PostgreSQL tables and migrations |
+| Orchestrator Integration | #236 | Connect to AutoDev workflow |
+| Repository Sync | #237 | Full sync on clone, incremental on push |
+
+### Entity Types
+
+```typescript
+type EntityType = "function" | "class" | "api" | "constant" | "type";
+
+interface TemporalEntity {
+  id: string;
+  canonicalId: string;
+  type: EntityType;
+  name: string;
+  filePath: string;
+  
+  // Temporal bounds
+  validFrom: Date;
+  validUntil: Date | null;  // null = currently valid
+  commitSha: string;
+  
+  // Relationships
+  dependencies: string[];   // Entity IDs this depends on
+  dependents: string[];     // Entity IDs that depend on this
+}
+```
+
+### Use Cases for AutoDev
+
+| Use Case | Benefit |
+|----------|---------|
+| **Pre-Coding Context** | Query related entities before generating code |
+| **Impact Analysis** | "What breaks if I change X?" via multi-hop |
+| **Fix Patterns** | Link fixes to specific codebase states |
+| **Change History** | "When did this function last change?" |
+| **Dependency Tracking** | Full dependency chain with temporal validity |
+
+### Database Schema (Planned)
+
+```sql
+-- Core entities table
+CREATE TABLE knowledge_entities (
+  id UUID PRIMARY KEY,
+  canonical_id UUID NOT NULL,
+  entity_type VARCHAR(50) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  file_path TEXT NOT NULL,
+  valid_from TIMESTAMPTZ NOT NULL,
+  valid_until TIMESTAMPTZ,
+  commit_sha VARCHAR(40),
+  entity_data JSONB NOT NULL
+);
+
+-- Relationships between entities
+CREATE TABLE entity_relationships (
+  source_id UUID REFERENCES knowledge_entities(id),
+  target_id UUID REFERENCES knowledge_entities(id),
+  relationship_type VARCHAR(50),  -- imports, extends, uses
+  valid_from TIMESTAMPTZ,
+  valid_until TIMESTAMPTZ
+);
+```
+
+### Configuration (Planned)
+
+```bash
+ENABLE_KNOWLEDGE_GRAPH=true
+KNOWLEDGE_GRAPH_MAX_HOPS=3
+KNOWLEDGE_GRAPH_SYNC_ON_PUSH=true
+```
+
+---
+
 ## Local Test Runner (Foreman)
 
 Runs tests locally before pushing to GitHub:
@@ -655,6 +781,17 @@ Dockerfile, docker-compose.yml, *.pem, *.key
 | LLM routing | `src/integrations/llm.ts` |
 | OpenAI Direct (GPT-5.2) | `src/integrations/openai-direct.ts` |
 | Local testing | `src/services/foreman.ts` |
+
+### Planned (Knowledge Graph)
+
+| Purpose | File |
+|---------|------|
+| Entity extraction | `src/agents/entity-extractor.ts` |
+| Entity resolution | `src/core/knowledge-graph/entity-resolver.ts` |
+| Temporal tracking | `src/core/knowledge-graph/temporal-tracker.ts` |
+| Multi-hop retrieval | `src/core/knowledge-graph/multi-hop-retriever.ts` |
+| Invalidation agent | `src/agents/invalidation-agent.ts` |
+| KG service | `src/core/knowledge-graph/service.ts` |
 
 ---
 
