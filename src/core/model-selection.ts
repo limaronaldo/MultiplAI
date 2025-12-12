@@ -85,6 +85,8 @@ export interface SelectionContext {
 
 /**
  * Select models based on task context and escalation state
+ *
+ * NOTE: Multi-agent disabled for now - using single agent escalation only
  */
 export function selectModels(context: SelectionContext): ModelSelection {
   const { complexity, effort, attemptCount } = context;
@@ -93,53 +95,61 @@ export function selectModels(context: SelectionContext): ModelSelection {
   if (complexity === "XL" || complexity === "L") {
     return {
       tier: "standard",
-      models: MODEL_TIERS[1].models,
+      models: ["claude-opus-4-5-20251101"],
       useMultiAgent: false,
       reason: "Large tasks should be broken down into subtasks",
     };
   }
 
-  // M tasks get multi-agent by default
+  // M tasks: Opus → GPT-5.2 → Thinking
   if (complexity === "M") {
     if (attemptCount >= 2) {
       return {
         tier: "thinking",
-        models: MODEL_TIERS[3].models,
+        models: ["gpt-5.1-codex-max"],
         useMultiAgent: false,
-        reason: "M complexity with 2+ failures → thinking models",
-      };
-    }
-    return {
-      tier: "multi",
-      models: MODEL_TIERS[2].models,
-      useMultiAgent: true,
-      reason: "M complexity → multi-agent consensus",
-    };
-  }
-
-  // S tasks: standard or escalate
-  if (complexity === "S") {
-    if (attemptCount >= 2) {
-      return {
-        tier: "multi",
-        models: MODEL_TIERS[2].models,
-        useMultiAgent: true,
-        reason: "S complexity with 2+ failures → multi-agent",
+        reason: "M complexity with 2+ failures → thinking (gpt-5.1-codex-max)",
       };
     }
     if (attemptCount >= 1) {
       return {
         tier: "standard",
-        models: MODEL_TIERS[1].models,
+        models: ["gpt-5.2"],
         useMultiAgent: false,
-        reason: "S complexity with 1 failure → standard retry",
+        reason: "M complexity with 1 failure → GPT-5.2",
       };
     }
     return {
       tier: "standard",
-      models: MODEL_TIERS[1].models,
+      models: ["claude-opus-4-5-20251101"],
       useMultiAgent: false,
-      reason: "S complexity → standard models",
+      reason: "M complexity → Claude Opus 4.5",
+    };
+  }
+
+  // S tasks: Opus → GPT-5.2 → Thinking
+  if (complexity === "S") {
+    if (attemptCount >= 2) {
+      return {
+        tier: "thinking",
+        models: ["gpt-5.1-codex-max"],
+        useMultiAgent: false,
+        reason: "S complexity with 2+ failures → thinking (gpt-5.1-codex-max)",
+      };
+    }
+    if (attemptCount >= 1) {
+      return {
+        tier: "standard",
+        models: ["gpt-5.2"],
+        useMultiAgent: false,
+        reason: "S complexity with 1 failure → GPT-5.2",
+      };
+    }
+    return {
+      tier: "standard",
+      models: ["claude-opus-4-5-20251101"],
+      useMultiAgent: false,
+      reason: "S complexity → Claude Opus 4.5",
     };
   }
 
@@ -149,94 +159,40 @@ export function selectModels(context: SelectionContext): ModelSelection {
 
 /**
  * Select models for XS tasks based on effort and escalation
+ *
+ * NOTE: Multi-agent disabled - using single agent escalation:
+ * Opus 4.5 → GPT-5.2 → Thinking (gpt-5.1-codex-max)
  */
 function selectForXS(
   effort: EffortLevel | undefined,
   attemptCount: number,
 ): ModelSelection {
-  // Default to medium effort if not specified
-  const effectiveEffort = effort || "medium";
-
-  // Escalation chain based on attempts
-  if (attemptCount >= 3) {
-    return {
-      tier: "thinking",
-      models: MODEL_TIERS[3].models,
-      useMultiAgent: false,
-      reason: "XS with 3+ failures → thinking models (last resort)",
-    };
-  }
-
+  // Escalation chain based on attempts (single agent only)
   if (attemptCount >= 2) {
     return {
-      tier: "multi",
-      models: MODEL_TIERS[2].models,
-      useMultiAgent: true,
-      reason: "XS with 2+ failures → multi-agent consensus",
+      tier: "thinking",
+      models: ["gpt-5.1-codex-max"],
+      useMultiAgent: false,
+      reason: "XS with 2+ failures → thinking (gpt-5.1-codex-max)",
     };
   }
 
   if (attemptCount >= 1) {
-    // After first failure, escalate one tier
-    if (effectiveEffort === "low") {
-      return {
-        tier: "standard",
-        models: MODEL_TIERS[1].models,
-        useMultiAgent: false,
-        reason: "XS-low with 1 failure → escalate to standard",
-      };
-    }
-    if (effectiveEffort === "medium") {
-      return {
-        tier: "multi",
-        models: MODEL_TIERS[2].models,
-        useMultiAgent: true,
-        reason: "XS-medium with 1 failure → escalate to multi-agent",
-      };
-    }
-    // high effort already uses multi-agent
     return {
-      tier: "thinking",
-      models: MODEL_TIERS[3].models,
+      tier: "standard",
+      models: ["gpt-5.2"],
       useMultiAgent: false,
-      reason: "XS-high with 1 failure → escalate to thinking",
+      reason: "XS with 1 failure → GPT-5.2",
     };
   }
 
-  // First attempt: use effort-based selection
-  switch (effectiveEffort) {
-    case "low":
-      return {
-        tier: "fast",
-        models: MODEL_TIERS[0].models,
-        useMultiAgent: false,
-        reason: "XS-low effort → Grok Fast (cheapest)",
-      };
-
-    case "medium":
-      return {
-        tier: "standard",
-        models: MODEL_TIERS[1].models,
-        useMultiAgent: false,
-        reason: "XS-medium effort → standard models",
-      };
-
-    case "high":
-      return {
-        tier: "multi",
-        models: MODEL_TIERS[2].models,
-        useMultiAgent: true,
-        reason: "XS-high effort → multi-agent consensus",
-      };
-
-    default:
-      return {
-        tier: "standard",
-        models: MODEL_TIERS[1].models,
-        useMultiAgent: false,
-        reason: "XS default → standard models",
-      };
-  }
+  // First attempt: Claude Opus 4.5
+  return {
+    tier: "standard",
+    models: ["claude-opus-4-5-20251101"],
+    useMultiAgent: false,
+    reason: "XS → Claude Opus 4.5",
+  };
 }
 
 /**
