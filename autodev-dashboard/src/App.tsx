@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   Routes,
   Route,
@@ -6,7 +6,8 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom";
-import { Sidebar } from "@/components/layout/Sidebar";
+import { Sidebar, MobileNav, MobileHeader } from "@/components/layout";
+import { NotificationToast } from "@/components/ui/NotificationToast";
 import {
   DashboardPage,
   TasksPage,
@@ -38,6 +39,7 @@ const tabToPath: Record<TabId, string> = {
 function App() {
   const location = useLocation();
   const navigate = useNavigate();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // Determine active tab from current path
   const activeTab = pathToTab[location.pathname] || "dashboard";
@@ -49,9 +51,20 @@ function App() {
 
   return (
     <div className="flex h-screen bg-slate-950 text-slate-200 font-sans selection:bg-blue-500/30">
-      <Sidebar activeTab={activeTab} onTabChange={handleTabChange} />
+      {/* Desktop sidebar */}
+      <div className="hidden lg:block">
+        <Sidebar activeTab={activeTab} onTabChange={handleTabChange} />
+      </div>
 
-      <main className="ml-64 flex-1 overflow-auto bg-slate-950">
+      {/* Mobile navigation */}
+      <MobileHeader onMenuClick={() => setMobileNavOpen(true)} />
+      <MobileNav
+        isOpen={mobileNavOpen}
+        onClose={() => setMobileNavOpen(false)}
+      />
+
+      {/* Main content */}
+      <main className="flex-1 overflow-auto bg-slate-950 lg:ml-64 pt-14 lg:pt-0">
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/tasks" element={<TasksPage />} />
@@ -63,6 +76,9 @@ function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+
+      {/* Notifications */}
+      <NotificationToast />
     </div>
   );
 }

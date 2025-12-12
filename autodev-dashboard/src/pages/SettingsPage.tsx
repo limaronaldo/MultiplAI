@@ -1,5 +1,7 @@
 import React from "react";
-import { Settings, Server, Shield, Bell } from "lucide-react";
+import { Server, Shield, Bell, Palette } from "lucide-react";
+import { ThemeToggle } from "@/components/settings/ThemeToggle";
+import RepositoryConfig from "@/components/settings/RepositoryConfig";
 
 export function SettingsPage() {
   return (
@@ -10,13 +12,34 @@ export function SettingsPage() {
       </div>
 
       <div className="space-y-6">
+        {/* Theme */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-slate-800 rounded-lg text-purple-400">
+              <Palette className="w-5 h-5" />
+            </div>
+            <h3 className="text-lg font-semibold text-white">Appearance</h3>
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-300">Theme</p>
+              <p className="text-xs text-slate-500 mt-1">
+                Select your preferred color scheme
+              </p>
+            </div>
+            <ThemeToggle />
+          </div>
+        </div>
+
         {/* API Configuration */}
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 bg-slate-800 rounded-lg text-blue-400">
               <Server className="w-5 h-5" />
             </div>
-            <h3 className="text-lg font-semibold text-white">API Configuration</h3>
+            <h3 className="text-lg font-semibold text-white">
+              API Configuration
+            </h3>
           </div>
           <div className="space-y-4">
             <div>
@@ -25,7 +48,9 @@ export function SettingsPage() {
               </label>
               <input
                 type="text"
-                defaultValue={import.meta.env.VITE_API_URL || "http://localhost:8080"}
+                defaultValue={
+                  import.meta.env.VITE_API_URL || "http://localhost:8080"
+                }
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
                 disabled
               />
@@ -35,6 +60,9 @@ export function SettingsPage() {
             </div>
           </div>
         </div>
+
+        {/* Repository Config */}
+        <RepositoryConfig />
 
         {/* Notifications */}
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
@@ -46,12 +74,16 @@ export function SettingsPage() {
           </div>
           <div className="space-y-3">
             <label className="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg cursor-pointer">
-              <span className="text-sm text-slate-300">Show desktop notifications</span>
+              <span className="text-sm text-slate-300">
+                Show desktop notifications
+              </span>
               <input type="checkbox" className="sr-only peer" />
               <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600 relative"></div>
             </label>
             <label className="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg cursor-pointer">
-              <span className="text-sm text-slate-300">Sound on task completion</span>
+              <span className="text-sm text-slate-300">
+                Sound on task completion
+              </span>
               <input type="checkbox" className="sr-only peer" />
               <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600 relative"></div>
             </label>
@@ -67,8 +99,8 @@ export function SettingsPage() {
             <h3 className="text-lg font-semibold text-white">Guardrails</h3>
           </div>
           <p className="text-sm text-slate-400">
-            Guardrails are configured on the backend. The dashboard displays their status
-            but cannot modify them directly for security reasons.
+            Guardrails are configured on the backend. The dashboard displays
+            their status but cannot modify them directly for security reasons.
           </p>
         </div>
       </div>
