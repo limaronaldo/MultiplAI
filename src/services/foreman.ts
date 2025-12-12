@@ -173,6 +173,7 @@ async function executeCommand(
   command: string,
   cwd: string,
   timeout: number,
+  envOverrides: Record<string, string | undefined> = {},
 ): Promise<TestResult> {
   const startTime = Date.now();
 
@@ -180,8 +181,8 @@ async function executeCommand(
     const [cmd, ...args] = command.split(" ");
     const proc = spawn(cmd, args, {
       cwd,
-      shell: true,
-      env: { ...process.env, CI: "true", FORCE_COLOR: "0" },
+      shell: false,
+      env: { ...process.env, ...envOverrides, CI: "true", FORCE_COLOR: "0" },
     });
 
     let stdout = "";
@@ -260,48 +261,187 @@ async function executeCommand(
 }
 
 /**
+ * Execute a command with explicit args (no shell)
+ */
+async function executeCommandArgs(
+  cmd: string,
+  args: string[],
+  cwd: string,
+  timeout: number,
+  envOverrides: Record<string, string | undefined> = {},
+): Promise<TestResult> {
+  const startTime = Date.now();
+
+  return new Promise((resolve) => {
+    const proc = spawn(cmd, args, {
+      cwd,
+      shell: false,
+      env: { ...process.env, ...envOverrides, CI: "true", FORCE_COLOR: "0" },
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    proc.stdout?.on("data", (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr?.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    const timeoutId = setTimeout(() => {
+      proc.kill("SIGKILL");
+      resolve({
+        success: false,
+        exitCode: -1,
+        stdout,
+        stderr,
+        duration: Date.now() - startTime,
+        command: `${cmd} ${args.join(" ")}`,
+        errorSummary: `Test timed out after ${timeout}ms`,
+      });
+    }, timeout);
+
+    proc.on("close", (code) => {
+      clearTimeout(timeoutId);
+      const duration = Date.now() - startTime;
+      const exitCode = code ?? -1;
+      const success = exitCode === 0;
+
+      let errorSummary: string | undefined;
+      if (!success) {
+        const output = stderr || stdout;
+        const lines = output.split("\n").filter((l) => l.trim());
+        const errorLines = lines.filter(
+          (l) =>
+            l.includes("error") ||
+            l.includes("Error") ||
+            l.includes("FAIL") ||
+            l.includes("failed"),
+        );
+        errorSummary =
+          errorLines.slice(0, 10).join("\n") ||
+          lines.slice(-10).join("\n") ||
+          `Exit code: ${exitCode}`;
+      }
+
+      resolve({
+        success,
+        exitCode,
+        stdout,
+        stderr,
+        duration,
+        command: `${cmd} ${args.join(" ")}`,
+        errorSummary,
+      });
+    });
+
+    proc.on("error", (err) => {
+      clearTimeout(timeoutId);
+      resolve({
+        success: false,
+        exitCode: -1,
+        stdout,
+        stderr: stderr + "\n" + err.message,
+        duration: Date.now() - startTime,
+        command: `${cmd} ${args.join(" ")}`,
+        errorSummary: `Failed to execute: ${err.message}`,
+      });
+    });
+  });
+}
+
+/**
  * Clone a repository to a temporary directory
  */
 async function cloneRepo(
-  repoUrl: string,
+  repo: string,
   branch: string,
   targetDir: string,
+  githubToken?: string,
 ): Promise<void> {
   // Create target directory
   await fs.mkdir(targetDir, { recursive: true });
 
+  const repoUrl = `https://github.com/${repo}.git`;
+  const env = {
+    GIT_TERMINAL_PROMPT: "0",
+  };
+
+  let credentialFile: string | null = null;
+  const gitBaseArgs: string[] = [];
+
+  if (githubToken) {
+    credentialFile = path.join(targetDir, ".git-credentials");
+    await fs.writeFile(
+      credentialFile,
+      `https://oauth2:${githubToken}@github.com\n`,
+      { mode: 0o600 },
+    );
+    gitBaseArgs.push("-c", `credential.helper=store --file=${credentialFile}`);
+  }
+
+  const cleanupCredentials = async () => {
+    if (!credentialFile) return;
+    try {
+      await fs.unlink(credentialFile);
+    } catch {}
+  };
+
   // Clone with depth 1 for speed
-  const cloneResult = await executeCommand(
-    `git clone --depth 1 --branch ${branch} ${repoUrl} .`,
+  const cloneResult = await executeCommandArgs(
+    "git",
+    [...gitBaseArgs, "clone", "--depth", "1", "--branch", branch, repoUrl, "."],
     targetDir,
     60000,
+    env,
   );
 
   if (!cloneResult.success) {
     // Try cloning main and then checking out branch
-    const mainClone = await executeCommand(
-      `git clone --depth 1 ${repoUrl} .`,
+    const mainClone = await executeCommandArgs(
+      "git",
+      [...gitBaseArgs, "clone", "--depth", "1", repoUrl, "."],
       targetDir,
       60000,
+      env,
     );
 
     if (!mainClone.success) {
+      await cleanupCredentials();
       throw new Error(`Failed to clone repository: ${mainClone.errorSummary}`);
     }
 
     // Fetch and checkout branch
-    await executeCommand(`git fetch origin ${branch}`, targetDir, 30000);
-    const checkout = await executeCommand(
-      `git checkout ${branch}`,
+    await executeCommandArgs(
+      "git",
+      [...gitBaseArgs, "fetch", "origin", branch],
+      targetDir,
+      30000,
+      env,
+    );
+    const checkout = await executeCommandArgs(
+      "git",
+      [...gitBaseArgs, "checkout", branch],
       targetDir,
       10000,
+      env,
     );
 
     if (!checkout.success) {
       // Branch doesn't exist yet, create it
-      await executeCommand(`git checkout -b ${branch}`, targetDir, 10000);
+      await executeCommandArgs(
+        "git",
+        [...gitBaseArgs, "checkout", "-b", branch],
+        targetDir,
+        10000,
+        env,
+      );
     }
   }
+
+  await cleanupCredentials();
 }
 
 /**
@@ -449,13 +589,8 @@ export class ForemanService {
     );
 
     try {
-      // Build repo URL with auth
-      const repoUrl = githubToken
-        ? `https://${githubToken}@github.com/${repo}.git`
-        : `https://github.com/${repo}.git`;
-
       console.log(`[Foreman] Cloning ${repo} to ${workDir}...`);
-      await cloneRepo(repoUrl, branch, workDir);
+      await cloneRepo(repo, branch, workDir, githubToken);
 
       console.log(`[Foreman] Applying diff...`);
       await applyDiff(workDir, diff);

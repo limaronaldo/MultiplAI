@@ -125,7 +125,12 @@ export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
     });
   }
 
-  async run(input: CoderInput): Promise<CoderOutput> {
+  async run(input: CoderInput, modelOverride?: string): Promise<CoderOutput> {
+    // Allow runtime model override for effort-based selection
+    if (modelOverride) {
+      this.config.model = modelOverride;
+    }
+
     const fileContentsStr = Object.entries(input.fileContents)
       .map(([path, content]) => `### ${path}\n\`\`\`\n${content}\n\`\`\``)
       .join("\n\n");

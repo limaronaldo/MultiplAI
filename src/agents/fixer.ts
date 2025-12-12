@@ -29,6 +29,7 @@ CRITICAL RULES:
 - Keep the fix minimal
 - Ensure the fix addresses the root cause
 - Output valid unified diff format
+- The output diff must be complete (original changes + your fixes) and apply cleanly to the base branch; do NOT assume the repo already contains the diff.
 
 Respond ONLY with valid JSON:
 {
@@ -48,7 +49,12 @@ export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
     });
   }
 
-  async run(input: FixerInput): Promise<FixerOutput> {
+  async run(input: FixerInput, modelOverride?: string): Promise<FixerOutput> {
+    // Allow runtime model override for effort-based selection
+    if (modelOverride) {
+      this.config.model = modelOverride;
+    }
+
     const fileContentsStr = Object.entries(input.fileContents)
       .map(([path, content]) => `### ${path}\n\`\`\`\n${content}\n\`\`\``)
       .join("\n\n");
@@ -72,7 +78,8 @@ ${input.currentDiff}
 ${input.errorLogs}
 \`\`\`
 
-## Current File Contents (After Diff)
+## Current File Contents
+Note: depending on execution mode, these contents may reflect the base branch *before* the diff above is applied. Use \`currentDiff\` as the source of truth for the intended changes, and output a single complete diff that reaches the fixed final state.
 ${fileContentsStr}
 
 ---

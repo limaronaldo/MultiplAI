@@ -39,6 +39,11 @@ import {
   type CommandResult,
 } from "../services/command-executor";
 import { getLearningMemoryStore } from "./memory/learning-memory-store";
+import {
+  selectModels,
+  logSelection,
+  type SelectionContext,
+} from "./model-selection";
 
 const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
 const ENABLE_LEARNING = process.env.ENABLE_LEARNING !== "false"; // Default to true
@@ -279,8 +284,9 @@ export class Orchestrator {
       }
     }
 
-    // Store estimated complexity for decomposition decision
+    // Store estimated complexity and effort for model selection
     task.estimatedComplexity = plannerOutput.estimatedComplexity;
+    task.estimatedEffort = plannerOutput.estimatedEffort;
 
     // XL complexity still fails - too large even for decomposition
     if (plannerOutput.estimatedComplexity === "XL") {
@@ -589,13 +595,32 @@ export class Orchestrator {
     let coderOutput;
     const logger = this.getLogger(task);
 
-    if (this.multiAgentConfig.enabled) {
+    // Select models based on effort level and attempt count
+    const selectionContext: SelectionContext = {
+      complexity: task.estimatedComplexity || "S",
+      effort: task.estimatedEffort as "low" | "medium" | "high" | undefined,
+      attemptCount: task.attemptCount,
+      lastError: task.lastError,
+      isSubtask: !!task.parentTaskId,
+    };
+    const modelSelection = selectModels(selectionContext);
+    logSelection(selectionContext, modelSelection);
+
+    if (modelSelection.useMultiAgent) {
       // Multi-agent mode: run multiple coders in parallel
       logger.info(
-        `Running ${this.multiAgentConfig.coderCount} coders in parallel...`,
+        `Running ${modelSelection.models.length} coders in parallel (${modelSelection.tier})...`,
       );
 
-      const runner = new MultiCoderRunner(this.multiAgentConfig);
+      // Create dynamic config based on selection
+      const dynamicConfig: MultiAgentConfig = {
+        ...this.multiAgentConfig,
+        enabled: true,
+        coderCount: modelSelection.models.length,
+        coderModels: modelSelection.models,
+      };
+
+      const runner = new MultiCoderRunner(dynamicConfig);
       const candidates = await runner.run(coderInput);
 
       const result = await this.consensus.selectBestCoder(
@@ -616,8 +641,12 @@ export class Orchestrator {
       // Log consensus decision (Issue #17)
       await this.logConsensusDecision(task, "coder", result);
     } else {
-      // Single agent mode (default)
-      coderOutput = await this.coder.run(coderInput);
+      // Single agent mode - use selected model
+      const selectedModel = modelSelection.models[0];
+      logger.info(
+        `Using single coder: ${selectedModel} (${modelSelection.tier})`,
+      );
+      coderOutput = await this.coder.run(coderInput, selectedModel);
     }
 
     // Valida tamanho do diff
@@ -660,18 +689,23 @@ export class Orchestrator {
         coderOutput.diff,
         coderOutput.commitMessage,
         logger,
+        { applyToGitHub: !USE_FOREMAN },
       );
       if (!validationResult.success) {
         return validationResult.task;
       }
     } else {
-      // Skip validation, apply directly
-      await this.github.applyDiff(
-        task.githubRepo,
-        task.branchName!,
-        coderOutput.diff,
-        coderOutput.commitMessage,
-      );
+      if (!USE_FOREMAN) {
+        // Skip validation, apply directly
+        await this.github.applyDiff(
+          task.githubRepo,
+          task.branchName!,
+          coderOutput.diff,
+          coderOutput.commitMessage,
+        );
+      } else {
+        logger.info("Skipping diff apply (Foreman enabled)");
+      }
     }
 
     // Execute post-diff commands (e.g., prisma generate)
@@ -745,7 +779,7 @@ export class Orchestrator {
     this.validateTaskState(
       task,
       "CODING_DONE",
-      ["branchName"],
+      ["branchName", "currentDiff"],
       "Cannot run tests",
     );
 
@@ -801,13 +835,16 @@ export class Orchestrator {
     }
 
     // Fallback: Use GitHub Actions (original flow)
-    // Push changes first
-    await this.github.applyDiff(
-      task.githubRepo,
-      task.branchName!,
-      task.currentDiff!,
-      task.commitMessage || "fix: implement changes",
-    );
+    // In non-Foreman mode, the diff was already applied during CODING/FIX.
+    // In Foreman mode, we only push after local tests pass (or when falling back).
+    if (USE_FOREMAN) {
+      await this.github.applyDiff(
+        task.githubRepo,
+        task.branchName!,
+        task.currentDiff!,
+        task.commitMessage || "fix: implement changes",
+      );
+    }
 
     // Wait for CI checks
     const checkResult = await this.github.waitForChecks(
@@ -937,13 +974,32 @@ export class Orchestrator {
     let fixerOutput;
     const logger = this.getLogger(task);
 
-    if (this.multiAgentConfig.enabled) {
+    // Select models based on effort level and attempt count (escalation)
+    const selectionContext: SelectionContext = {
+      complexity: task.estimatedComplexity || "S",
+      effort: task.estimatedEffort as "low" | "medium" | "high" | undefined,
+      attemptCount: task.attemptCount,
+      lastError: task.lastError,
+      isSubtask: !!task.parentTaskId,
+    };
+    const modelSelection = selectModels(selectionContext);
+    logSelection(selectionContext, modelSelection);
+
+    if (modelSelection.useMultiAgent) {
       // Multi-agent mode: run multiple fixers in parallel
       logger.info(
-        `Running ${this.multiAgentConfig.fixerCount} fixers in parallel...`,
+        `Running ${modelSelection.models.length} fixers in parallel (${modelSelection.tier})...`,
       );
 
-      const runner = new MultiFixerRunner(this.multiAgentConfig);
+      // Create dynamic config based on selection
+      const dynamicConfig: MultiAgentConfig = {
+        ...this.multiAgentConfig,
+        enabled: true,
+        fixerCount: modelSelection.models.length,
+        fixerModels: modelSelection.models,
+      };
+
+      const runner = new MultiFixerRunner(dynamicConfig);
       const candidates = await runner.run(fixerInput);
 
       const result = await this.consensus.selectBestFixer(
@@ -965,8 +1021,12 @@ export class Orchestrator {
       // Log consensus decision (Issue #17)
       await this.logConsensusDecision(task, "fixer", result);
     } else {
-      // Single agent mode (default)
-      fixerOutput = await this.fixer.run(fixerInput);
+      // Single agent mode - use selected model (may be escalated)
+      const selectedModel = modelSelection.models[0];
+      logger.info(
+        `Using single fixer: ${selectedModel} (${modelSelection.tier})`,
+      );
+      fixerOutput = await this.fixer.run(fixerInput, selectedModel);
     }
 
     task.currentDiff = fixerOutput.diff;
@@ -979,17 +1039,22 @@ export class Orchestrator {
         fixerOutput.diff,
         fixerOutput.commitMessage,
         logger,
+        { applyToGitHub: !USE_FOREMAN },
       );
       if (!validationResult.success) {
         return validationResult.task;
       }
     } else {
-      await this.github.applyDiff(
-        task.githubRepo,
-        task.branchName!,
-        fixerOutput.diff,
-        fixerOutput.commitMessage,
-      );
+      if (!USE_FOREMAN) {
+        await this.github.applyDiff(
+          task.githubRepo,
+          task.branchName!,
+          fixerOutput.diff,
+          fixerOutput.commitMessage,
+        );
+      } else {
+        logger.info("Skipping diff apply (Foreman enabled)");
+      }
     }
 
     return this.updateStatus(task, "CODING_DONE");
@@ -1213,6 +1278,7 @@ export class Orchestrator {
     diff: string,
     commitMessage: string,
     logger: Logger,
+    options: { applyToGitHub: boolean },
   ): Promise<{ success: boolean; task: Task }> {
     // Quick validation first (no network, fast)
     const quickResult = quickValidateDiff(diff);
@@ -1311,13 +1377,17 @@ export class Orchestrator {
       );
     }
 
-    // Apply the validated diff
-    await this.github.applyDiff(
-      task.githubRepo,
-      task.branchName!,
-      diff,
-      commitMessage,
-    );
+    if (options.applyToGitHub) {
+      // Apply the validated diff
+      await this.github.applyDiff(
+        task.githubRepo,
+        task.branchName!,
+        diff,
+        commitMessage,
+      );
+    } else {
+      logger.info("Diff validated (not pushed yet)");
+    }
 
     return { success: true, task };
   }

@@ -572,6 +572,13 @@ export class GitHubClient {
         ref: sha,
       });
 
+      // GitHub may return an empty list before checks are created/queued.
+      // Treat "no checks yet" as still pending.
+      if (checks.data.check_runs.length === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        continue;
+      }
+
       const allComplete = checks.data.check_runs.every(
         (run) => run.status === "completed",
       );

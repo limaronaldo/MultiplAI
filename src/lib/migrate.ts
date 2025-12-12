@@ -74,6 +74,17 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_tasks_linear_id ON tasks(linear_issue_id)`;
   console.log("✅ Added Linear integration columns");
 
+  // Add complexity and effort columns (v0.7) - for model selection
+  await sql`
+    ALTER TABLE tasks
+    ADD COLUMN IF NOT EXISTS estimated_complexity VARCHAR(10)
+  `;
+  await sql`
+    ALTER TABLE tasks
+    ADD COLUMN IF NOT EXISTS estimated_effort VARCHAR(10)
+  `;
+  console.log("✅ Added complexity and effort columns");
+
   // Task hierarchy columns (v0.6) - parent/child relationships for orchestrated tasks
   await sql`
     ALTER TABLE tasks
@@ -193,7 +204,9 @@ async function migrate() {
     $$ LANGUAGE plpgsql;
   `);
 
-  await sql.unsafe(`DROP TRIGGER IF EXISTS static_memory_updated_at ON static_memory;`);
+  await sql.unsafe(
+    `DROP TRIGGER IF EXISTS static_memory_updated_at ON static_memory;`,
+  );
   await sql.unsafe(`
     CREATE TRIGGER static_memory_updated_at
       BEFORE UPDATE ON static_memory
@@ -236,7 +249,9 @@ async function migrate() {
     WHERE parent_session_id IS NOT NULL
   `;
 
-  await sql.unsafe(`DROP TRIGGER IF EXISTS session_memory_updated_at ON session_memory;`);
+  await sql.unsafe(
+    `DROP TRIGGER IF EXISTS session_memory_updated_at ON session_memory;`,
+  );
   await sql.unsafe(`
     CREATE TRIGGER session_memory_updated_at
       BEFORE UPDATE ON session_memory

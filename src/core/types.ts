@@ -99,6 +99,7 @@ export interface Task {
   // Orchestration state (for parent tasks managing subtasks)
   orchestrationState?: OrchestrationState;
   estimatedComplexity?: "XS" | "S" | "M" | "L" | "XL";
+  estimatedEffort?: "low" | "medium" | "high";
 
   // Timestamps
   createdAt: Date;
@@ -330,11 +331,22 @@ export const PlannerCommandSchema = z.discriminatedUnion("type", [
 
 export type PlannerCommand = z.infer<typeof PlannerCommandSchema>;
 
+// Effort level for XS issues (determines model selection)
+export const EffortLevel = {
+  LOW: "low", // Typo fixes, add comments, rename variables
+  MEDIUM: "medium", // Add helper function, simple bug fix, add test
+  HIGH: "high", // New feature, refactor, complex fix
+} as const;
+
+export type EffortLevel = (typeof EffortLevel)[keyof typeof EffortLevel];
+
 export const PlannerOutputSchema = z.object({
   definitionOfDone: z.array(z.string()),
   plan: z.array(z.string()),
   targetFiles: z.array(z.string()),
   estimatedComplexity: z.enum(["XS", "S", "M", "L", "XL"]),
+  // Effort level within complexity (for model selection)
+  estimatedEffort: z.enum(["low", "medium", "high"]).optional(),
   risks: z.array(z.string()).optional(),
   // Multi-file coordination (optional, for M+ complexity)
   multiFilePlan: MultiFilePlanSchema.optional(),

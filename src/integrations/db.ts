@@ -183,6 +183,14 @@ export const db = {
       setClauses.push("is_orchestrated = $" + (values.length + 1));
       values.push(updates.isOrchestrated);
     }
+    if (updates.estimatedComplexity !== undefined) {
+      setClauses.push("estimated_complexity = $" + (values.length + 1));
+      values.push(updates.estimatedComplexity);
+    }
+    if (updates.estimatedEffort !== undefined) {
+      setClauses.push("estimated_effort = $" + (values.length + 1));
+      values.push(updates.estimatedEffort);
+    }
 
     setClauses.push("updated_at = NOW()");
     values.push(id);
@@ -365,6 +373,9 @@ export const db = {
       parentTaskId: row.parent_task_id || null,
       subtaskIndex: row.subtask_index ?? null,
       isOrchestrated: row.is_orchestrated ?? false,
+      // Complexity and effort for model selection
+      estimatedComplexity: row.estimated_complexity,
+      estimatedEffort: row.estimated_effort,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     };

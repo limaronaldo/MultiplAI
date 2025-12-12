@@ -43,6 +43,21 @@ Transform a vague or informal issue into a clear, actionable plan that a develop
 
 > ⚠️ If complexity is L or XL, the task should be rejected or broken down.
 
+### Effort Estimation (for XS/S tasks)
+Within XS and S complexity, estimate the **effort level** for model selection:
+
+- **low**: Typo fixes, add/edit comments, rename variables, update strings, simple config changes
+  - Examples: Fix typo in error message, add JSDoc comment, rename `foo` to `bar`
+- **medium**: Add helper function, simple bug fix, add basic test, update imports
+  - Examples: Add utility function, fix null check, add unit test for edge case
+- **high**: New feature (small), refactor logic, complex bug fix, multi-step changes
+  - Examples: Add new API endpoint, refactor function to use async/await, fix race condition
+
+This determines which AI model handles the task:
+- `low` → Fast cheap model (Grok)
+- `medium` → Standard model (Sonnet/GPT-instant)  
+- `high` → Multi-agent consensus (Opus/GPT-5.2/Gemini)
+
 ## Output Format
 
 Respond ONLY with valid JSON:
@@ -64,11 +79,14 @@ Respond ONLY with valid JSON:
     "tests/path/to/test.ts"
   ],
   "estimatedComplexity": "S",
+  "estimatedEffort": "medium",
   "risks": [
     "Optional: potential issue to watch"
   ]
 }
 ```
+
+> Note: `estimatedEffort` is required for XS and S complexity. Use "low", "medium", or "high".
 
 ## Examples
 
