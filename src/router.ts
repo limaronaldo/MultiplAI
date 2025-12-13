@@ -34,6 +34,32 @@ function isValidRepo(repo: string): boolean {
   return REPO_REGEX.test(repo);
 }
 
+const VALID_STATUSES = [
+  "NEW",
+  "PLANNING",
+  "PLANNING_DONE",
+  "CODING",
+  "CODING_DONE",
+  "TESTING",
+  "TESTS_PASSED",
+  "TESTS_FAILED",
+  "FIXING",
+  "REVIEWING",
+  "REVIEW_APPROVED",
+  "REVIEW_REJECTED",
+  "PR_CREATED",
+  "WAITING_HUMAN",
+  "COMPLETED",
+  "FAILED",
+  "BREAKING_DOWN",
+  "BREAKDOWN_DONE",
+  "ORCHESTRATING",
+];
+
+function isValidStatus(status: string): boolean {
+  return VALID_STATUSES.includes(status);
+}
+
 // Inicializa Linear (pode falhar se não configurado)
 let linear: LinearService | null = null;
 try {
@@ -595,6 +621,394 @@ route("GET", "/api/health", async () => {
   return Response.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// ============================================
+// Dashboard API (Issue #339)
+// ============================================
+
+/**
+ * GET /api/stats - Aggregated dashboard statistics
+ * Query params:
+ *   - repo: optional filter by repository
+ *   - days: number of days to look back (default: 30)
+ */
+route("GET", "/api/stats", async (req) => {
+  const url = new URL(req.url);
+  const repo = url.searchParams.get("repo") || undefined;
+  const days = parseInt(url.searchParams.get("days") || "30", 10);
+  const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  try {
+    const sql = (await import("./integrations/db")).getDb();
+
+    // Get task counts by status
+    let taskStats;
+    if (repo) {
+      taskStats = await sql`
+        SELECT
+          status,
+          COUNT(*)::int as count
+        FROM tasks
+        WHERE github_repo = ${repo}
+          AND created_at >= ${sinceDate}
+        GROUP BY status
+      `;
+    } else {
+      taskStats = await sql`
+        SELECT
+          status,
+          COUNT(*)::int as count
+        FROM tasks
+        WHERE created_at >= ${sinceDate}
+        GROUP BY status
+      `;
+    }
+
+    // Calculate success rate
+    const statusCounts = taskStats.reduce(
+      (acc: Record<string, number>, row: any) => {
+        acc[row.status] = row.count;
+        return acc;
+      },
+      {},
+    );
+
+    const completed = statusCounts["COMPLETED"] || 0;
+    const failed = statusCounts["FAILED"] || 0;
+    const total = Object.values(statusCounts).reduce(
+      (sum: number, count) => sum + (count as number),
+      0,
+    );
+    const successRate =
+      completed + failed > 0
+        ? Math.round((completed / (completed + failed)) * 100)
+        : 0;
+
+    // Get average processing time
+    let avgProcessingTime;
+    if (repo) {
+      avgProcessingTime = await sql`
+        SELECT
+          AVG(EXTRACT(EPOCH FROM (updated_at - created_at)))::int as avg_seconds
+        FROM tasks
+        WHERE github_repo = ${repo}
+          AND created_at >= ${sinceDate}
+          AND status IN ('COMPLETED', 'FAILED')
+      `;
+    } else {
+      avgProcessingTime = await sql`
+        SELECT
+          AVG(EXTRACT(EPOCH FROM (updated_at - created_at)))::int as avg_seconds
+        FROM tasks
+        WHERE created_at >= ${sinceDate}
+          AND status IN ('COMPLETED', 'FAILED')
+      `;
+    }
+
+    // Get task counts by day for chart
+    let dailyTasks;
+    if (repo) {
+      dailyTasks = await sql`
+        SELECT
+          DATE(created_at) as date,
+          COUNT(*)::int as total,
+          COUNT(*) FILTER (WHERE status = 'COMPLETED')::int as completed,
+          COUNT(*) FILTER (WHERE status = 'FAILED')::int as failed
+        FROM tasks
+        WHERE github_repo = ${repo}
+          AND created_at >= ${sinceDate}
+        GROUP BY DATE(created_at)
+        ORDER BY date ASC
+      `;
+    } else {
+      dailyTasks = await sql`
+        SELECT
+          DATE(created_at) as date,
+          COUNT(*)::int as total,
+          COUNT(*) FILTER (WHERE status = 'COMPLETED')::int as completed,
+          COUNT(*) FILTER (WHERE status = 'FAILED')::int as failed
+        FROM tasks
+        WHERE created_at >= ${sinceDate}
+        GROUP BY DATE(created_at)
+        ORDER BY date ASC
+      `;
+    }
+
+    // Get top repositories
+    const topRepos = await sql`
+      SELECT
+        github_repo as repo,
+        COUNT(*)::int as total,
+        COUNT(*) FILTER (WHERE status = 'COMPLETED')::int as completed
+      FROM tasks
+      WHERE created_at >= ${sinceDate}
+      GROUP BY github_repo
+      ORDER BY total DESC
+      LIMIT 5
+    `;
+
+    return Response.json({
+      summary: {
+        total,
+        completed,
+        failed,
+        inProgress:
+          (statusCounts["PLANNING"] || 0) +
+          (statusCounts["CODING"] || 0) +
+          (statusCounts["TESTING"] || 0) +
+          (statusCounts["REVIEWING"] || 0),
+        waitingHuman: statusCounts["WAITING_HUMAN"] || 0,
+        successRate,
+        avgProcessingTimeSeconds: avgProcessingTime[0]?.avg_seconds || 0,
+      },
+      byStatus: statusCounts,
+      dailyTasks: dailyTasks.map((row: any) => ({
+        date: row.date,
+        total: row.total,
+        completed: row.completed,
+        failed: row.failed,
+      })),
+      topRepos: topRepos.map((row: any) => ({
+        repo: row.repo,
+        total: row.total,
+        completed: row.completed,
+        successRate:
+          row.total > 0 ? Math.round((row.completed / row.total) * 100) : 0,
+      })),
+      period: { days, since: sinceDate.toISOString() },
+    });
+  } catch (error) {
+    console.error("[API] Failed to get stats:", error);
+    return Response.json({ error: "Failed to fetch stats" }, { status: 500 });
+  }
+});
+
+/**
+ * GET /api/costs/breakdown - Detailed cost breakdown
+ * Query params:
+ *   - range: 7d, 30d, 90d (default: 30d)
+ *   - groupBy: day, week, month (default: day)
+ *   - repo: optional filter by repository
+ */
+route("GET", "/api/costs/breakdown", async (req) => {
+  const url = new URL(req.url);
+  const range = url.searchParams.get("range") || "30d";
+  const groupBy = url.searchParams.get("groupBy") || "day";
+  const repo = url.searchParams.get("repo") || undefined;
+
+  const days = parseInt(range.replace("d", "")) || 30;
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - days);
+
+  try {
+    const sql = (await import("./integrations/db")).getDb();
+
+    // Get events with token usage
+    let events;
+    if (repo) {
+      events = await sql`
+        SELECT
+          e.agent,
+          e.metadata->>'model' as model,
+          e.tokens_used,
+          (e.metadata->>'inputTokens')::int as input_tokens,
+          (e.metadata->>'outputTokens')::int as output_tokens,
+          e.created_at,
+          t.github_repo
+        FROM task_events e
+        INNER JOIN tasks t ON t.id = e.task_id
+        WHERE e.created_at >= ${startDate}
+          AND e.tokens_used IS NOT NULL
+          AND t.github_repo = ${repo}
+        ORDER BY e.created_at ASC
+      `;
+    } else {
+      events = await sql`
+        SELECT
+          e.agent,
+          e.metadata->>'model' as model,
+          e.tokens_used,
+          (e.metadata->>'inputTokens')::int as input_tokens,
+          (e.metadata->>'outputTokens')::int as output_tokens,
+          e.created_at,
+          t.github_repo
+        FROM task_events e
+        INNER JOIN tasks t ON t.id = e.task_id
+        WHERE e.created_at >= ${startDate}
+          AND e.tokens_used IS NOT NULL
+        ORDER BY e.created_at ASC
+      `;
+    }
+
+    // Aggregate by time period
+    const periods: Record<
+      string,
+      { cost: number; tokens: number; calls: number }
+    > = {};
+    const byAgent: Record<
+      string,
+      { cost: number; tokens: number; calls: number }
+    > = {};
+    const byModel: Record<
+      string,
+      { cost: number; tokens: number; calls: number }
+    > = {};
+    const byRepo: Record<
+      string,
+      { cost: number; tokens: number; calls: number }
+    > = {};
+
+    let totalCost = 0;
+    let totalTokens = 0;
+    let totalCalls = 0;
+
+    for (const event of events) {
+      const inputTokens =
+        event.input_tokens || Math.floor((event.tokens_used || 0) * 0.7);
+      const outputTokens =
+        event.output_tokens || Math.floor((event.tokens_used || 0) * 0.3);
+      const model = event.model || "claude-sonnet-4-5-20250929";
+      const cost = calculateTokenCost(model, inputTokens, outputTokens);
+      const tokens = event.tokens_used || inputTokens + outputTokens;
+
+      totalCost += cost;
+      totalTokens += tokens;
+      totalCalls += 1;
+
+      // Group by time period
+      const date = new Date(event.created_at);
+      let periodKey: string;
+      if (groupBy === "week") {
+        const startOfWeek = new Date(date);
+        startOfWeek.setDate(date.getDate() - date.getDay());
+        periodKey = startOfWeek.toISOString().split("T")[0];
+      } else if (groupBy === "month") {
+        periodKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      } else {
+        periodKey = date.toISOString().split("T")[0];
+      }
+
+      if (!periods[periodKey]) {
+        periods[periodKey] = { cost: 0, tokens: 0, calls: 0 };
+      }
+      periods[periodKey].cost += cost;
+      periods[periodKey].tokens += tokens;
+      periods[periodKey].calls += 1;
+
+      // By agent
+      const agent = event.agent || "unknown";
+      if (!byAgent[agent]) {
+        byAgent[agent] = { cost: 0, tokens: 0, calls: 0 };
+      }
+      byAgent[agent].cost += cost;
+      byAgent[agent].tokens += tokens;
+      byAgent[agent].calls += 1;
+
+      // By model
+      if (!byModel[model]) {
+        byModel[model] = { cost: 0, tokens: 0, calls: 0 };
+      }
+      byModel[model].cost += cost;
+      byModel[model].tokens += tokens;
+      byModel[model].calls += 1;
+
+      // By repo
+      const repoName = event.github_repo || "unknown";
+      if (!byRepo[repoName]) {
+        byRepo[repoName] = { cost: 0, tokens: 0, calls: 0 };
+      }
+      byRepo[repoName].cost += cost;
+      byRepo[repoName].tokens += tokens;
+      byRepo[repoName].calls += 1;
+    }
+
+    // Format response
+    const formatData = (
+      data: Record<string, { cost: number; tokens: number; calls: number }>,
+    ) =>
+      Object.fromEntries(
+        Object.entries(data).map(([k, v]) => [
+          k,
+          {
+            cost: Math.round(v.cost * 10000) / 10000,
+            tokens: v.tokens,
+            calls: v.calls,
+          },
+        ]),
+      );
+
+    return Response.json({
+      total: {
+        cost: Math.round(totalCost * 10000) / 10000,
+        tokens: totalTokens,
+        calls: totalCalls,
+      },
+      periods: Object.entries(periods)
+        .map(([period, data]) => ({
+          period,
+          cost: Math.round(data.cost * 10000) / 10000,
+          tokens: data.tokens,
+          calls: data.calls,
+        }))
+        .sort((a, b) => a.period.localeCompare(b.period)),
+      byAgent: formatData(byAgent),
+      byModel: formatData(byModel),
+      byRepo: formatData(byRepo),
+      config: { range, groupBy, repo: repo || null },
+    });
+  } catch (error) {
+    console.error("[API] Failed to get cost breakdown:", error);
+    return Response.json(
+      { error: "Failed to fetch cost breakdown" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * WebSocket upgrade handler for live task updates
+ * GET /api/ws/tasks - Upgrade to WebSocket connection
+ */
+route("GET", "/api/ws/tasks", async (req) => {
+  // Check if this is a WebSocket upgrade request
+  const upgradeHeader = req.headers.get("upgrade");
+  if (upgradeHeader?.toLowerCase() !== "websocket") {
+    return Response.json(
+      {
+        error: "Expected WebSocket upgrade",
+        hint: "Send Upgrade: websocket header",
+      },
+      { status: 426 },
+    );
+  }
+
+  // Bun's native WebSocket handling
+  const server = (globalThis as any).__bunServer;
+  if (!server) {
+    return Response.json(
+      {
+        error: "WebSocket not available",
+        hint: "Use SSE endpoint /api/logs/stream instead",
+      },
+      { status: 501 },
+    );
+  }
+
+  // Upgrade the connection
+  const success = server.upgrade(req, {
+    data: {
+      taskFilter: new URL(req.url).searchParams.get("taskId") || null,
+      connectedAt: Date.now(),
+    },
+  });
+
+  if (success) {
+    // Return undefined to indicate the upgrade was handled
+    return undefined as any;
+  }
+
+  return Response.json({ error: "WebSocket upgrade failed" }, { status: 500 });
+});
+
 // RAG API (Issue #211)
 route("POST", "/api/rag/index", async (req) => {
   const body = await req.json().catch(() => ({}));
@@ -739,9 +1153,124 @@ route("GET", "/api/knowledge-graph/entities/:repo", async (req) => {
   return Response.json({ entities });
 });
 
-route("GET", "/api/tasks", async () => {
-  const tasks = await db.getPendingTasks();
-  return Response.json({ tasks });
+/**
+ * GET /api/tasks - List tasks with optional filters
+ * Query params:
+ *   - status: filter by status (COMPLETED, FAILED, CODING, etc.)
+ *   - repo: filter by repository (owner/repo)
+ *   - since: ISO date string, filter tasks created after this date
+ *   - until: ISO date string, filter tasks created before this date
+ *   - limit: max results (default: 50, max: 200)
+ *   - offset: pagination offset (default: 0)
+ *   - sort: created_at or updated_at (default: created_at)
+ *   - order: asc or desc (default: desc)
+ */
+route("GET", "/api/tasks", async (req) => {
+  const url = new URL(req.url);
+  const status = url.searchParams.get("status") || undefined;
+  const repo = url.searchParams.get("repo") || undefined;
+  const since = url.searchParams.get("since") || undefined;
+  const until = url.searchParams.get("until") || undefined;
+  const limit = Math.min(
+    parseInt(url.searchParams.get("limit") || "50", 10),
+    200,
+  );
+  const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+  const sort = url.searchParams.get("sort") || "created_at";
+  const order = url.searchParams.get("order") || "desc";
+
+  // Validate inputs
+  if (status && !isValidStatus(status)) {
+    return Response.json(
+      { error: `Invalid status: ${status}` },
+      { status: 400 },
+    );
+  }
+  if (repo && !isValidRepo(repo)) {
+    return Response.json(
+      { error: `Invalid repo format: ${repo}` },
+      { status: 400 },
+    );
+  }
+  if (sort !== "created_at" && sort !== "updated_at") {
+    return Response.json(
+      { error: `Invalid sort field: ${sort}` },
+      { status: 400 },
+    );
+  }
+  if (order !== "asc" && order !== "desc") {
+    return Response.json({ error: `Invalid order: ${order}` }, { status: 400 });
+  }
+
+  try {
+    const sql = (await import("./integrations/db")).getDb();
+
+    // Build dynamic query
+    const conditions: string[] = [];
+    const values: any[] = [];
+
+    if (status) {
+      values.push(status);
+      conditions.push(`status = $${values.length}`);
+    }
+    if (repo) {
+      values.push(repo);
+      conditions.push(`github_repo = $${values.length}`);
+    }
+    if (since) {
+      values.push(new Date(since));
+      conditions.push(`created_at >= $${values.length}`);
+    }
+    if (until) {
+      values.push(new Date(until));
+      conditions.push(`created_at <= $${values.length}`);
+    }
+
+    const whereClause =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const sortColumn = sort === "updated_at" ? "updated_at" : "created_at";
+    const sortOrder = order === "asc" ? "ASC" : "DESC";
+
+    values.push(limit);
+    values.push(offset);
+
+    const query = `
+      SELECT * FROM tasks
+      ${whereClause}
+      ORDER BY ${sortColumn} ${sortOrder}
+      LIMIT $${values.length - 1} OFFSET $${values.length}
+    `;
+
+    const results = await sql.unsafe(query, values);
+    const tasks = results.map((row: any) => db.mapTask(row));
+
+    // Get total count for pagination
+    const countQuery = `SELECT COUNT(*)::int as total FROM tasks ${whereClause}`;
+    const countValues = values.slice(0, -2); // Remove limit/offset
+    const [countResult] = await sql.unsafe(countQuery, countValues);
+    const total = countResult?.total || 0;
+
+    return Response.json({
+      tasks,
+      pagination: {
+        total,
+        limit,
+        offset,
+        hasMore: offset + tasks.length < total,
+      },
+      filters: {
+        status: status || null,
+        repo: repo || null,
+        since: since || null,
+        until: until || null,
+        sort,
+        order,
+      },
+    });
+  } catch (error) {
+    console.error("[API] Failed to get tasks:", error);
+    return Response.json({ error: "Failed to fetch tasks" }, { status: 500 });
+  }
 });
 
 route("GET", "/api/tasks/:id", async (req) => {
