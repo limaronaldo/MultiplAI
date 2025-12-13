@@ -4,10 +4,10 @@ import { ragService } from "../services/rag";
 import type { CodeChunk } from "../services/rag";
 
 // Default planner model - can be overridden via env var
-// Planner uses Kimi K2 Thinking for agentic planning with 262K context
-// Cost: ~$0.15/task vs ~$0.50 with gpt-5.1-codex-max (70% savings)
+// Uses DeepSeek V3.2 Speciale (high) for cheap but capable planning
+// Cost: ~$0.02/task (90% savings vs previous models)
 const DEFAULT_PLANNER_MODEL =
-  process.env.PLANNER_MODEL || "moonshotai/kimi-k2-thinking";
+  process.env.PLANNER_MODEL || "deepseek-speciale-high";
 
 interface PlannerInput {
   issueTitle: string;
@@ -37,7 +37,10 @@ function asCodeChunk(value: unknown): CodeChunk | null {
   return v as CodeChunk;
 }
 
-function buildRagContext(results: unknown[]): { suggestedFiles: string[]; snippets: string } {
+function buildRagContext(results: unknown[]): {
+  suggestedFiles: string[];
+  snippets: string;
+} {
   const chunks: CodeChunk[] = [];
   for (const r of results) {
     const c = asCodeChunk(r);
@@ -51,12 +54,9 @@ function buildRagContext(results: unknown[]): { suggestedFiles: string[]; snippe
     .map((c) => {
       const body =
         c.content.length > 800 ? `${c.content.slice(0, 800)}\n…` : c.content;
-      return [
-        `### ${c.filePath}:${c.startLine}`,
-        "```",
-        body,
-        "```",
-      ].join("\n");
+      return [`### ${c.filePath}:${c.startLine}`, "```", body, "```"].join(
+        "\n",
+      );
     })
     .join("\n\n");
 
@@ -161,12 +161,11 @@ Complexity guide:
 
 export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
   constructor() {
-    // Kimi K2 Thinking - agentic reasoning model optimized for planning
-    // No reasoningEffort param needed - Kimi handles reasoning internally
+    // DeepSeek Speciale - cheap reasoning model for planning
     super({
       model: DEFAULT_PLANNER_MODEL,
       temperature: 0.3,
-      maxTokens: 4096,
+      maxTokens: 16384,
     });
   }
 
@@ -220,24 +219,33 @@ Analyze this issue and provide your implementation plan as JSON.
     const response = await this.complete(SYSTEM_PROMPT, userPrompt);
 
     console.log(`[Planner] Response type: ${typeof response}`);
-    console.log(`[Planner] Response preview: ${String(response).slice(0, 500)}...`);
+    console.log(
+      `[Planner] Response preview: ${String(response).slice(0, 500)}...`,
+    );
 
     if (typeof response === "object" && response !== null) {
       const validated = PlannerOutputSchema.parse(response);
       return {
         ...validated,
-        targetFiles: uniq([...(validated.targetFiles ?? []), ...ragSuggestedFiles]),
+        targetFiles: uniq([
+          ...(validated.targetFiles ?? []),
+          ...ragSuggestedFiles,
+        ]),
       };
     }
 
     const parsed = this.parseJSON<PlannerOutput>(response);
-    console.log(`[Planner] Parsed result keys: ${Object.keys(parsed || {}).join(", ")}`);
+    console.log(
+      `[Planner] Parsed result keys: ${Object.keys(parsed || {}).join(", ")}`,
+    );
 
     const validated = PlannerOutputSchema.parse(parsed);
     return {
       ...validated,
-      targetFiles: uniq([...(validated.targetFiles ?? []), ...ragSuggestedFiles]),
+      targetFiles: uniq([
+        ...(validated.targetFiles ?? []),
+        ...ragSuggestedFiles,
+      ]),
     };
   }
 }
-

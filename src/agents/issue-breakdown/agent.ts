@@ -118,7 +118,7 @@ export class IssueBreakdownAgent extends BaseAgent<
     super({
       model: DEFAULT_BREAKDOWN_MODEL,
       temperature: 0.3,
-      maxTokens: 4096,
+      maxTokens: 16384,
     });
   }
 
@@ -142,7 +142,9 @@ export class IssueBreakdownAgent extends BaseAgent<
     return this.breakdownWithLLM(input);
   }
 
-  private async breakdownWithLLM(input: BreakdownInput): Promise<BreakdownOutput> {
+  private async breakdownWithLLM(
+    input: BreakdownInput,
+  ): Promise<BreakdownOutput> {
     const userPrompt = `
 ## Issue #${input.issueNumber}: ${input.issueTitle}
 

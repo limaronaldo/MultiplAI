@@ -73,7 +73,10 @@ Rules:
 - definitionOfDone should be derived from acceptanceCriteria
 - targetFiles should be the paths from fileAnalysis.targetFiles`;
 
-const DEFAULT_MODEL = process.env.INITIALIZER_MODEL || process.env.DEFAULT_LLM_MODEL || "claude-sonnet-4-5-20250929";
+const DEFAULT_MODEL =
+  process.env.INITIALIZER_MODEL ||
+  process.env.DEFAULT_LLM_MODEL ||
+  "claude-sonnet-4-5-20250929";
 
 /**
  * InitializerAgent - Bootstraps session memory from issue
@@ -84,11 +87,14 @@ const DEFAULT_MODEL = process.env.INITIALIZER_MODEL || process.env.DEFAULT_LLM_M
  * The Initializer does NOT need memory - it transforms the prompt
  * into artifacts that serve as scaffolding for the coding agent.
  */
-export class InitializerAgent extends BaseAgent<InitializerInput, InitializerOutput> {
+export class InitializerAgent extends BaseAgent<
+  InitializerInput,
+  InitializerOutput
+> {
   constructor(modelOverride?: string) {
     super({
       model: modelOverride || DEFAULT_MODEL,
-      maxTokens: 4096,
+      maxTokens: 16384,
       temperature: 0.3,
     });
   }
@@ -143,13 +149,13 @@ Analyze this issue and provide the structured initialization output.`;
     // Ensure definitionOfDone matches acceptance criteria if empty
     if (output.definitionOfDone.length === 0) {
       output.definitionOfDone = output.understanding.acceptanceCriteria.map(
-        ac => ac.description
+        (ac) => ac.description,
       );
     }
 
     // Ensure targetFiles matches fileAnalysis if empty
     if (output.targetFiles.length === 0) {
-      output.targetFiles = output.fileAnalysis.targetFiles.map(f => f.path);
+      output.targetFiles = output.fileAnalysis.targetFiles.map((f) => f.path);
     }
 
     // Check blocking conditions
@@ -161,20 +167,22 @@ Analyze this issue and provide the structured initialization output.`;
     }
 
     // Blocking ambiguities
-    const blockingAmbiguities = output.understanding.ambiguities.filter(a => a.blocking);
+    const blockingAmbiguities = output.understanding.ambiguities.filter(
+      (a) => a.blocking,
+    );
     if (blockingAmbiguities.length > 0) {
       blockingReasons.push(
-        `Blocking ambiguities: ${blockingAmbiguities.map(a => a.description).join("; ")}`
+        `Blocking ambiguities: ${blockingAmbiguities.map((a) => a.description).join("; ")}`,
       );
     }
 
     // High risk with no mitigation
     const unmitigatedHighRisks = output.risks.factors.filter(
-      r => r.severity === "high" && !r.mitigation
+      (r) => r.severity === "high" && !r.mitigation,
     );
     if (unmitigatedHighRisks.length > 0) {
       blockingReasons.push(
-        `High risks without mitigation: ${unmitigatedHighRisks.map(r => r.description).join("; ")}`
+        `High risks without mitigation: ${unmitigatedHighRisks.map((r) => r.description).join("; ")}`,
       );
     }
 

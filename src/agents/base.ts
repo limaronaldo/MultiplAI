@@ -20,7 +20,7 @@ export abstract class BaseAgent<TInput, TOutput> {
     this.llm = new LLMClient();
     this.config = {
       model: config.model || DEFAULT_MODEL,
-      maxTokens: config.maxTokens || 4096,
+      maxTokens: config.maxTokens || 16384,
       temperature: config.temperature || 0.3,
     };
   }

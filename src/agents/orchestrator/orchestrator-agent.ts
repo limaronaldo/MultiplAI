@@ -77,7 +77,7 @@ export class OrchestratorAgent extends BaseAgent<
   constructor(modelOverride?: string) {
     super({
       model: modelOverride || DEFAULT_MODEL,
-      maxTokens: 4096,
+      maxTokens: 16384,
       temperature: 0.3,
     });
   }

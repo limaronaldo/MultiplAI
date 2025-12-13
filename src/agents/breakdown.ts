@@ -78,7 +78,7 @@ Return a JSON object with:
 export class BreakdownAgent extends BaseAgent<BreakdownInput, BreakdownOutput> {
   constructor() {
     super({
-      maxTokens: 4096,
+      maxTokens: 16384,
       temperature: 0.3,
     });
   }

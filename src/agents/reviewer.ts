@@ -70,7 +70,7 @@ export class ReviewerAgent extends BaseAgent<ReviewerInput, ReviewerOutput> {
     super({
       model: DEFAULT_REVIEWER_MODEL,
       temperature: 0.1,
-      maxTokens: 2048,
+      maxTokens: 8192,
     });
   }
 

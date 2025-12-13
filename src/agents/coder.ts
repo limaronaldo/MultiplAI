@@ -159,7 +159,7 @@ export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
     // Can be overridden via CODER_MODEL env var or constructor param
     super({
       model: modelOverride || DEFAULT_CODER_MODEL,
-      maxTokens: 8192,
+      maxTokens: 65536,
       temperature: 0.2,
     });
   }

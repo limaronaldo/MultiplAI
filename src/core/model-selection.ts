@@ -18,10 +18,10 @@
  * ─────────────────────────────────────────────────
  * Agent                │ Model                    │ Cost/Task │ Provider
  * ─────────────────────┼──────────────────────────┼───────────┼──────────────
- * Planner              │ kimi-k2-thinking         │ ~$0.15    │ OpenRouter (ZDR)
- * Fixer                │ kimi-k2-thinking         │ ~$0.10    │ OpenRouter (ZDR)
+ * Planner              │ deepseek-speciale-high   │ ~$0.02    │ OpenRouter (ZDR)
+ * Fixer                │ deepseek-speciale-high   │ ~$0.02    │ OpenRouter (ZDR)
  * Reviewer             │ deepseek-speciale-high   │ ~$0.02    │ OpenRouter (ZDR)
- * Escalation 1         │ kimi-k2-thinking         │ ~$0.20    │ OpenRouter (ZDR)
+ * Escalation 1         │ deepseek-speciale-high   │ ~$0.02    │ OpenRouter (ZDR)
  * Escalation 2         │ claude-opus-4-5          │ ~$0.75    │ Anthropic
  *
  * CODER BY COMPLEXITY + EFFORT:
@@ -55,7 +55,7 @@
  *
  * Available models:
  * - deepseek-speciale-*: Ultra-cheap reasoning (OpenRouter/Parasail)
- * - kimi-k2-thinking: Agentic reasoning, 262K context (OpenRouter/Nebius)
+ * - deepseek-speciale-high: Cheap reasoning model (OpenRouter/Parasail)
  * - gpt-5.2-high: Proven coding quality (OpenAI Direct)
  * - claude-opus-4-5: Final fallback (Anthropic Direct)
  *
@@ -240,10 +240,10 @@ export const MODEL_TIERS: ModelTier[] = [
   },
   {
     name: "thinking",
-    models: ["kimi-k2-thinking"],
+    models: ["deepseek-speciale-high"],
     description:
-      "Kimi K2 Thinking. Agentic reasoning for failed task recovery.",
-    avgCostPerTask: 0.2,
+      "DeepSeek V3.2 Speciale (high). Cheap reasoning for failed task recovery.",
+    avgCostPerTask: 0.02,
   },
   {
     name: "fallback",
@@ -299,9 +299,9 @@ export function selectModels(context: SelectionContext): ModelSelection {
     if (attemptCount >= 1) {
       return {
         tier: "thinking",
-        models: ["kimi-k2-thinking"],
+        models: ["deepseek-speciale-high"],
         useMultiAgent: false,
-        reason: "M complexity with 1 failure → Kimi K2 (agentic recovery)",
+        reason: "M complexity with 1 failure → DeepSeek Speciale (recovery)",
       };
     }
     return selectForM(effort);
@@ -320,9 +320,9 @@ export function selectModels(context: SelectionContext): ModelSelection {
     if (attemptCount >= 1) {
       return {
         tier: "thinking",
-        models: ["kimi-k2-thinking"],
+        models: ["deepseek-speciale-high"],
         useMultiAgent: false,
-        reason: "S complexity with 1 failure → Kimi K2 (agentic recovery)",
+        reason: "S complexity with 1 failure → DeepSeek Speciale (recovery)",
       };
     }
     return selectForS(effort);
@@ -343,7 +343,7 @@ export function selectModels(context: SelectionContext): ModelSelection {
  *
  * Escalation path:
  * - Attempt 0: Effort-based (DeepSeek or GPT-5.2)
- * - Attempt 1: Kimi K2 Thinking (agentic recovery)
+ * - Attempt 1: DeepSeek Speciale (high) (recovery)
  * - Attempt 2+: Claude Opus 4.5 (final fallback)
  */
 function selectForXS(
@@ -360,13 +360,13 @@ function selectForXS(
     };
   }
 
-  // First escalation: Kimi K2 Thinking (agentic recovery)
+  // First escalation: DeepSeek Speciale (high) for recovery
   if (attemptCount >= 1) {
     return {
       tier: "thinking",
-      models: ["kimi-k2-thinking"],
+      models: ["deepseek-speciale-high"],
       useMultiAgent: false,
-      reason: "XS with 1 failure → Kimi K2 Thinking (agentic recovery)",
+      reason: "XS with 1 failure → DeepSeek Speciale (recovery)",
     };
   }
 
@@ -508,12 +508,12 @@ function selectForM(effort: EffortLevel | undefined): ModelSelection {
 export function selectFixerModels(context: SelectionContext): ModelSelection {
   const { attemptCount } = context;
 
-  // All fix attempts use Kimi K2 Thinking (configured in fixer.ts)
+  // All fix attempts use DeepSeek Speciale (high) for recovery
   return {
     tier: "thinking",
-    models: ["kimi-k2-thinking"],
+    models: ["deepseek-speciale-high"],
     useMultiAgent: false,
-    reason: `Fixer attempt ${attemptCount + 1} → Kimi K2 Thinking (agentic debugging)`,
+    reason: `Fixer attempt ${attemptCount + 1} → DeepSeek Speciale (debugging)`,
   };
 }
 
