@@ -95,8 +95,8 @@ export class RAGService {
       throw new Error('RAG service not initialized');
     }
     const results = this.index.search(query);
-    // CodebaseIndex.search returns TMeta[], we need to convert to SearchResult[]
-    // For now, return empty array as proper conversion depends on metadata structure
+    // CodebaseIndex.search returns TMeta[] which must be converted to SearchResult[]
+    // The metadata structure is defined by the consumer when calling indexText()
     return results.map((meta: any) => ({
       chunk: meta.chunk,
       score: meta.score ?? 1.0
