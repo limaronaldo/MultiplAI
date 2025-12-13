@@ -76,3 +76,26 @@ describe("State Machine", () => {
     expect(getNextAction("CODING")).toBe("WAIT");
   });
 });
+
+  test("returns correct next action for ORCHESTRATING state", () => {
+    expect(getNextAction("ORCHESTRATING")).toBe("ORCHESTRATE");
+  });
+
+  test("returns correct next action for REFLECTING state", () => {
+    expect(getNextAction("REFLECTING")).toBe("REFLECT");
+  });
+
+  test("returns correct next action for REPLANNING state", () => {
+    expect(getNextAction("REPLANNING")).toBe("REPLAN");
+  });
+
+  test("allows valid TESTS_FAILED -> REFLECTING transition", () => {
+    expect(canTransition("TESTS_FAILED", "REFLECTING")).toBe(true);
+    expect(() => transition("TESTS_FAILED", "REFLECTING")).not.toThrow();
+  });
+
+  test("returns WAIT for intermediate states", () => {
+    expect(getNextAction("PLANNING")).toBe("WAIT");
+    expect(getNextAction("CODING")).toBe("WAIT");
+  });
+});
