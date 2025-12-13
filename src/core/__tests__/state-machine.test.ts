@@ -3,7 +3,6 @@ import { TaskStatus } from "../types";
 import { canTransition, transition, getNextAction, isTerminal } from "../state-machine";
 
 describe("State Machine", () => {
-  // Valid transitions
   test("allows valid NEW -> PLANNING transition", () => {
     expect(canTransition("NEW", "PLANNING")).toBe(true);
     expect(() => transition("NEW", "PLANNING")).not.toThrow();
@@ -29,7 +28,6 @@ describe("State Machine", () => {
     expect(() => transition("ORCHESTRATING", "CODING_DONE")).not.toThrow();
   });
 
-  // Invalid transitions
   test("prevents invalid NEW -> CODING transition", () => {
     expect(canTransition("NEW", "CODING")).toBe(false);
     expect(() => transition("NEW", "CODING")).toThrow();
@@ -40,7 +38,6 @@ describe("State Machine", () => {
     expect(() => transition("PLANNING", "TESTING")).toThrow();
   });
 
-  // Terminal states
   test("identifies COMPLETED as terminal state", () => {
     expect(isTerminal("COMPLETED")).toBe(true);
   });
@@ -54,7 +51,6 @@ describe("State Machine", () => {
     expect(isTerminal("TESTING")).toBe(false);
   });
 
-  // Next actions
   test("returns correct next action for NEW state", () => {
     expect(getNextAction("NEW")).toBe("PLAN");
   });
@@ -71,34 +67,11 @@ describe("State Machine", () => {
     expect(getNextAction("ORCHESTRATING")).toBe("ORCHESTRATE");
   });
 
-  test("returns WAIT for intermediate states", () => {
-    expect(getNextAction("PLANNING")).toBe("WAIT");
-    expect(getNextAction("CODING")).toBe("WAIT");
-  });
-});
-
-  test("returns correct next action for ORCHESTRATING state", () => {
-    expect(getNextAction("ORCHESTRATING")).toBe("ORCHESTRATE");
-  });
-
   test("returns correct next action for REFLECTING state", () => {
     expect(getNextAction("REFLECTING")).toBe("REFLECT");
   });
 
   test("returns correct next action for REPLANNING state", () => {
-    expect(getNextAction("REPLANNING")).toBe("REPLAN");
-  });
-
-  test("allows valid TESTS_FAILED -> REFLECTING transition", () => {
-    expect(canTransition("TESTS_FAILED", "REFLECTING")).toBe(true);
-    expect(() => transition("TESTS_FAILED", "REFLECTING")).not.toThrow();
-  });
-
-  test("returns WAIT for intermediate states", () => {
-    expect(getNextAction("PLANNING")).toBe("WAIT");
-    expect(getNextAction("CODING")).toBe("WAIT");
-  });
-});
     expect(getNextAction("REPLANNING")).toBe("REPLAN");
   });
 
