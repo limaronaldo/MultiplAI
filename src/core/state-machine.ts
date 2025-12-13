@@ -1,4 +1,5 @@
 import { TaskStatus } from "./types";
+import type { Task } from "./types";
 
 type StatusTransitions = {
   [K in TaskStatus]: TaskStatus[];
@@ -17,10 +18,12 @@ export const validTransitions: StatusTransitions = {
   REPLANNING: ["CODING", "FAILED"],
   REVIEWING: ["REVIEW_APPROVED", "REVIEW_REJECTED", "FAILED"],
   REVIEW_APPROVED: ["PR_CREATED", "FAILED"],
-  REVIEW_REJECTED: ["CODING", "FAILED"],
-  FIXING: ["CODING_DONE", "FAILED"],
-  REFLECTING: ["REPLANNING", "FIXING", "FAILED"],
+  TESTING: ["TESTS_PASSED", "TESTS_FAILED", "FAILED"],
+  TESTS_PASSED: ["REVIEWING", "FAILED"],
+  TESTS_FAILED: ["REFLECTING", "FAILED"],
+  REFLECTING: ["REPLANNING", "FIXING"],
   REPLANNING: ["CODING", "FAILED"],
+  FIXING: ["CODING_DONE", "FAILED"], // Volta pro fluxo de teste
   REVIEWING: ["REVIEW_APPROVED", "REVIEW_REJECTED", "FAILED"],
   REVIEW_APPROVED: ["PR_CREATED", "FAILED"],
   REVIEW_REJECTED: ["CODING", "FAILED"],
@@ -32,12 +35,14 @@ export const validTransitions: StatusTransitions = {
   | "OPEN_PR"
   | "WAIT"
   | "DONE"
-export type TaskAction =
-  | "PLAN"
+  | "BREAKDOWN" // Decompose M/L issue into subtasks
+  | "ORCHESTRATE" // Process subtasks
   | "CODE"
-  | "ORCHESTRATE"
+  | "REFLECT"
+  | "REPLAN"
   | "TEST"
   | "FIX"
+  | "REVIEW"
   | "REVIEW"
   | "REFLECT"
   | "REPLAN"
@@ -49,16 +54,19 @@ export type TaskAction =
 export function getNextAction(status: TaskStatus): TaskAction {
   switch (status) {
     case "TESTS_FAILED":
-      return "FIX";
-    case "REFLECTING":
+  switch (status) {
+    case "NEW":
+      return "PLAN";
+    case "TESTS_FAILED":
       return "REFLECT";
+    case "REFLECTING":
+      // Note: Conditional logic based on rootCause handled in orchestrator
+      return "WAIT"; // Placeholder, actual logic in orchestrator
     case "REPLANNING":
-      return "REPLAN";
-    case "REVIEWING":
-      return "WAIT";
-    case "REVIEW_APPROVED":
-      return "OPEN_PR";
-    case "ORCHESTRATING":
+      return "CODE";
+    case "PLANNING_DONE":
+      // Decision between CODE and BREAKDOWN happens in orchestrator based on complexity
+      return "CODE";
       return "ORCHESTRATE";
     case "CODING_DONE":
       return "TEST";
@@ -92,13 +100,15 @@ export function getNextAction(status: TaskStatus): TaskAction {
 export function isTerminal(status: TaskStatus): boolean {
   return status === "COMPLETED" || status === "FAILED";
 }
-
-export function isWaiting(status: TaskStatus): boolean {
-  return (
-    status === "WAITING_HUMAN" ||
-    status === "TESTING" ||
-    status === "PLANNING" ||
     status === "CODING" ||
+    status === "FIXING" ||
+    status === "REVIEWING" ||
+    status === "REFLECTING" ||
+    status === "REPLANNING" ||
+    status === "BREAKING_DOWN" ||
+    status === "ORCHESTRATING"
+  );
+}
     status === "FIXING" ||
     status === "REVIEWING" ||
     status === "REFLECTING" ||
