@@ -1,14 +1,15 @@
+interface AttemptRecord {
+  approach: string;
+  success: boolean;
+  details?: string;
+  timestamp?: number;
+}
 
 export class IterationMemory {
   private attempts: AttemptRecord[] = [];
 
-  addAttempt(approach: string, success: boolean, error: string): void {
-    this.attempts.push({
-      approach,
-      success,
-      error,
-      timestamp: new Date(),
-    });
+  addAttempt(record: AttemptRecord): void {
+    this.attempts.push(record);
   }
 
   getAttempts(): AttemptRecord[] {
@@ -21,30 +22,14 @@ export class IterationMemory {
   }
 
   hasTriedApproach(approach: string): boolean {
-    return this.attempts.some(
-      (a) => a.approach.toLowerCase() === approach.toLowerCase(),
-    );
+    return this.attempts.some((a) => a.approach === approach);
   }
 
   getSummary(): string {
-    let summary = "## Attempt Summary\n";
-    for (const attempt of this.attempts) {
-      const status = attempt.success
-        ? "Success"
-        : `Failed - ${attempt.error}`;
-      summary += `- ${attempt.approach}: ${status}\n`;
-    }
-    return summary;
+    const total = this.attempts.length;
+    const succeeded = this.attempts.filter((a) => a.success).length;
+    const failed = total - succeeded;
+    const failedApproaches = this.getFailedApproaches();
+    return `Total attempts: ${total}\nSucceeded: ${succeeded}\nFailed: ${failed}\nFailed approaches: ${failedApproaches.join(', ')}`;
   }
-}
-
-
-describe("IterationMemory", () => {
-  it("starts with empty attempts", () => {
-    const memory = new IterationMemory();
-    expect(memory.getAttempts()).toEqual([]);
-    expect(memory.getFailedApproaches()).toEqual([]);
-    return summary;
-  }
-}
 }
