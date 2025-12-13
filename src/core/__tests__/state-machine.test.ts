@@ -1,5 +1,4 @@
 import { describe, test, expect } from "bun:test";
-import { TaskStatus } from "../types";
 import { canTransition, transition, getNextAction, isTerminal } from "../state-machine";
 
 describe("State Machine", () => {
@@ -29,6 +28,21 @@ describe("State Machine", () => {
     expect(() => transition("ORCHESTRATING", "CODING_DONE")).not.toThrow();
   });
 
+  test("allows optional TESTS_FAILED -> REFLECTING transition", () => {
+    expect(canTransition("TESTS_FAILED", "REFLECTING")).toBe(true);
+    expect(() => transition("TESTS_FAILED", "REFLECTING")).not.toThrow();
+  });
+
+  test("allows REFLECTING -> REPLANNING transition", () => {
+    expect(canTransition("REFLECTING", "REPLANNING")).toBe(true);
+    expect(() => transition("REFLECTING", "REPLANNING")).not.toThrow();
+  });
+
+  test("allows REPLANNING -> CODING transition", () => {
+    expect(canTransition("REPLANNING", "CODING")).toBe(true);
+    expect(() => transition("REPLANNING", "CODING")).not.toThrow();
+  });
+
   // Invalid transitions
   test("prevents invalid NEW -> CODING transition", () => {
     expect(canTransition("NEW", "CODING")).toBe(false);
@@ -52,6 +66,8 @@ describe("State Machine", () => {
   test("identifies non-terminal states correctly", () => {
     expect(isTerminal("CODING")).toBe(false);
     expect(isTerminal("TESTING")).toBe(false);
+    expect(isTerminal("REFLECTING")).toBe(false);
+    expect(isTerminal("REPLANNING")).toBe(false);
   });
 
   // Next actions
@@ -69,6 +85,11 @@ describe("State Machine", () => {
 
   test("returns correct next action for ORCHESTRATING state", () => {
     expect(getNextAction("ORCHESTRATING")).toBe("ORCHESTRATE");
+  });
+
+  test("returns WAIT for REFLECTING and REPLANNING states", () => {
+    expect(getNextAction("REFLECTING")).toBe("WAIT");
+    expect(getNextAction("REPLANNING")).toBe("WAIT");
   });
 
   test("returns WAIT for intermediate states", () => {

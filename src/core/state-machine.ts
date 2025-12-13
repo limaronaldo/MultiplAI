@@ -22,15 +22,17 @@ export const validTransitions: StatusTransitions = {
   CODING_DONE: ["TESTING", "FAILED"],
   TESTING: ["TESTS_PASSED", "TESTS_FAILED", "FAILED"],
   TESTS_PASSED: ["REVIEWING", "FAILED"],
-  TESTS_FAILED: ["FIXING", "FAILED"],
-  FIXING: ["CODING_DONE", "FAILED"], // Volta pro fluxo de teste
+  TESTS_FAILED: ["FIXING", "REFLECTING", "FAILED"],
+  REFLECTING: ["REPLANNING", "FIXING", "FAILED"],
+  REPLANNING: ["CODING", "FAILED"],
+  FIXING: ["CODING_DONE", "FAILED"],
   REVIEWING: ["REVIEW_APPROVED", "REVIEW_REJECTED", "FAILED"],
   REVIEW_APPROVED: ["PR_CREATED", "FAILED"],
-  REVIEW_REJECTED: ["CODING", "FAILED"], // Volta pro coder
+  REVIEW_REJECTED: ["CODING", "FAILED"],
   PR_CREATED: ["WAITING_HUMAN", "FAILED"],
-  WAITING_HUMAN: ["COMPLETED", "REVIEW_REJECTED", "FAILED"], // Can be rejected by human review
-  COMPLETED: [], // Estado final
-  FAILED: [], // Estado final
+  WAITING_HUMAN: ["COMPLETED", "REVIEW_REJECTED", "FAILED"],
+  COMPLETED: [],
+  FAILED: [],
 };
 
 /**
@@ -57,8 +59,8 @@ export function transition(from: TaskStatus, to: TaskStatus): TaskStatus {
  */
 export type TaskAction =
   | "PLAN"
-  | "BREAKDOWN" // Decompose M/L issue into subtasks
-  | "ORCHESTRATE" // Process subtasks
+  | "BREAKDOWN"
+  | "ORCHESTRATE"
   | "CODE"
   | "TEST"
   | "FIX"
@@ -76,20 +78,23 @@ export function getNextAction(status: TaskStatus): TaskAction {
     case "NEW":
       return "PLAN";
     case "PLANNING_DONE":
-      // Decision between CODE and BREAKDOWN happens in orchestrator based on complexity
       return "CODE";
     case "BREAKING_DOWN":
-      return "WAIT"; // Waiting for breakdown to complete
+      return "WAIT";
     case "BREAKDOWN_DONE":
       return "ORCHESTRATE";
     case "ORCHESTRATING":
-      return "ORCHESTRATE"; // Continue processing subtasks until complete
+      return "ORCHESTRATE";
     case "CODING_DONE":
       return "TEST";
     case "TESTS_PASSED":
       return "REVIEW";
     case "TESTS_FAILED":
       return "FIX";
+    case "REFLECTING":
+    case "REPLANNING":
+      // These phases are handled by orchestrator extensions; treat as wait states for now.
+      return "WAIT";
     case "REVIEW_APPROVED":
       return "OPEN_PR";
     case "REVIEW_REJECTED":
@@ -102,7 +107,7 @@ export function getNextAction(status: TaskStatus): TaskAction {
     case "FAILED":
       return "FAILED";
     default:
-      return "WAIT"; // Estados intermediários (PLANNING, CODING, etc.) = aguardar
+      return "WAIT";
   }
 }
 
@@ -125,6 +130,8 @@ export function isWaiting(status: TaskStatus): boolean {
     status === "FIXING" ||
     status === "REVIEWING" ||
     status === "BREAKING_DOWN" ||
-    status === "ORCHESTRATING"
+    status === "ORCHESTRATING" ||
+    status === "REFLECTING" ||
+    status === "REPLANNING"
   );
 }
