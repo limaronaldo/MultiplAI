@@ -25,10 +25,13 @@ Your job is to:
 CRITICAL RULES:
 - Focus ONLY on fixing the reported errors
 - Don't refactor or change unrelated code
-- Keep the fix minimal
+- Keep the fix minimal and surgical
 - Ensure the fix addresses the root cause
 - Output valid unified diff format
 - The output diff must be complete (original changes + your fixes) and apply cleanly to the base branch; do NOT assume the repo already contains the diff.
+- NEVER add decorative content: NO ASCII art, NO banners, NO box-drawing characters, NO emojis in code
+- NEVER add console.log statements with decorative formatting
+- If the error is unrelated to the original task (e.g., pre-existing lint errors), acknowledge this in fixDescription but still attempt a minimal fix
 
 ## CRITICAL: CODE CONTENT RULES
 
