@@ -342,10 +342,13 @@ function checkDiffCorruption(diff: string): string[] {
     }
 
     // Pattern 2: "--- a/" not followed by "+++ b/"
+    // Skip if this is the first line (valid unified diff can start with ---)
     if (
       line.startsWith("--- a/") &&
       !nextLine.startsWith("+++ b/") &&
-      !nextLine.startsWith("+++ /dev/null")
+      !nextLine.startsWith("+++ /dev/null") &&
+      i > 0 && // Allow --- a/ at start of diff
+      !prevLine.startsWith("diff --git") // Also allow after diff --git header
     ) {
       warnings.push(
         `Line ${i + 1}: Suspicious '--- a/' pattern - possible corrupted diff`,

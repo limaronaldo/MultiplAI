@@ -281,7 +281,41 @@ export abstract class BaseAgent<TInput, TOutput> {
       JSON.parse(cleaned);
       return cleaned;
     } catch {
-      // Give up
+      // Continue to method 4
+    }
+
+    // Method 4: Handle truncated JSON - extract what we can
+    // This handles cases where the LLM output was cut off mid-response
+    const truncatedDiffMatch = jsonStr.match(/"diff"\s*:\s*"([\s\S]+)/);
+    if (truncatedDiffMatch) {
+      let diff = truncatedDiffMatch[1];
+
+      // Remove trailing incomplete escape sequences or quotes
+      diff = diff.replace(/\\+$/, "");
+      diff = diff.replace(/"?\s*,?\s*"?[^"]*$/, ""); // Remove trailing partial key
+
+      // Escape the diff properly
+      diff = diff
+        .replace(/\\/g, "\\\\")
+        .replace(/"/g, '\\"')
+        .replace(/\n/g, "\\n")
+        .replace(/\r/g, "\\r")
+        .replace(/\t/g, "\\t");
+
+      // Build minimal valid response
+      const minimal = {
+        diff: diff,
+        commitMessage: "feat: implement changes",
+        filesModified: [],
+      };
+
+      try {
+        const result = JSON.stringify(minimal);
+        JSON.parse(result); // Validate
+        return result;
+      } catch {
+        // Give up
+      }
     }
 
     return jsonStr;

@@ -1018,11 +1018,11 @@ export class Orchestrator {
       );
     }
 
-    // Wait for CI checks
+    // Wait for CI checks (3 minutes for repos with multiple CI jobs)
     const checkResult = await this.github.waitForChecks(
       task.githubRepo,
       task.branchName!,
-      60000, // timeout 60s
+      180000, // timeout 180s (3 min)
     );
 
     if (checkResult.success) {
