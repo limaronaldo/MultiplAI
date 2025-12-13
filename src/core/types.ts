@@ -567,7 +567,7 @@ export interface AutoDevConfig {
 
 export const defaultConfig: AutoDevConfig = {
   maxAttempts: 3,
-  maxDiffLines: 400,
+  maxDiffLines: 1000,
   allowedRepos: [],
   allowedPaths: ["src/", "lib/", "tests/", "test/"],
   blockedPaths: [".env", "secrets/", ".github/workflows/"],
