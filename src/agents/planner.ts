@@ -7,13 +7,15 @@ import type { CodeChunk } from "../services/rag";
 // Planner uses Kimi K2 Thinking for agentic planning with 262K context
 // Cost: ~$0.15/task vs ~$0.50 with gpt-5.1-codex-max (70% savings)
 const DEFAULT_PLANNER_MODEL =
-  process.env.PLANNER_MODEL || "moonshotai/kimi-k2-thinking";
-
 interface PlannerInput {
   issueTitle: string;
   issueBody: string;
   repoContext: string;
+  previousFeedback?: string;
+  failedApproaches?: string[];
 }
+
+function uniq<T>(values: T[]): T[] {
 
 function uniq<T>(values: T[]): T[] {
   const out: T[] = [];
@@ -29,18 +31,24 @@ function uniq<T>(values: T[]): T[] {
 function asCodeChunk(value: unknown): CodeChunk | null {
   if (!value || typeof value !== "object") return null;
   const v = value as any;
-  if (v.chunk && typeof v.chunk === "object") return asCodeChunk(v.chunk);
-  if (typeof v.filePath !== "string") return null;
-  if (typeof v.content !== "string") return null;
-  if (typeof v.startLine !== "number") return null;
-  if (typeof v.endLine !== "number") return null;
-  return v as CodeChunk;
-}
 
-function buildRagContext(results: unknown[]): { suggestedFiles: string[]; snippets: string } {
-  const chunks: CodeChunk[] = [];
-  for (const r of results) {
-    const c = asCodeChunk(r);
+Your job is to:
+1. Understand the issue requirements
+2. Define clear, testable acceptance criteria (Definition of Done)
+3. Create a step-by-step implementation plan
+4. Identify which files need to be modified or created
+5. Estimate complexity
+6. For M+ complexity, create a multi-file coordination plan
+
+## Previous Context
+
+Previous attempt failed because: {previousFeedback}
+
+Avoid these approaches: {failedApproaches}
+
+IMPORTANT RULES:
+- Keep the scope small and focused
+- Each DoD item must be verifiable
     if (c) chunks.push(c);
   }
 
@@ -167,12 +175,18 @@ export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
       model: DEFAULT_PLANNER_MODEL,
       temperature: 0.3,
       maxTokens: 4096,
-    });
-  }
-
-  async run(input: PlannerInput): Promise<PlannerOutput> {
     let ragSuggestedFiles: string[] = [];
     let ragSnippets = "";
+
+    // Replace placeholders in system prompt
+    const systemPrompt = SYSTEM_PROMPT
+      .replace('{previousFeedback}', input.previousFeedback || 'None')
+      .replace('{failedApproaches}', input.failedApproaches?.join(', ') || 'None');
+
+    // Use the customized system prompt
+    if (ragService.isInitialized()) {
+      try {
+        const results = await ragService.search(
 
     if (ragService.isInitialized()) {
       try {
@@ -197,9 +211,6 @@ export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
             ragSnippets ? `### Relevant Snippets\n${ragSnippets}` : "",
           ]
             .filter(Boolean)
-            .join("\n\n")
-        : "";
-
     const userPrompt = `
 ## Issue Title
 ${input.issueTitle}
@@ -217,7 +228,10 @@ ${input.repoContext}
 Analyze this issue and provide your implementation plan as JSON.
 `.trim();
 
-    const response = await this.complete(SYSTEM_PROMPT, userPrompt);
+    const response = await this.complete(systemPrompt, userPrompt);
+
+    console.log(`[Planner] Response type: ${typeof response}`);
+    console.log(`[Planner] Response preview: ${String(response).slice(0, 500)}...`);
 
     console.log(`[Planner] Response type: ${typeof response}`);
     console.log(`[Planner] Response preview: ${String(response).slice(0, 500)}...`);
