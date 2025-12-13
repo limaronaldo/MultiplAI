@@ -528,6 +528,10 @@ export class Orchestrator {
     );
     if (subtaskIndex >= 0) {
       state.subtasks[subtaskIndex].status = "in_progress";
+      // Persist in_progress status
+      await db.updateSubtaskStatus(task.id, nextSubtask.id, {
+        status: "in_progress",
+      });
     }
 
     // Process the subtask inline (simplified - could spawn child tasks)
@@ -541,6 +545,12 @@ export class Orchestrator {
       }
       state.completedSubtasks.push(nextSubtask.id);
       state.currentSubtask = null;
+
+      // Persist the updated orchestration state to database
+      await db.updateSubtaskStatus(task.id, nextSubtask.id, {
+        status: "completed",
+        diff: subtaskDiff,
+      });
 
       logger.info(`Subtask ${nextSubtask.id} completed`);
 
@@ -560,6 +570,11 @@ export class Orchestrator {
 
         if (attempts < MAX_SUBTASK_ATTEMPTS) {
           state.subtasks[subtaskIndex].status = "pending";
+          // Persist pending status for retry
+          await db.updateSubtaskStatus(task.id, nextSubtask.id, {
+            status: "pending",
+            attempts,
+          });
           logger.warn(
             `Retrying subtask ${nextSubtask.id} (attempt ${attempts}/${MAX_SUBTASK_ATTEMPTS})`,
           );
@@ -568,6 +583,11 @@ export class Orchestrator {
         }
 
         state.subtasks[subtaskIndex].status = "failed";
+        // Persist failed status
+        await db.updateSubtaskStatus(task.id, nextSubtask.id, {
+          status: "failed",
+          attempts,
+        });
       }
 
       // If subtask failed permanently, fail the whole task
