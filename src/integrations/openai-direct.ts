@@ -274,8 +274,14 @@ export class OpenAIDirectClient {
       }
 
       // Fallback 2: check for text field directly on response
+      // NOTE: response.text is config metadata like {"format":{"type":"text"},"verbosity":"high"}
+      // Only use it if it's a string (actual text content), not an object (config)
       if (!extractedContent && (response as any).text) {
-        extractedContent = (response as any).text;
+        const textField = (response as any).text;
+        if (typeof textField === "string") {
+          extractedContent = textField;
+        }
+        // Skip if it's an object (config metadata, not content)
       }
 
       // Fallback 3: check for content field
