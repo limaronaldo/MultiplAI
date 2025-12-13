@@ -28,14 +28,14 @@ const SERVER_CONFIG: MCPServerConfig = {
 
 function createLazy<T>(factory: () => T): () => T {
   let cached: T | null = null;
-import { executeTool, createExecuteHandler } from "./tools/execute.js";
-import { statusTool, createStatusHandler } from "./tools/status.js";
-import { memoryTool, createMemoryHandler } from "./tools/memory.js";
+  return () => {
+    if (cached === null) {
+      cached = factory();
+    }
+    return cached;
+  };
+}
 
-const SERVER_CONFIG: MCPServerConfig = {
-  name: "autodev-mcp",
-  version: "1.0.0",
-  description: "AutoDev MCP Server for AI-assisted code generation",
 async function runTaskToStableState(
   task: Task,
   orchestrator: Orchestrator,
@@ -67,6 +67,27 @@ async function runTaskToStableState(
 
   await db.updateTask(task.id, current);
 }
+
+// Default service getters (lazy)
+const getGitHubClient = createLazy(() => new GitHubClient());
+const getPlannerAgent = createLazy(() => new PlannerAgent());
+const getCoderAgent = createLazy(() => new CoderAgent());
+const getOrchestrator = createLazy(() => new Orchestrator(getPlannerAgent(), getCoderAgent()));
+const getDb = createLazy(() => db);
+const getStaticMemoryStoreLazy = createLazy(() => getStaticMemoryStore());
+const getLearningStoreLazy = createLazy(() => getLearningMemoryStore());
+
+const startBackgroundTaskRunner = (task: Task) => {
+  // Run task in background
+  setImmediate(async () => {
+    try {
+      const orchestrator = getOrchestrator();
+      await runTaskToStableState(task, orchestrator);
+    } catch (err) {
+      console.error("Background task failed:", err);
+    }
+  });
+};
 
 export interface MCPServerDeps {
   getGitHubClient?: () => GitHubClient;
@@ -117,6 +138,27 @@ export function createMCPToolRouter(deps: MCPServerDeps = {}): {
   tools: typeof analyzeTool[];
   callTool: (name: string, args: unknown) => Promise<unknown>;
 } {
+  // Merge with default service getters
+  const effectiveDeps: MCPServerDeps = {
+    getGitHubClient,
+    getPlannerAgent,
+    getCoderAgent,
+    getOrchestrator,
+    getDb,
+    getStaticMemoryStore: getStaticMemoryStoreLazy,
+    getLearningStore: getLearningStoreLazy,
+    startBackgroundTaskRunner,
+    ...deps,
+  };
+
+  // Create tool handlers
+  const toolHandlers = {
+    [analyzeTool.name]: createAnalyzeHandler(effectiveDeps),
+    [executeTool.name]: createExecuteHandler(effectiveDeps),
+    [statusTool.name]: createStatusHandler(effectiveDeps),
+    [memoryTool.name]: createMemoryHandler(effectiveDeps),
+  };
+
   const tools = [analyzeTool, executeTool, statusTool, memoryTool];
 
   return {
@@ -145,40 +187,6 @@ export function createMCPServer(deps: MCPServerDeps = {}): Server {
         tools: {},
       },
     }
-  );
-
-  const router = createMCPToolRouter(deps);
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: router.tools,
-  }));
-
-  // Register tool call handler
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const result = await router.callTool(
-      request.params.name,
-      request.params.arguments ?? {},
-    );
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(result, null, 2),
-        },
-      ],
-    };
-  });
-
-  return server;
-}
-
-/**
- * Start the MCP server with stdio transport
- */
-export async function startMCPServer(): Promise<void> {
-  const server = createMCPServer();
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-}
   );
 
   const router = createMCPToolRouter(deps);
