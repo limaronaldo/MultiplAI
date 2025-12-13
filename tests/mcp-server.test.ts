@@ -197,17 +197,71 @@ class MockMCPServer {
     return this.initialized;
   }
 
-  async listTools(): Promise<{ tools: MockTool[] }> {
-    return { tools: Array.from(this.tools.values()) };
-  }
+      expect(result.message).toBe('Task execution started successfully');
+    });
+  });
 
-  async callTool(name: string, args: unknown): Promise<MockToolResponse> {
-    const handler = this.handlers.get(name);
+  describe('autodev.status', () => {
+    it('should return task status info', async () => {
+      const response = await server.callTool('autodev.status', { taskId: 'task-123' });
+      
+      expect(response.isError).toBeUndefined();
+      expect(response.content).toBeDefined();
+      
+      const result = JSON.parse(response.content[0].text);
+      expect(result.taskId).toBe('task-123');
+      expect(result.status).toBe('running');
+      expect(result.progress).toBe(50);
+      expect(result.currentStep).toBe('Analyzing code');
+    });
+  });
+
+  describe('autodev.memory', () => {
+    it('should return domain data', async () => {
     if (!handler) {
-      return {
-        content: [{ type: 'text', text: `Error: Unknown tool: ${name}` }],
-        isError: true,
-      };
+      
+      expect(response.isError).toBeUndefined();
+      expect(response.content).toBeDefined();
+      
+      const result = JSON.parse(response.content[0].text);
+      expect(result.domain).toBe('test-domain');
+      expect(result.entities).toBeDefined();
+      expect(result.relationships).toBeDefined();
+      expect(result.entities.length).toBe(2);
+      expect(result.relationships.length).toBe(1);
+    });
+  });
+
+  describe('Error Handling', () => {
+    it('should return error for invalid tool name', async () => {
+      const response = await server.callTool('invalid.tool', {});
+      
+      expect(response.isError).toBe(true);
+      expect(response.content[0].text).toContain('Unknown tool: invalid.tool');
+    });
+
+    it('should return error for missing required arguments in analyze', async () => {
+      const response = await server.callTool('autodev.analyze', {});
+      
+      expect(response.isError).toBe(true);
+      expect(response.content[0].text).toContain('Error: path is required');
+    });
+
+    it('should return error for missing required arguments in execute', async () => {
+      const response = await server.callTool('autodev.execute', {});
+      
+      expect(response.isError).toBe(true);
+      expect(response.content[0].text).toContain('Error: task is required');
+    });
+
+    it('should return error for missing required arguments in status', async () => {
+      const response = await server.callTool('autodev.status', {});
+      
+      expect(response.isError).toBe(true);
+      expect(response.content[0].text).toContain('Error: taskId is required');
+    });
+  });
+});
     }
     return handler(args);
   }
