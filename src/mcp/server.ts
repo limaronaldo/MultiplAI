@@ -4,6 +4,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { MCPServerConfig } from "./types.js";
 import { GitHubClient } from "../integrations/github.js";
@@ -165,26 +166,32 @@ export function createMCPToolRouter(deps: MCPServerDeps = {}): {
     },
   };
 }
-
-/**
- * Create and configure the MCP server
- */
-export function createMCPServer(deps: MCPServerDeps = {}): Server {
-  const server = new Server(
-    {
-      name: SERVER_CONFIG.name,
-      version: SERVER_CONFIG.version,
-    },
-    {
-      capabilities: {
-        tools: {},
-      },
-    }
-  );
-
-  const router = createMCPToolRouter(deps);
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: router.tools,
+  }));
+
+  const isToolResult = (value: unknown): value is CallToolResult => {
+    if (!value || typeof value !== "object") return false;
+    const content = (value as { content?: unknown }).content;
+    return Array.isArray(content);
+  };
+
+  // Register tool call handler
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const result = await router.callTool(
+      request.params.name,
+      request.params.arguments ?? {},
+    );
+
+    if (isToolResult(result)) {
+      return result;
+    }
+
+    return {
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+    } satisfies CallToolResult;
+  });
+
+  return server;
   }));
 
   // Register tool call handler
