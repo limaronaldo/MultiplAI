@@ -344,6 +344,105 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_failures_repo ON learning_failures(repo)`;
   console.log("✅ Created learning memory tables");
 
+  // Knowledge Graph tables (v0.8) - entities, relationships, sync state
+  await sql`
+    CREATE TABLE IF NOT EXISTS knowledge_entities (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      canonical_id UUID NOT NULL,
+
+      -- Entity identification
+      entity_type VARCHAR(50) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      file_path TEXT NOT NULL,
+      line_start INTEGER,
+      line_end INTEGER,
+
+      -- Temporal bounds
+      valid_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      valid_until TIMESTAMPTZ,
+      commit_sha VARCHAR(40),
+      version INTEGER NOT NULL DEFAULT 1,
+
+      -- Supersession chain
+      supersedes UUID REFERENCES knowledge_entities(id),
+      superseded_by UUID REFERENCES knowledge_entities(id),
+
+      -- Full entity data
+      signature TEXT,
+      entity_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+
+      -- Extraction metadata
+      confidence DECIMAL(3,2),
+      extracted_at TIMESTAMPTZ DEFAULT NOW(),
+
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+
+  await sql`CREATE INDEX IF NOT EXISTS idx_ke_canonical ON knowledge_entities(canonical_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ke_temporal ON knowledge_entities(valid_from, valid_until)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ke_current ON knowledge_entities(canonical_id) WHERE valid_until IS NULL`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ke_type ON knowledge_entities(entity_type)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ke_file ON knowledge_entities(file_path)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ke_name ON knowledge_entities(name)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ke_commit ON knowledge_entities(commit_sha)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS entity_relationships (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      source_id UUID NOT NULL REFERENCES knowledge_entities(id) ON DELETE CASCADE,
+      target_id UUID NOT NULL REFERENCES knowledge_entities(id) ON DELETE CASCADE,
+      relationship_type VARCHAR(50) NOT NULL,
+
+      -- Temporal bounds (relationship validity)
+      valid_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      valid_until TIMESTAMPTZ,
+
+      metadata JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+
+      UNIQUE(source_id, target_id, relationship_type, valid_from)
+    )
+  `;
+
+  await sql`CREATE INDEX IF NOT EXISTS idx_er_source ON entity_relationships(source_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_er_target ON entity_relationships(target_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_er_type ON entity_relationships(relationship_type)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_er_current ON entity_relationships(source_id, target_id) WHERE valid_until IS NULL`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS invalidation_events (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_id UUID NOT NULL REFERENCES knowledge_entities(id),
+      reason VARCHAR(50) NOT NULL,
+      superseded_by UUID REFERENCES knowledge_entities(id),
+      commit_sha VARCHAR(40),
+      confidence DECIMAL(3,2),
+      details TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+
+  await sql`CREATE INDEX IF NOT EXISTS idx_ie_entity ON invalidation_events(entity_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ie_created ON invalidation_events(created_at)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS knowledge_graph_sync (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      repo_full_name VARCHAR(255) NOT NULL UNIQUE,
+      last_commit_sha VARCHAR(40),
+      last_sync_at TIMESTAMPTZ,
+      entity_count INTEGER DEFAULT 0,
+      status VARCHAR(50) DEFAULT 'pending',
+      error_message TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_kgs_repo ON knowledge_graph_sync(repo_full_name)`;
+  console.log("✅ Created knowledge graph tables");
+
   console.log("\n✨ Migrations complete!");
 
   await sql.end();
