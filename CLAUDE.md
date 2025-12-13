@@ -50,13 +50,22 @@ fly logs                 # View logs
 
 ### Core Agents
 
-| Agent | Model | Provider | Purpose |
-|-------|-------|----------|---------|
-| **Planner** | `moonshotai/kimi-k2-thinking` | OpenRouter (ZDR) | Agentic reasoning for planning |
-| **Fixer** | `moonshotai/kimi-k2-thinking` | OpenRouter (ZDR) | Agentic debugging |
-| **Reviewer** | `deepseek-speciale-high` | OpenRouter (ZDR) | Cheap reasoning for review |
-| **Escalation 1** | `kimi-k2-thinking` | OpenRouter (ZDR) | First retry with agentic model |
-| **Escalation 2** | `claude-opus-4-5-20251101` | Anthropic | Final fallback |
+| Agent | Model | Provider | Cost | Purpose |
+|-------|-------|----------|------|---------|
+| **Planner** | `deepseek-speciale-high` | OpenRouter (ZDR) | ~$0.02 | Cheap reasoning for planning |
+| **Fixer** | `deepseek-speciale-high` | OpenRouter (ZDR) | ~$0.02 | Cheap reasoning for debugging |
+| **Reviewer** | `deepseek-speciale-high` | OpenRouter (ZDR) | ~$0.02 | Cheap reasoning for review |
+| **Escalation 1** | `deepseek-speciale-high` | OpenRouter (ZDR) | ~$0.02 | First retry |
+| **Escalation 2** | `claude-opus-4-5-20251101` | Anthropic | ~$0.75 | Final fallback |
+
+### Token Limits (Updated)
+
+| Agent Type | maxTokens | Use Case |
+|------------|-----------|----------|
+| **Coder/Fixer** | 65,536 | Large diffs |
+| **Planner/Breakdown/Orchestrator** | 16,384 | Plans |
+| **Reviewer** | 8,192 | Verdicts |
+| **Base default** | 16,384 | General |
 
 ### Coder Model Selection (Effort-Based by Complexity)
 
@@ -94,8 +103,7 @@ claude-opus-4-5-*, claude-sonnet-4-5-* → AnthropicClient
 gpt-5.2-*, gpt-5.1-codex-* → OpenAIDirectClient
 
 // OpenRouter (Zero Data Retention providers)
-moonshotai/kimi-k2-thinking → Nebius/Baseten (ZDR)
-deepseek/deepseek-v3.2-speciale → OpenRouter
+deepseek/deepseek-v3.2-speciale → Parasail (ZDR)
 x-ai/grok-code-fast-1 → OpenRouter
 ```
 
