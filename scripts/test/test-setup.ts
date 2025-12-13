@@ -21,15 +21,17 @@ try {
 }
 
 // Test 2: GitHub Client
-console.log("2️⃣  Testing GitHub client...");
 try {
-  const github = new GitHubClient();
-  const repo = process.env.ALLOWED_REPOS?.split(",")[0] || "owner/repo";
-  console.log(`   📦 Configured repo: ${repo}`);
-  console.log(`   ✅ GitHub client initialized\n`);
-} catch (error) {
-  console.error("   ❌ GitHub client failed:", error);
-  process.exit(1);
+  const planner = new PlannerAgent();
+  const result = await planner.run({
+    issueTitle: "Add hello world function",
+    issueBody: "Create a simple function that returns 'Hello, World!'",
+    repoContext: "TypeScript project with src/ directory",
+    previousFeedback: "Previous implementation had syntax errors",
+    failedApproaches: ["Using arrow functions", "Direct string return"],
+  });
+
+  console.log("   📋 Definition of Done:", result.definitionOfDone);
 }
 
 // Test 3: Planner Agent
