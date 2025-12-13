@@ -1,5 +1,5 @@
 /**
- * Model Selection Strategy
+ * Model Selection Strategy - Hybrid Option C
  *
  * Selects models based on task effort level and escalation state.
  * Implements cost-efficient routing: cheap models for simple tasks,
@@ -14,30 +14,38 @@
  * 2. Model naming conventions vary (OpenRouter uses "anthropic/...", direct API uses "claude-...")
  * 3. User has specific preferences for cost/quality tradeoffs
  *
- * Current approved models (as of 2025-12-12):
- * - Planner: gpt-5.1-codex-max (high reasoning)
- * - Coder XS: gpt-5.2 (effort-based) → gpt-5.2 (xhigh) → Claude Opus 4.5
- * - Coder S/M: gpt-5.2 (high) → gpt-5.2 (xhigh) → Claude Opus 4.5
- * - Fixer: gpt-5.1-codex-max (medium reasoning)
- * - Reviewer: gpt-5.1-codex-max (medium reasoning)
- * - Fallback: claude-sonnet-4-5-20250929
+ * HYBRID STRATEGY (Option C) - Approved 2025-12-12:
+ * ─────────────────────────────────────────────────
+ * Agent                │ Model                    │ Cost/Task │ Provider
+ * ─────────────────────┼──────────────────────────┼───────────┼──────────────
+ * Planner              │ kimi-k2-thinking         │ ~$0.15    │ OpenRouter (ZDR)
+ * Coder XS low         │ deepseek-speciale-low    │ ~$0.005   │ OpenRouter (ZDR)
+ * Coder XS medium      │ deepseek-speciale-medium │ ~$0.01    │ OpenRouter (ZDR)
+ * Coder XS high        │ gpt-5.2-high             │ ~$0.15    │ OpenAI Direct
+ * Coder S/M            │ gpt-5.2-high             │ ~$0.15    │ OpenAI Direct
+ * Escalation 1         │ kimi-k2-thinking         │ ~$0.20    │ OpenRouter (ZDR)
+ * Escalation 2         │ claude-opus-4-5          │ ~$0.75    │ Anthropic
+ * Fixer                │ kimi-k2-thinking         │ ~$0.10    │ OpenRouter (ZDR)
+ * Reviewer             │ deepseek-speciale-high   │ ~$0.02    │ OpenRouter (ZDR)
  *
- * Escalation Path (prevents complete failures):
- * - Attempt 0 (first try): GPT-5.2 with effort-based reasoning
- * - Attempt 1 (1st failure): GPT-5.2 xhigh (maximum reasoning)
- * - Attempt 2+ (2nd failure): Claude Opus 4.5 (final fallback)
+ * ZDR = Zero Data Retention (Parasail, Nebius, Baseten providers)
  *
- * GPT-5.2 configurations use internal config names (e.g., gpt-5.2-medium)
- * which map to model "gpt-5.2" with specific reasoning effort levels.
+ * Escalation Path:
+ * - Attempt 0: Effort-based (DeepSeek for low/med, GPT-5.2 for high)
+ * - Attempt 1: Kimi K2 Thinking (agentic recovery)
+ * - Attempt 2+: Claude Opus 4.5 (final fallback)
+ *
+ * Cost Savings vs Previous Config:
+ * - XS low task: $0.005 vs $0.03 (83% savings)
+ * - XS medium task: $0.01 vs $0.08 (87% savings)
+ * - Typical XS task: ~$0.30-0.35 vs ~$0.85 (59% savings)
  *
  * Available models:
- * - gpt-5.1-codex-max: Long autonomous coding, high reasoning
- * - gpt-5.1-codex-mini: Fast, lightweight coding tasks
- * - claude-opus-4-5-20251101: High quality, first attempt
- * - claude-sonnet-4-5-20250929: Fallback, general purpose
- * - x-ai/grok-3-mini: Fast, cheap (via OpenRouter)
+ * - deepseek-speciale-*: Ultra-cheap reasoning (OpenRouter/Parasail)
+ * - kimi-k2-thinking: Agentic reasoning, 262K context (OpenRouter/Nebius)
+ * - gpt-5.2-high: Proven coding quality (OpenAI Direct)
+ * - claude-opus-4-5: Final fallback (Anthropic Direct)
  *
- * ⚠️ OPENAI: ONLY USE gpt-5.1-codex-* models - NO LEGACY MODELS (gpt-4o, o1, o3, gpt-5.2, etc.)
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
@@ -184,26 +192,32 @@ export type ReasoningModelConfigName = keyof typeof REASONING_MODEL_CONFIGS;
 /**
  * Model tiers from cheapest to most expensive
  *
+ * Hybrid Strategy (Option C) - Optimized for cost/performance:
+ * - XS low/medium: DeepSeek Speciale (ultra-cheap, ~$0.005-0.01)
+ * - XS high, S, M: GPT-5.2 (proven quality, ~$0.15)
+ * - Escalation 1: Kimi K2 Thinking (agentic recovery, ~$0.20)
+ * - Escalation 2: Claude Opus 4.5 (final fallback, ~$0.75)
+ *
  * ⚠️ DO NOT MODIFY without user approval - see header comment
  */
 export const MODEL_TIERS: ModelTier[] = [
   {
     name: "nano",
-    models: ["gpt-5.2-none"],
-    description: "GPT-5.2 (reasoning: none). Ultra-fast, minimal thinking.",
-    avgCostPerTask: 0.01,
+    models: ["deepseek-speciale-low"],
+    description: "DeepSeek Speciale (low). Ultra-cheap for typos/simple fixes.",
+    avgCostPerTask: 0.005,
   },
   {
     name: "fast",
-    models: ["gpt-5.2-low"],
-    description: "GPT-5.2 (reasoning: low). Quick with light reasoning.",
-    avgCostPerTask: 0.03,
+    models: ["deepseek-speciale-low"],
+    description: "DeepSeek Speciale (low). Quick with light reasoning.",
+    avgCostPerTask: 0.005,
   },
   {
     name: "medium",
-    models: ["gpt-5.2-medium"],
-    description: "GPT-5.2 (reasoning: medium). Balanced speed/quality.",
-    avgCostPerTask: 0.08,
+    models: ["deepseek-speciale-medium"],
+    description: "DeepSeek Speciale (medium). Balanced speed/quality.",
+    avgCostPerTask: 0.01,
   },
   {
     name: "standard",
@@ -213,16 +227,15 @@ export const MODEL_TIERS: ModelTier[] = [
   },
   {
     name: "thinking",
-    models: ["gpt-5.2-xhigh"],
+    models: ["kimi-k2-thinking"],
     description:
-      "GPT-5.2 (reasoning: xhigh). Maximum reasoning for hard problems.",
-    avgCostPerTask: 0.5,
+      "Kimi K2 Thinking. Agentic reasoning for failed task recovery.",
+    avgCostPerTask: 0.2,
   },
   {
     name: "fallback",
     models: ["claude-opus-4-5-20251101"],
-    description:
-      "Claude Opus 4.5. Final fallback when GPT-5.2 escalation fails.",
+    description: "Claude Opus 4.5. Final fallback when all else fails.",
     avgCostPerTask: 0.75,
   },
 ];
@@ -260,7 +273,7 @@ export function selectModels(context: SelectionContext): ModelSelection {
     };
   }
 
-  // M tasks: gpt-5.2 (high) → gpt-5.2 (xhigh) → Claude Opus
+  // M tasks: gpt-5.2 (high) → Kimi K2 → Claude Opus
   if (complexity === "M") {
     if (attemptCount >= 2) {
       return {
@@ -273,9 +286,9 @@ export function selectModels(context: SelectionContext): ModelSelection {
     if (attemptCount >= 1) {
       return {
         tier: "thinking",
-        models: ["gpt-5.2-xhigh"],
+        models: ["kimi-k2-thinking"],
         useMultiAgent: false,
-        reason: "M complexity with 1 failure → gpt-5.2 (xhigh reasoning)",
+        reason: "M complexity with 1 failure → Kimi K2 (agentic recovery)",
       };
     }
     return {
@@ -286,7 +299,7 @@ export function selectModels(context: SelectionContext): ModelSelection {
     };
   }
 
-  // S tasks: gpt-5.2 (high) → gpt-5.2 (xhigh) → Claude Opus
+  // S tasks: gpt-5.2 (high) → Kimi K2 → Claude Opus
   if (complexity === "S") {
     if (attemptCount >= 2) {
       return {
@@ -299,9 +312,9 @@ export function selectModels(context: SelectionContext): ModelSelection {
     if (attemptCount >= 1) {
       return {
         tier: "thinking",
-        models: ["gpt-5.2-xhigh"],
+        models: ["kimi-k2-thinking"],
         useMultiAgent: false,
-        reason: "S complexity with 1 failure → gpt-5.2 (xhigh reasoning)",
+        reason: "S complexity with 1 failure → Kimi K2 (agentic recovery)",
       };
     }
     return {
@@ -319,22 +332,22 @@ export function selectModels(context: SelectionContext): ModelSelection {
 /**
  * Select models for XS tasks based on effort level
  *
- * Effort-based selection using GPT-5.2 with different reasoning levels:
- * - low: gpt-5.2-low (reasoning: low)
- * - medium: gpt-5.2-medium (reasoning: medium)
- * - high: gpt-5.2-high (reasoning: high)
- * - undefined: gpt-5.2-medium (default)
+ * Hybrid Strategy (Option C):
+ * - low: DeepSeek Speciale (low) - ultra-cheap for typos
+ * - medium: DeepSeek Speciale (medium) - cheap for simple bugs
+ * - high: GPT-5.2 (high) - proven quality for complex tasks
+ * - undefined: DeepSeek Speciale (medium) (default)
  *
  * Escalation path:
- * - Attempt 1: gpt-5.2 (effort-based)
- * - Attempt 2: gpt-5.2-xhigh (max reasoning)
- * - Attempt 3: Claude Opus 4.5 (fallback to different model)
+ * - Attempt 0: Effort-based (DeepSeek or GPT-5.2)
+ * - Attempt 1: Kimi K2 Thinking (agentic recovery)
+ * - Attempt 2+: Claude Opus 4.5 (final fallback)
  */
 function selectForXS(
   effort: EffortLevel | undefined,
   attemptCount: number,
 ): ModelSelection {
-  // Final fallback: Claude Opus after GPT-5.2 xhigh fails
+  // Final fallback: Claude Opus after Kimi K2 fails
   if (attemptCount >= 2) {
     return {
       tier: "fallback",
@@ -344,13 +357,13 @@ function selectForXS(
     };
   }
 
-  // First escalation: GPT-5.2 xhigh
+  // First escalation: Kimi K2 Thinking (agentic recovery)
   if (attemptCount >= 1) {
     return {
       tier: "thinking",
-      models: ["gpt-5.2-xhigh"],
+      models: ["kimi-k2-thinking"],
       useMultiAgent: false,
-      reason: "XS with 1 failure → gpt-5.2 (xhigh reasoning)",
+      reason: "XS with 1 failure → Kimi K2 Thinking (agentic recovery)",
     };
   }
 
@@ -358,55 +371,55 @@ function selectForXS(
   if (effort === "low") {
     return {
       tier: "fast",
-      models: ["gpt-5.2-low"],
+      models: ["deepseek-speciale-low"],
       useMultiAgent: false,
-      reason: "XS low effort → gpt-5.2 (low reasoning)",
+      reason: "XS low effort → DeepSeek Speciale (low) ~$0.005",
     };
   }
 
   if (effort === "medium") {
     return {
       tier: "medium",
-      models: ["gpt-5.2-medium"],
+      models: ["deepseek-speciale-medium"],
       useMultiAgent: false,
-      reason: "XS medium effort → gpt-5.2 (medium reasoning)",
+      reason: "XS medium effort → DeepSeek Speciale (medium) ~$0.01",
     };
   }
 
-  // high effort
+  // high effort - keep GPT-5.2 for quality
   if (effort === "high") {
     return {
       tier: "standard",
       models: ["gpt-5.2-high"],
       useMultiAgent: false,
-      reason: "XS high effort → gpt-5.2 (high reasoning)",
+      reason: "XS high effort → GPT-5.2 (high reasoning) ~$0.15",
     };
   }
 
-  // undefined effort → default to medium reasoning
+  // undefined effort → default to DeepSeek medium
   return {
     tier: "medium",
-    models: ["gpt-5.2-medium"],
+    models: ["deepseek-speciale-medium"],
     useMultiAgent: false,
-    reason: "XS (no effort specified) → gpt-5.2 (medium reasoning)",
+    reason: "XS (no effort specified) → DeepSeek Speciale (medium) ~$0.01",
   };
 }
 
 /**
  * Select models for Fixer agent
  *
- * Uses gpt-5.1-codex-max with medium reasoning for all attempts.
+ * Uses Kimi K2 Thinking for agentic debugging.
  * Fixer model is configured in fixer.ts, this is for escalation tracking.
  */
 export function selectFixerModels(context: SelectionContext): ModelSelection {
   const { attemptCount } = context;
 
-  // All fix attempts use gpt-5.1-codex-max (configured in fixer.ts)
+  // All fix attempts use Kimi K2 Thinking (configured in fixer.ts)
   return {
     tier: "thinking",
-    models: ["gpt-5.1-codex-max"],
+    models: ["kimi-k2-thinking"],
     useMultiAgent: false,
-    reason: `Fixer attempt ${attemptCount + 1} → gpt-5.1-codex-max (medium reasoning)`,
+    reason: `Fixer attempt ${attemptCount + 1} → Kimi K2 Thinking (agentic debugging)`,
   };
 }
 

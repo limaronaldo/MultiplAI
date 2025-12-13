@@ -2,8 +2,10 @@ import { BaseAgent } from "./base";
 import { PlannerOutput, PlannerOutputSchema } from "../core/types";
 
 // Default planner model - can be overridden via env var
-// Planner uses gpt-5.1-codex-max with high reasoning for thorough analysis
-const DEFAULT_PLANNER_MODEL = process.env.PLANNER_MODEL || "gpt-5.1-codex-max";
+// Planner uses Kimi K2 Thinking for agentic planning with 262K context
+// Cost: ~$0.15/task vs ~$0.50 with gpt-5.1-codex-max (70% savings)
+const DEFAULT_PLANNER_MODEL =
+  process.env.PLANNER_MODEL || "moonshotai/kimi-k2-thinking";
 
 interface PlannerInput {
   issueTitle: string;
@@ -109,11 +111,12 @@ Complexity guide:
 
 export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
   constructor() {
-    // gpt-5.1-codex-max with high reasoning for thorough planning
+    // Kimi K2 Thinking - agentic reasoning model optimized for planning
+    // No reasoningEffort param needed - Kimi handles reasoning internally
     super({
       model: DEFAULT_PLANNER_MODEL,
       temperature: 0.3,
-      reasoningEffort: "high",
+      maxTokens: 4096,
     });
   }
 

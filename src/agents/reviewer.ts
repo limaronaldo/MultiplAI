@@ -2,9 +2,10 @@ import { BaseAgent } from "./base";
 import { ReviewerOutput, ReviewerOutputSchema } from "../core/types";
 
 // Default reviewer model - can be overridden via env var
-// Reviewer uses gpt-5.1-codex-max with medium reasoning for code review
+// Reviewer uses DeepSeek Speciale for fast, cheap code review
+// Cost: ~$0.02/task vs ~$0.20 with gpt-5.1-codex-max (90% savings)
 const DEFAULT_REVIEWER_MODEL =
-  process.env.REVIEWER_MODEL || "gpt-5.1-codex-max";
+  process.env.REVIEWER_MODEL || "deepseek-speciale-high";
 
 interface ReviewerInput {
   definitionOfDone: string[];
@@ -64,11 +65,12 @@ Respond ONLY with valid JSON:
 
 export class ReviewerAgent extends BaseAgent<ReviewerInput, ReviewerOutput> {
   constructor() {
-    // gpt-5.1-codex-max with medium reasoning for code review
+    // DeepSeek Speciale with high reasoning - fast and cheap reviews
+    // reasoningEffort is resolved via REASONING_MODEL_CONFIGS in llm.ts
     super({
       model: DEFAULT_REVIEWER_MODEL,
       temperature: 0.1,
-      reasoningEffort: "medium",
+      maxTokens: 2048,
     });
   }
 

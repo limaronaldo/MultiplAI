@@ -9,8 +9,10 @@ interface FixerInput {
   fileContents: Record<string, string>;
 }
 
-// Default fixer model - gpt-5.1-codex-max with medium reasoning for debugging
-const DEFAULT_FIXER_MODEL = process.env.FIXER_MODEL || "gpt-5.1-codex-max";
+// Default fixer model - Kimi K2 Thinking for tool-oriented debugging
+// Cost: ~$0.10/task vs ~$0.30 with gpt-5.1-codex-max (67% savings)
+const DEFAULT_FIXER_MODEL =
+  process.env.FIXER_MODEL || "moonshotai/kimi-k2-thinking";
 
 const SYSTEM_PROMPT = `You are an expert debugger fixing failing code.
 
@@ -61,12 +63,12 @@ IMPORTANT: Your entire response must be valid JSON wrapped in a code block. Neve
 
 export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
   constructor(modelOverride?: string) {
-    // gpt-5.1-codex-max with medium reasoning for debugging
+    // Kimi K2 Thinking - agentic reasoning for debugging with tool use
+    // No reasoningEffort param needed - Kimi handles reasoning internally
     super({
       model: modelOverride || DEFAULT_FIXER_MODEL,
       maxTokens: 8192,
       temperature: 0.2,
-      reasoningEffort: "medium",
     });
   }
 
