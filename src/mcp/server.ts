@@ -10,13 +10,14 @@ import { PlannerAgent } from "../agents/planner.js";
 import { CoderAgent } from "../agents/coder.js";
 import { Orchestrator } from "../core/orchestrator.js";
 import { db } from "../integrations/db.js";
-import { getStaticMemoryStore } from "../core/memory/index.js";
-import { getLearningMemoryStore } from "../core/memory/learning-memory-store.js";
 import type { StaticMemory } from "../core/memory/index.js";
 import type { Task, TaskEvent } from "../core/types.js";
 import { isTerminal, getNextAction } from "../core/state-machine.js";
+import { tools, getHandler } from "./tools/registry.js";
 import { analyzeTool, createAnalyzeHandler } from "./tools/analyze.js";
 import { executeTool, createExecuteHandler } from "./tools/execute.js";
+import { statusTool, createStatusHandler } from "./tools/status.js";
+import { memoryTool, createMemoryHandler } from "./tools/memory.js";
 import { statusTool, createStatusHandler } from "./tools/status.js";
 import { memoryTool, createMemoryHandler } from "./tools/memory.js";
 
@@ -176,10 +177,10 @@ export function createMCPServer(deps: MCPServerDeps = {}): Server {
     },
     {
       capabilities: {
-        tools: {},
-      },
-    }
-  );
+ * Create and configure the MCP server
+ */
+export function createMCPServer(deps: MCPServerDeps = {}): Server {
+  const server = new Server(
 
   const router = createMCPToolRouter(deps);
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -212,4 +213,59 @@ export async function startMCPServer(): Promise<void> {
   const server = createMCPServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
+}
+
+      },
+    }
+  );
+
+  const getGitHubClient =
+    deps.getGitHubClient ?? createLazy(() => new GitHubClient());
+  const getPlannerAgent =
+    deps.getPlannerAgent ?? createLazy(() => new PlannerAgent());
+  const getCoderAgent = deps.getCoderAgent ?? createLazy(() => new CoderAgent());
+  const getOrchestrator =
+    deps.getOrchestrator ?? createLazy(() => new Orchestrator());
+  const getDb = deps.getDb ?? (() => db);
+  const getStaticStore = deps.getStaticMemoryStore ?? getStaticMemoryStore;
+  const getLearningStore =
+    deps.getLearningStore ?? (() => getLearningMemoryStore());
+  const startBackgroundTaskRunner =
+    deps.startBackgroundTaskRunner ??
+    ((task: Task) => {
+      const orchestrator = getOrchestrator();
+      void runTaskToStableState(task, orchestrator).catch((error) => {
+        console.error(`[MCP] Error processing task ${task.id}:`, error);
+      });
+    });
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools,
+  }));
+
+  // Register tool call handler
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const handlerCreator = getHandler(request.params.name);
+    const handler = handlerCreator({
+      getGitHubClient,
+      getPlannerAgent,
+      getCoderAgent,
+      getDb,
+      getStaticMemoryStore: getStaticStore,
+      getLearningStore,
+      startBackgroundTaskRunner,
+    });
+
+    const result = await handler(request.params.arguments ?? {});
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(result, null, 2),
+        },
+      ],
+    };
+  });
+
+  return server;
 }
