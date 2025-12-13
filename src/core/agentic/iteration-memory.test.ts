@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
-import { IterationMemory, type AttemptRecord } from './iteration-memory';
+import { IterationMemory } from './iteration-memory';
+import type { AttemptRecord } from './iteration-memory';
 
 describe('IterationMemory', () => {
   it('starts with empty attempts', () => {
