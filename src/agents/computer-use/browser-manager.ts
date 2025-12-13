@@ -1,3 +1,4 @@
+import { chromium, Browser, Page } from 'playwright';
 
 interface BrowserOptions {
   // Placeholder for future options
