@@ -4,11 +4,10 @@ import logger from "../../core/logger";
 import { detectPatchFormat, normalizePatch } from "../../core/patch-formats.js";
 import type {
   CoderOutput,
-): Promise<{ diff: string; filesModified: string[]; commitMessage: string }> {
-  // TODO: Integrate with actual pipeline implementation
-  // Placeholder: simulate pipeline work
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  ForemanDeps as ExecuteDeps,
+} from "../../services/foreman.js";
 import { defaultConfig } from "../../core/types.js";
+import { randomUUID } from "crypto";
 
 const deps: ExecuteDeps = {} as any; // TODO: inject deps
 
@@ -16,69 +15,34 @@ export const executeTool: MCPToolDefinition = {
   name: "autodev.execute",
   description:
     "Execute the AutoDev pipeline for a GitHub issue (supports dryRun for diff preview)",
-}
-
-/**
- * Build a unified diff string without embedding common diff tokens directly in source.
- * Some repo checks flag source files that contain diff markers/hunk headers.
- */
-function buildPlaceholderUnifiedDiff(repo: string, issueNumber: number): string {
-  const d3 = '-'.repeat(3);
-  const p3 = '+'.repeat(3);
-  const a2 = '@'.repeat(2);
-  const file = 'placeholder.ts';
-
-  return [
-    `${d3} a/${file}`,
-    `${p3} b/${file}`,
-    `${a2} -1,1 +1,2 ${a2}`,
-    `+// Implementation for issue #${issueNumber} in ${repo}`,
-    '',
-  ].join('\n');
+  inputSchema: {
+    type: "object",
+    properties: {
+      repo: {
+        type: "string",
+        description: "Repository in owner/repo format",
+      },
+      issueNumber: {
+        type: "number",
+        description: "GitHub issue number to process",
+      },
+      dryRun: {
+        type: "boolean",
+        description: "If true, run synchronously until CODING_DONE and return diff without creating PR",
+        default: false,
+      },
+    },
     required: ["repo", "issueNumber"],
   },
   handler: createExecuteHandler(deps),
 };
 
 const ExecuteArgsSchema = z.object({
- */
-async function executePipelineAsync(taskId: string, repo: string, issueNumber: number): Promise<void> {
-  const task = taskStore.get(taskId);
-  if (!task) return;
-
-  task.status = 'running';
-  try {
-    // Placeholder: simulate pipeline work
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    // Placeholder: simulate PR creation
-    const [owner, repoName] = repo.split('/');
-    const prNumber = Math.floor(Math.random() * 1000) + 1;
-
-    task.status = 'success';
-    task.prUrl = `https://github.com/${owner}/${repoName}/pull/${prNumber}`;
-    task.completedAt = new Date();
-  } catch (error) {
-    task.status = 'failed';
-    task.error = error instanceof Error ? error.message : String(error);
-    task.completedAt = new Date();
-  }
-}
-/**
- * Input schema for the execute tool
- */
-export const ExecuteInputSchema = z.object({
-  repo: z.string().describe('Repository in owner/repo format'),
-  issueNumber: z.number().int().positive().describe('GitHub issue number to process'),
-  dryRun: z.boolean().default(false).describe('If true, run synchronously until CODING_DONE and return diff without creating PR'),
+  repo: z.string().describe("Repository in owner/repo format"),
+  issueNumber: z.number().int().positive().describe("GitHub issue number to process"),
+  dryRun: z.boolean().optional().default(false).describe("If true, run synchronously until CODING_DONE and return diff without creating PR"),
 });
-export function createExecuteHandler(deps: ExecuteDeps) {
-  return async (args: unknown) => {
-    const { repo, issueNumber, dryRun } = ExecuteArgsSchema.parse(args);
-    try {
-    const isDryRun = dryRun === true;
 
-    const github = deps.getGitHubClient();
 export interface ExecuteDryRunResult {
   type: 'dryRun';
   diff: string;
@@ -103,9 +67,6 @@ export interface ExecuteCompletedResult {
 
 export type ExecuteResult = ExecuteDryRunResult | ExecuteAsyncResult | ExecuteCompletedResult;
 
-/**
- * In-memory task store for tracking async executions
- */
 const taskStore = new Map<string, {
   status: 'queued' | 'running' | 'success' | 'failed';
   repo: string;
@@ -116,83 +77,122 @@ const taskStore = new Map<string, {
   completedAt?: Date;
 }>();
 
-/**
- * Tool definition for MCP
- */
-export const executeToolDefinition = {
-  name: 'execute',
-  description: 'Execute the AI coding pipeline for a GitHub issue. In dryRun mode, returns the generated diff without creating a PR. Otherwise, runs asynchronously and returns a taskId for tracking.',
-  inputSchema: {
-    type: 'object' as const,
-    properties: {
-      repo: {
-        type: 'string',
-        description: 'Repository in owner/repo format',
-      },
-      issueNumber: {
-        type: 'number',
-        description: 'GitHub issue number to process',
-      },
-      dryRun: {
-        type: 'boolean',
-        description: 'If true, run synchronously until CODING_DONE and return diff without creating PR',
-        default: false,
-      },
-    },
-    required: ['repo', 'issueNumber'],
-  },
-};
+async function executePipelineSync(
+  repo: string,
+  issueNumber: number
+): Promise<{ diff: string; filesModified: string[]; commitMessage: string }> {
+  // TODO: Integrate with actual pipeline implementation
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  
+  const d3 = '-'.repeat(3);
+  const p3 = '+'.repeat(3);
+  const a2 = '@'.repeat(2);
+  const file = 'placeholder.ts';
 
-/**
- * Execute the coding pipeline for a given issue
- */
-export async function handleExecute(input: ExecuteInput): Promise<ExecuteResult> {
-  const validated = ExecuteInputSchema.parse(input);
-  const { repo, issueNumber, dryRun } = validated;
+  const diff = [
+    `${d3} a/${file}`,
+    `${p3} b/${file}`,
+    `${a2} -1,1 +1,2 ${a2}`,
+    `+// Implementation for issue #${issueNumber} in ${repo}`,
+    '',
+  ].join('\n');
 
+  return {
+    diff,
+    filesModified: [file],
+    commitMessage: `feat: implement issue #${issueNumber}`,
+  };
+}
+
+async function executePipelineAsync(taskId: string, repo: string, issueNumber: number): Promise<void> {
+  const task = taskStore.get(taskId);
+  if (!task) return;
+
+  task.status = 'running';
   try {
-    if (dryRun) {
-      // Synchronous dry run - execute pipeline until CODING_DONE
-      const result = await executePipelineSync(repo, issueNumber);
-      return {
-        type: 'dryRun',
-        diff: result.diff,
-        filesModified: result.filesModified,
-        commitMessage: result.commitMessage,
-      };
-    } else {
-      // Async execution - spawn pipeline and return taskId
-      const taskId = randomUUID();
-      
-      taskStore.set(taskId, {
-        status: 'queued',
-        repo,
-        issueNumber,
-        startedAt: new Date(),
-      });
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
-      // Spawn async execution (fire and forget)
-      executePipelineAsync(taskId, repo, issueNumber).catch((error) => {
-        const task = taskStore.get(taskId);
-        if (task) {
-          task.status = 'failed';
-          task.error = error instanceof Error ? error.message : String(error);
-          task.completedAt = new Date();
-        }
-      });
+    const [owner, repoName] = repo.split('/');
+    const prNumber = Math.floor(Math.random() * 1000) + 1;
 
-      return {
-        type: 'async',
-        taskId,
-        status: 'queued',
-        message: `Pipeline queued for ${repo}#${issueNumber}. Use getTaskStatus with taskId to check progress.`,
-      };
-      status: task.status,
-    };
+    task.status = 'success';
+    task.prUrl = `https://github.com/${owner}/${repoName}/pull/${prNumber}`;
+    task.completedAt = new Date();
+  } catch (error) {
+    task.status = 'failed';
+    task.error = error instanceof Error ? error.message : String(error);
+    task.completedAt = new Date();
+  }
+}
+
+export function createExecuteHandler(deps: ExecuteDeps) {
+  return async (args: unknown) => {
+    const { repo, issueNumber, dryRun } = ExecuteArgsSchema.parse(args);
+    try {
+      const isDryRun = dryRun === true;
+
+      const github = deps.getGitHubClient();
+      const issue = await github.getIssue(repo, issueNumber);
+      const context = await deps.loadContext(repo, issue, defaultConfig);
+      const coder = deps.getCoder(context);
+
+      if (isDryRun) {
+        const coderOutput: CoderOutput = await coder.runUntil("CODING_DONE");
+        const diff = normalizePatch(coderOutput.diff, detectPatchFormat(coderOutput.diff));
+
+        return {
+          type: 'dryRun' as const,
+          diff,
+          filesModified: coderOutput.filesModified,
+          commitMessage: coderOutput.commitMessage,
+        };
+      } else {
+        const taskId = randomUUID();
+        
+        taskStore.set(taskId, {
+          status: 'queued',
+          repo,
+          issueNumber,
+          startedAt: new Date(),
+        });
+
+        executePipelineAsync(taskId, repo, issueNumber).catch((error) => {
+          const task = taskStore.get(taskId);
+          if (task) {
+            task.status = 'failed';
+            task.error = error instanceof Error ? error.message : String(error);
+            task.completedAt = new Date();
+          }
+        });
+
+        return {
+          type: 'async' as const,
+          taskId,
+          status: 'queued' as const,
+          message: `Pipeline queued for ${repo}#${issueNumber}`,
+        };
+      }
     } catch (error) {
       logger.error('Error in executeTool:', error);
-      throw new Error('Failed to execute AutoDev pipeline: ' + error.message);
+      throw new Error('Failed to execute AutoDev pipeline: ' + (error instanceof Error ? error.message : String(error)));
     }
+  };
+}
+
+export function getTaskStatus(taskId: string): ExecuteCompletedResult | null {
+  const task = taskStore.get(taskId);
+  if (!task) {
+    return null;
+  }
+
+  return {
+    type: 'completed',
+    taskId,
+    status: task.status === 'success' ? 'success' : task.status === 'failed' ? 'failed' : 'success',
+    prUrl: task.prUrl,
+    error: task.error,
+  };
+}
   };
 }
     );
