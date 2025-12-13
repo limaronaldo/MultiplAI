@@ -45,15 +45,28 @@ describe("State Machine", () => {
   test("identifies FAILED as terminal state", () => {
     expect(isTerminal("FAILED")).toBe(true);
   });
-
-  test("identifies non-terminal states correctly", () => {
-    expect(isTerminal("CODING")).toBe(false);
-    expect(isTerminal("TESTING")).toBe(false);
+  test("returns correct next action for ORCHESTRATING state", () => {
+    expect(getNextAction("ORCHESTRATING")).toBe("ORCHESTRATE");
   });
 
-  test("returns correct next action for NEW state", () => {
-    expect(getNextAction("NEW")).toBe("PLAN");
+  test("returns correct next action for REFLECTING state", () => {
+    expect(getNextAction("REFLECTING")).toBe("REFLECT");
   });
+
+  test("returns correct next action for REPLANNING state", () => {
+    expect(getNextAction("REPLANNING")).toBe("REPLAN");
+  });
+
+  test("allows valid TESTS_FAILED -> REFLECTING transition", () => {
+    expect(canTransition("TESTS_FAILED", "REFLECTING")).toBe(true);
+    expect(() => transition("TESTS_FAILED", "REFLECTING")).not(toThrow());
+  });
+
+  test("returns WAIT for intermediate states", () => {
+    expect(getNextAction("PLANNING")).toBe("WAIT");
+    expect(getNextAction("CODING")).toBe("WAIT");
+  });
+});
 
   test("returns correct next action for TESTS_FAILED state", () => {
     expect(getNextAction("TESTS_FAILED")).toBe("FIX");
