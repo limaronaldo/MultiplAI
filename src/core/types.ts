@@ -55,13 +55,17 @@ export const TaskStatus = {
 export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
 
 // ============================================
-// Task Definition
-// ============================================
+  // Orchestration state (for parent tasks managing subtasks)
+  orchestrationState?: OrchestrationState;
+  estimatedComplexity?: "XS" | "S" | "M" | "L" | "XL";
+  estimatedEffort?: "low" | "medium" | "high";
 
-export interface Task {
-  id: string;
-  githubRepo: string;
-  githubIssueNumber: number;
+  totalIterations?: number;
+  replanCount?: number;
+  finalConfidenceScore?: number;
+
+  // Timestamps
+  createdAt: Date;
   githubIssueTitle: string;
   githubIssueBody: string;
   status: TaskStatus;
@@ -470,13 +474,34 @@ export interface GitHubCheckRunEvent {
 
 export interface GitHubPullRequestReviewEvent {
   action: "submitted" | "edited" | "dismissed";
-  review: {
-    state: "approved" | "changes_requested" | "commented" | "dismissed";
-    body: string | null;
-    user: {
-      login: string;
-    };
-  };
+  totalDurationMs: number;
+}
+
+// ============================================
+// Task Event Types
+// ============================================
+
+export const TaskEventType = {
+  CREATED: "CREATED",
+  PLANNED: "PLANNED",
+  CODED: "CODED",
+  TESTED: "TESTED",
+  FIXED: "FIXED",
+  REVIEWED: "REVIEWED",
+  PR_OPENED: "PR_OPENED",
+  FAILED: "FAILED",
+  COMPLETED: "COMPLETED",
+  CONSENSUS_DECISION: "CONSENSUS_DECISION",
+  REFLECTION_COMPLETE: "REFLECTION_COMPLETE",
+  REPLAN_TRIGGERED: "REPLAN_TRIGGERED",
+} as const;
+
+export type TaskEventType = (typeof TaskEventType)[keyof typeof TaskEventType];
+
+// ============================================
+// Job (Batch Processing)
+// ============================================
+
   pull_request: {
     number: number;
     title: string;
@@ -496,23 +521,14 @@ export interface GitHubPullRequestReviewEvent {
   estimatedEffort?: "low" | "medium" | "high";
 
   // Metrics for tracking iterations and performance
-  metrics?: TaskMetrics;
+// ============================================
+// Task Events (for audit log)
+// ============================================
 
-  // Timestamps
-  createdAt: Date;
-  updatedAt: Date;
+export interface TaskEvent {
+  id: string;
   taskId: string;
-  eventType:
-    | "CREATED"
-    | "PLANNED"
-    | "CODED"
-    | "TESTED"
-    | "FIXED"
-    | "REVIEWED"
-    | "PR_OPENED"
-    | "FAILED"
-    | "COMPLETED"
-    | "CONSENSUS_DECISION"; // Multi-agent selection decision
+  eventType: TaskEventType;
   agent?: string;
   inputSummary?: string;
   outputSummary?: string;
@@ -521,8 +537,7 @@ export interface GitHubPullRequestReviewEvent {
   metadata?: Record<string, unknown>; // For structured data like consensus decisions
   createdAt: Date;
 }
-
-// ============================================
+++ b/src/core/types.ts
 // Consensus Decision (Issue #17)
 // ============================================
 
