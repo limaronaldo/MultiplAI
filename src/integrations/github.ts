@@ -38,6 +38,27 @@ export class GitHubClient {
   }
 
   /**
+   * Fetch a GitHub issue (title/body/url)
+   */
+  async getIssue(
+    fullName: string,
+    issueNumber: number,
+  ): Promise<{ title: string; body: string; url: string }> {
+    const { owner, repo } = this.parseRepo(fullName);
+    const result = await this.octokit.rest.issues.get({
+      owner,
+      repo,
+      issue_number: issueNumber,
+    });
+
+    return {
+      title: result.data.title,
+      body: result.data.body || "",
+      url: result.data.html_url,
+    };
+  }
+
+  /**
    * Obtém contexto básico do repositório (README, estrutura)
    */
   async getRepoContext(
