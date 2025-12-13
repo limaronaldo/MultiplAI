@@ -8,13 +8,15 @@ import {
 describe("agentic types schemas", () => {
   it("parses AttemptRecord with timestamp coercion", () => {
     const parsed = AttemptRecordSchema.parse({
-      iteration: 1,
-      action: "fix",
-      result: "failure",
+      approach: "fix import",
+      success: false,
       error: "oops",
       timestamp: "2025-01-01T00:00:00Z",
     });
     expect(parsed.timestamp).toBeInstanceOf(Date);
+    expect(parsed.approach).toBe("fix import");
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe("oops");
   });
 
   it("validates reflection input/output shapes", () => {
