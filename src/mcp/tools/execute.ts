@@ -1,18 +1,21 @@
-import { z } from 'zod';
-import { randomUUID } from 'crypto';
-async function executePipelineSync(
-  repo: string,
-  issueNumber: number
+import { z } from "zod";
+import type { MCPToolDefinition } from "../types.js";
+import logger from "../../core/logger";
+import { detectPatchFormat, normalizePatch } from "../../core/patch-formats.js";
+import type {
+  CoderOutput,
 ): Promise<{ diff: string; filesModified: string[]; commitMessage: string }> {
   // TODO: Integrate with actual pipeline implementation
   // Placeholder: simulate pipeline work
   await new Promise((resolve) => setTimeout(resolve, 100));
+import { defaultConfig } from "../../core/types.js";
 
-  return {
-    diff: buildPlaceholderUnifiedDiff(repo, issueNumber),
-    filesModified: ['placeholder.ts'],
-    commitMessage: `Implement fix for ${repo}#${issueNumber}`,
-  };
+const deps: ExecuteDeps = {} as any; // TODO: inject deps
+
+export const executeTool: MCPToolDefinition = {
+  name: "autodev.execute",
+  description:
+    "Execute the AutoDev pipeline for a GitHub issue (supports dryRun for diff preview)",
 }
 
 /**
@@ -32,11 +35,12 @@ function buildPlaceholderUnifiedDiff(repo: string, issueNumber: number): string 
     `+// Implementation for issue #${issueNumber} in ${repo}`,
     '',
   ].join('\n');
-}
+    required: ["repo", "issueNumber"],
+  },
+  handler: createExecuteHandler(deps),
+};
 
-/**
- * Execute pipeline asynchronously (for non-dry run)
- * TODO: Integrate with actual pipeline implementation
+const ExecuteArgsSchema = z.object({
  */
 async function executePipelineAsync(taskId: string, repo: string, issueNumber: number): Promise<void> {
   const task = taskStore.get(taskId);
@@ -68,12 +72,13 @@ export const ExecuteInputSchema = z.object({
   issueNumber: z.number().int().positive().describe('GitHub issue number to process'),
   dryRun: z.boolean().default(false).describe('If true, run synchronously until CODING_DONE and return diff without creating PR'),
 });
+export function createExecuteHandler(deps: ExecuteDeps) {
+  return async (args: unknown) => {
+    const { repo, issueNumber, dryRun } = ExecuteArgsSchema.parse(args);
+    try {
+    const isDryRun = dryRun === true;
 
-export type ExecuteInput = z.infer<typeof ExecuteInputSchema>;
-
-/**
- * Result types for execute tool
- */
+    const github = deps.getGitHubClient();
 export interface ExecuteDryRunResult {
   type: 'dryRun';
   diff: string;
@@ -182,10 +187,14 @@ export async function handleExecute(input: ExecuteInput): Promise<ExecuteResult>
         status: 'queued',
         message: `Pipeline queued for ${repo}#${issueNumber}. Use getTaskStatus with taskId to check progress.`,
       };
+      status: task.status,
+    };
+    } catch (error) {
+      logger.error('Error in executeTool:', error);
+      throw new Error('Failed to execute AutoDev pipeline: ' + error.message);
     }
-  } catch (error) {
-    throw new Error(
-      `Failed to execute pipeline: ${error instanceof Error ? error.message : String(error)}`
+  };
+}
     );
   }
 }
