@@ -14,10 +14,10 @@ export interface AttemptRecord {
 
 export interface ReflectionInput {
   originalIssue: string;
-  previousAttempts: AttemptRecord[];
-}
-
-export interface ReflectionOutput {
+  plan: string[];
+  diff: string;
+  testOutput: string;
+  attemptNumber: number;
   previousAttempts: AttemptRecord[];
 }
 
@@ -28,11 +28,6 @@ export interface ReflectionOutput {
   feedback: string;
   confidence: number;
 }
-
-export interface LoopConfig {
-  maxIterations: number;
-  maxReplans: number;
-  confidenceThreshold: number;
 }
 
 export interface LoopResult {
@@ -40,16 +35,15 @@ export interface LoopResult {
   iterations: number;
   replans: number;
 export const AttemptRecordSchema = z.object({
+export const AttemptRecordSchema = z.object({
   approach: z.string(),
   success: z.boolean(),
   error: z.string(),
   timestamp: z.coerce.date(),
 });
 
-  error: z.string().optional(),
-  timestamp: z.coerce.date(),
-});
-
+export const ReflectionInputSchema = z.object({
+  originalIssue: z.string(),
 export const ReflectionInputSchema = z.object({
   originalIssue: z.string(),
   plan: z.array(z.string()),
