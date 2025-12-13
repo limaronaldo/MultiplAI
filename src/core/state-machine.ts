@@ -11,13 +11,9 @@ export const validTransitions: StatusTransitions = {
   PLANNING_DONE: ["CODING", "BREAKING_DOWN", "FAILED"],
   BREAKING_DOWN: ["BREAKDOWN_DONE", "FAILED"],
   BREAKDOWN_DONE: ["ORCHESTRATING", "FAILED"],
-  TESTS_PASSED: ["REVIEWING", "FAILED"],
-  TESTS_FAILED: ["FIXING", "REFLECTING", "FAILED"],
-  FIXING: ["CODING_DONE", "FAILED"],
-  REFLECTING: ["REPLANNING", "FIXING", "FAILED"],
-  REPLANNING: ["CODING", "FAILED"],
-  REVIEWING: ["REVIEW_APPROVED", "REVIEW_REJECTED", "FAILED"],
-  REVIEW_APPROVED: ["PR_CREATED", "FAILED"],
+  ORCHESTRATING: ["CODING_DONE", "FAILED"],
+  CODING: ["CODING_DONE", "FAILED"],
+  CODING_DONE: ["TESTING", "FAILED"],
   TESTING: ["TESTS_PASSED", "TESTS_FAILED", "FAILED"],
   TESTS_PASSED: ["REVIEWING", "FAILED"],
   TESTS_FAILED: ["REFLECTING", "FAILED"],
@@ -26,15 +22,9 @@ export const validTransitions: StatusTransitions = {
   FIXING: ["CODING_DONE", "FAILED"], // Volta pro fluxo de teste
   REVIEWING: ["REVIEW_APPROVED", "REVIEW_REJECTED", "FAILED"],
   REVIEW_APPROVED: ["PR_CREATED", "FAILED"],
-  REVIEW_REJECTED: ["CODING", "FAILED"],
-  | "TEST"
-  | "FIX"
-  | "REVIEW"
-  | "REFLECT"
-  | "REPLAN"
-  | "OPEN_PR"
-  | "WAIT"
-  | "DONE"
+};
+
+export type TaskAction =
   | "BREAKDOWN" // Decompose M/L issue into subtasks
   | "ORCHESTRATE" // Process subtasks
   | "CODE"
@@ -43,19 +33,14 @@ export const validTransitions: StatusTransitions = {
   | "TEST"
   | "FIX"
   | "REVIEW"
-  | "REVIEW"
-  | "REFLECT"
-  | "REPLAN"
-  | "OPEN_PR"
+  FIXING: ["CODING_DONE", "FAILED"], // Volta pro fluxo de teste
   | "WAIT"
   | "DONE"
   | "FAILED";
 
 export function getNextAction(status: TaskStatus): TaskAction {
   switch (status) {
-    case "TESTS_FAILED":
-  switch (status) {
-    case "NEW":
+  | "REFLECT"
       return "PLAN";
     case "TESTS_FAILED":
       return "REFLECT";
@@ -65,8 +50,43 @@ export function getNextAction(status: TaskStatus): TaskAction {
     case "REPLANNING":
       return "CODE";
     case "PLANNING_DONE":
-      // Decision between CODE and BREAKDOWN happens in orchestrator based on complexity
+  | "CODE"
       return "CODE";
+    case "BREAKDOWN_DONE":
+      return "ORCHESTRATE";
+    case "ORCHESTRATING":
+      return "ORCHESTRATE";
+    case "CODING_DONE":
+      return "TEST";
+    case "TESTS_PASSED":
+  | "REFLECT"
+    case "TESTS_FAILED":
+      return "FIX";
+    case "REFLECTING":
+      return "REFLECT";
+    case "REPLANNING":
+      return "REPLAN";
+    case "PR_CREATED":
+    case "WAITING_HUMAN":
+      return "WAIT";
+export function getNextAction(status: TaskStatus): TaskAction {
+  switch (status) {
+    case "TESTS_FAILED":
+  switch (status) {
+    status === "CODING" ||
+    status === "FIXING" ||
+    status === "REVIEWING" ||
+    status === "REFLECTING" ||
+    status === "REPLANNING" ||
+    status === "BREAKING_DOWN" ||
+    status === "ORCHESTRATING"
+  );
+      return "WAIT"; // Placeholder, actual logic in orchestrator
+}
+
+export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
+  return validTransitions[from].includes(to);
+}
       return "ORCHESTRATE";
     case "CODING_DONE":
       return "TEST";
