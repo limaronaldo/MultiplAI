@@ -7,16 +7,18 @@ type StatusTransitions = {
 /**
  * Define quais transições são válidas a partir de cada estado.
  * Isso evita que o sistema entre em estados inconsistentes.
- */
-export const validTransitions: StatusTransitions = {
-  NEW: ["PLANNING", "FAILED"],
-  PLANNING: ["PLANNING_DONE", "FAILED"],
-  // PLANNING_DONE can go to CODING (XS/S) or BREAKING_DOWN (M/L)
-  PLANNING_DONE: ["CODING", "BREAKING_DOWN", "FAILED"],
-  // Decomposition flow for M/L complexity issues
-  BREAKING_DOWN: ["BREAKDOWN_DONE", "FAILED"],
+  BREAKDOWN_DONE: ["ORCHESTRATING", "FAILED"],
+  ORCHESTRATING: ["CODING_DONE", "FAILED"],
+  CODING: ["CODING_DONE", "FAILED"],
+  CODING_DONE: ["TESTING", "FAILED"],
   TESTING: ["TESTS_PASSED", "TESTS_FAILED", "FAILED"],
   TESTS_PASSED: ["REVIEWING", "FAILED"],
+  TESTS_FAILED: ["FIXING", "REFLECTING", "FAILED"],
+  REFLECTING: ["REPLANNING", "FIXING", "FAILED"],
+  REPLANNING: ["CODING", "FAILED"],
+  FIXING: ["CODING_DONE", "FAILED"],
+  REVIEWING: ["REVIEW_APPROVED", "REVIEW_REJECTED", "FAILED"],
+  REVIEW_APPROVED: ["PR_CREATED", "FAILED"],
   TESTS_FAILED: ["FIXING", "REFLECTING", "FAILED"],
   REFLECTING: ["REPLANNING", "FIXING", "FAILED"],
   REPLANNING: ["CODING", "FAILED"],
@@ -27,18 +29,6 @@ export const validTransitions: StatusTransitions = {
   TESTS_FAILED: ["FIXING", "FAILED"],
   FIXING: ["CODING_DONE", "FAILED"], // Volta pro fluxo de teste
   REVIEWING: ["REVIEW_APPROVED", "REVIEW_REJECTED", "FAILED"],
-  REVIEW_APPROVED: ["PR_CREATED", "FAILED"],
-  REVIEW_REJECTED: ["CODING", "FAILED"], // Volta pro coder
-  PR_CREATED: ["WAITING_HUMAN", "FAILED"],
-  WAITING_HUMAN: ["COMPLETED", "REVIEW_REJECTED", "FAILED"], // Can be rejected by human review
-  COMPLETED: [], // Estado final
-  FAILED: [], // Estado final
-};
-
-/**
- * Verifica se uma transição é válida
- */
-export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
   | "TEST"
   | "FIX"
   | "REVIEW"
@@ -48,18 +38,36 @@ export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
   | "WAIT"
   | "DONE"
   | "FAILED";
-  if (!canTransition(from, to)) {
-    throw new Error(
-      `Invalid transition: ${from} -> ${to}. Valid transitions from ${from}: ${validTransitions[from].join(", ")}`,
-    );
-  }
-  return to;
-}
 
-/**
- * Action types for the state machine
- */
+export function getNextAction(status: TaskStatus): TaskAction {
+  switch (status) {
+    case "NEW":
+      return "PLAN";
+  | "TEST"
+  | "FIX"
+  | "REVIEW"
+  | "REFLECT"
+  | "REPLAN"
+  | "OPEN_PR"
+  | "WAIT"
+  | "DONE"
+  | "FAILED";
+      return "REVIEW";
     case "TESTS_FAILED":
+      return "FIX";
+    case "REFLECTING":
+      return "REFLECT";
+    case "REPLANNING":
+      return "REPLAN";
+    case "REVIEWING":
+      return "WAIT";
+    case "REVIEW_APPROVED":
+      return "OPEN_PR";
+    case "REVIEW_REJECTED":
+      return "CODE";
+    case "PR_CREATED":
+    case "WAITING_HUMAN":
+      return "WAIT";
       return "FIX";
     case "REVIEW_APPROVED":
     case "REFLECTING":
@@ -68,15 +76,17 @@ export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
       return "REPLAN";
     case "PR_CREATED":
     case "WAITING_HUMAN":
-      return "WAIT";
-  | "FIX"
-  | "REVIEW"
-  | "OPEN_PR"
-  | "WAIT"
-  | "DONE"
-  | "FAILED";
-
-/**
+    status === "TESTING" ||
+    status === "PLANNING" ||
+    status === "CODING" ||
+    status === "FIXING" ||
+    status === "REVIEWING" ||
+    status === "REFLECTING" ||
+    status === "REPLANNING" ||
+    status === "BREAKING_DOWN" ||
+    status === "ORCHESTRATING"
+  );
+}
  * Retorna o próximo passo lógico dado o estado atual
  */
 export function getNextAction(status: TaskStatus): TaskAction {
