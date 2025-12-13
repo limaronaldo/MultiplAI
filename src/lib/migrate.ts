@@ -463,6 +463,40 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_ie_repo ON invalidation_events(repo_full_name)`;
   console.log("✅ Added knowledge graph repo scoping");
 
+  // Human Queue table (v0.10) - for queueing failed subtasks for human review
+  await sql`
+    CREATE TABLE IF NOT EXISTS human_queue (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      subtask_id TEXT NOT NULL,
+      branch_name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+
+      -- Context for human
+      error_logs TEXT NOT NULL,
+      current_diff TEXT,
+      target_files TEXT[] NOT NULL DEFAULT '{}',
+      acceptance_criteria TEXT[] NOT NULL DEFAULT '{}',
+      suggested_approach TEXT,
+
+      -- Human solution (detected from push)
+      human_commit_sha TEXT,
+      resolved_at TIMESTAMPTZ,
+      resolved_by TEXT,
+
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_human_queue_task ON human_queue(task_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_human_queue_branch ON human_queue(branch_name)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_human_queue_status ON human_queue(status)`;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_human_queue_pending_branch
+    ON human_queue(branch_name)
+    WHERE status = 'pending'
+  `;
+  console.log("✅ Created human queue table");
+
   console.log("\n✨ Migrations complete!");
 
   await sql.end();

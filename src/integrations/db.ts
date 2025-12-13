@@ -228,7 +228,10 @@ export const db = {
     return results.map(this.mapTask);
   },
 
-  async getRecentTasksByRepo(repo: string, limit: number = 10): Promise<Task[]> {
+  async getRecentTasksByRepo(
+    repo: string,
+    limit: number = 10,
+  ): Promise<Task[]> {
     const sql = getDb();
     const results = await sql`
       SELECT * FROM tasks
@@ -671,4 +674,170 @@ export const db = {
         order: index,
       }));
   },
+
+  // ============================================
+  // Human Queue
+  // ============================================
+
+  /**
+   * Create a human queue item when subtask fails and needs human intervention
+   */
+  async createHumanQueueItem(item: {
+    taskId: string;
+    subtaskId: string;
+    branchName: string;
+    errorLogs: string;
+    currentDiff?: string;
+    targetFiles: string[];
+    acceptanceCriteria: string[];
+    suggestedApproach?: string;
+  }): Promise<{ id: string }> {
+    const sql = getDb();
+    const [result] = await sql`
+      INSERT INTO human_queue (
+        task_id,
+        subtask_id,
+        branch_name,
+        error_logs,
+        current_diff,
+        target_files,
+        acceptance_criteria,
+        suggested_approach
+      ) VALUES (
+        ${item.taskId},
+        ${item.subtaskId},
+        ${item.branchName},
+        ${item.errorLogs},
+        ${item.currentDiff || null},
+        ${item.targetFiles},
+        ${item.acceptanceCriteria},
+        ${item.suggestedApproach || null}
+      )
+      RETURNING id
+    `;
+    return { id: result.id };
+  },
+
+  /**
+   * Get a single human queue item by ID
+   */
+  async getHumanQueueItem(id: string): Promise<HumanQueueItem | null> {
+    const sql = getDb();
+    const [row] = await sql`
+      SELECT * FROM human_queue WHERE id = ${id}
+    `;
+    return row ? this.mapHumanQueueItem(row) : null;
+  },
+
+  /**
+   * Get all human queue items, optionally filtered by status
+   */
+  async getHumanQueueItems(status?: string): Promise<HumanQueueItem[]> {
+    const sql = getDb();
+    const rows = status
+      ? await sql`SELECT * FROM human_queue WHERE status = ${status} ORDER BY created_at DESC`
+      : await sql`SELECT * FROM human_queue ORDER BY created_at DESC`;
+    return rows.map(this.mapHumanQueueItem);
+  },
+
+  /**
+   * Get human queue items by branch name (for push detection)
+   */
+  async getHumanQueueByBranch(branchName: string): Promise<HumanQueueItem[]> {
+    const sql = getDb();
+    const rows = await sql`
+      SELECT * FROM human_queue
+      WHERE branch_name = ${branchName} AND status = 'pending'
+      ORDER BY created_at DESC
+    `;
+    return rows.map(this.mapHumanQueueItem);
+  },
+
+  /**
+   * Get human queue items for a specific task
+   */
+  async getHumanQueueItemsByTask(
+    taskId: string,
+    status?: string,
+  ): Promise<HumanQueueItem[]> {
+    const sql = getDb();
+    const rows = status
+      ? await sql`SELECT * FROM human_queue WHERE task_id = ${taskId} AND status = ${status} ORDER BY created_at DESC`
+      : await sql`SELECT * FROM human_queue WHERE task_id = ${taskId} ORDER BY created_at DESC`;
+    return rows.map(this.mapHumanQueueItem);
+  },
+
+  /**
+   * Resolve a human queue item (human pushed a fix)
+   */
+  async resolveHumanQueueItem(
+    id: string,
+    commitSha: string,
+    resolvedBy: string,
+  ): Promise<void> {
+    const sql = getDb();
+    await sql`
+      UPDATE human_queue
+      SET
+        status = 'resolved',
+        human_commit_sha = ${commitSha},
+        resolved_by = ${resolvedBy},
+        resolved_at = NOW()
+      WHERE id = ${id}
+    `;
+  },
+
+  /**
+   * Skip a human queue item (let AutoDev use premium models)
+   */
+  async skipHumanQueueItem(id: string): Promise<void> {
+    const sql = getDb();
+    await sql`
+      UPDATE human_queue
+      SET status = 'skipped'
+      WHERE id = ${id}
+    `;
+  },
+
+  /**
+   * Map database row to HumanQueueItem type
+   */
+  mapHumanQueueItem(row: Record<string, unknown>): HumanQueueItem {
+    return {
+      id: row.id as string,
+      taskId: row.task_id as string,
+      subtaskId: row.subtask_id as string,
+      branchName: row.branch_name as string,
+      status: row.status as string,
+      errorLogs: row.error_logs as string,
+      currentDiff: row.current_diff as string | undefined,
+      targetFiles: row.target_files as string[],
+      acceptanceCriteria: row.acceptance_criteria as string[],
+      suggestedApproach: row.suggested_approach as string | undefined,
+      humanCommitSha: row.human_commit_sha as string | undefined,
+      resolvedAt: row.resolved_at
+        ? new Date(row.resolved_at as string)
+        : undefined,
+      resolvedBy: row.resolved_by as string | undefined,
+      createdAt: new Date(row.created_at as string),
+    };
+  },
 };
+
+// Human Queue Item type
+export interface HumanQueueItem {
+  id: string;
+  taskId: string;
+  subtaskId: string;
+  branchName: string;
+  status: string;
+  errorLogs: string;
+  currentDiff?: string;
+  targetFiles: string[];
+  acceptanceCriteria: string[];
+  suggestedApproach?: string;
+  humanCommitSha?: string;
+  resolvedAt?: Date;
+  resolvedBy?: string;
+  createdAt: Date;
+}

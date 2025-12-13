@@ -188,16 +188,26 @@ async function handlePushEvent(payload: any): Promise<Response> {
   const commits = Array.isArray(payload?.commits) ? payload.commits : [];
 
   if (!repo || typeof repo !== "string") {
-    return Response.json({ ok: false, error: "Missing repository.full_name" }, { status: 400 });
+    return Response.json(
+      { ok: false, error: "Missing repository.full_name" },
+      { status: 400 },
+    );
   }
 
   if (!knowledgeGraphSync.enabled()) {
-    return Response.json({ ok: true, message: "Knowledge graph sync disabled" });
+    return Response.json({
+      ok: true,
+      message: "Knowledge graph sync disabled",
+    });
   }
 
   const changedFiles = new Set<string>();
   for (const c of commits) {
-    for (const p of [...(c.added ?? []), ...(c.modified ?? []), ...(c.removed ?? [])]) {
+    for (const p of [
+      ...(c.added ?? []),
+      ...(c.modified ?? []),
+      ...(c.removed ?? []),
+    ]) {
       if (typeof p === "string") changedFiles.add(p);
     }
   }
@@ -505,7 +515,8 @@ route("POST", "/api/rag/index", async (req) => {
     return Response.json({ error: "Invalid repo" }, { status: 400 });
   }
 
-  const ref = typeof (body as any).ref === "string" ? (body as any).ref : undefined;
+  const ref =
+    typeof (body as any).ref === "string" ? (body as any).ref : undefined;
   const maxFilesRaw = (body as any).maxFiles;
   const maxFiles =
     typeof maxFilesRaw === "number"
@@ -565,10 +576,13 @@ route("POST", "/api/rag/search", async (req) => {
       : typeof (body as any).repoFullName === "string"
         ? (body as any).repoFullName
         : "";
-  const query = typeof (body as any).query === "string" ? (body as any).query : "";
+  const query =
+    typeof (body as any).query === "string" ? (body as any).query : "";
   const limitRaw = (body as any).limit;
   const limit =
-    typeof limitRaw === "number" ? Math.min(Math.max(Math.floor(limitRaw), 1), 50) : 10;
+    typeof limitRaw === "number"
+      ? Math.min(Math.max(Math.floor(limitRaw), 1), 50)
+      : 10;
 
   if (!isValidRepo(repo)) {
     return Response.json({ error: "Invalid repo" }, { status: 400 });
@@ -584,7 +598,9 @@ route("POST", "/api/rag/search", async (req) => {
     const message = error instanceof Error ? error.message : String(error);
     const stats = ragRuntime.getStats();
     const status =
-      message.includes("not ready") || message.includes("not initialized") ? 409 : 400;
+      message.includes("not ready") || message.includes("not initialized")
+        ? 409
+        : 400;
     return Response.json({ error: message, stats }, { status });
   }
 });
@@ -597,10 +613,16 @@ route("POST", "/api/knowledge-graph/sync/:repo", async (req) => {
     return Response.json({ error: "Invalid repo" }, { status: 400 });
   }
   if (!knowledgeGraphSync.enabled()) {
-    return Response.json({ error: "Knowledge graph sync disabled" }, { status: 400 });
+    return Response.json(
+      { error: "Knowledge graph sync disabled" },
+      { status: 400 },
+    );
   }
   void knowledgeGraphSync.triggerFullSync({ repoFullName: repo });
-  return Response.json({ ok: true, message: "Full sync scheduled" }, { status: 202 });
+  return Response.json(
+    { ok: true, message: "Full sync scheduled" },
+    { status: 202 },
+  );
 });
 
 route("GET", "/api/knowledge-graph/status/:repo", async (req) => {
@@ -990,6 +1012,112 @@ route("POST", "/api/jobs/:id/cancel", async (req) => {
     message: "Job cancelled",
     jobId: id,
   });
+});
+
+// ============================================
+// Human Queue API
+// ============================================
+
+/**
+ * GET /api/human-queue - List all human queue items
+ * Query params:
+ *   - status: pending, resolved, skipped (optional, default: pending)
+ */
+route("GET", "/api/human-queue", async (req) => {
+  const url = new URL(req.url);
+  const status = url.searchParams.get("status") || undefined;
+
+  try {
+    const items = await db.getHumanQueueItems(status);
+    return Response.json({ items, count: items.length });
+  } catch (error) {
+    console.error("[Human Queue] Error listing items:", error);
+    return Response.json(
+      { error: "Failed to list human queue items" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/human-queue/:id - Get human queue item details
+ */
+route("GET", "/api/human-queue/:id", async (req) => {
+  const url = new URL(req.url);
+  const id = url.pathname.split("/").pop()!;
+
+  if (!isValidUUID(id)) {
+    return Response.json(
+      { error: "Invalid queue item ID format" },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const item = await db.getHumanQueueItem(id);
+    if (!item) {
+      return Response.json({ error: "Queue item not found" }, { status: 404 });
+    }
+    return Response.json(item);
+  } catch (error) {
+    console.error("[Human Queue] Error getting item:", error);
+    return Response.json(
+      { error: "Failed to get human queue item" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/human-queue/:id/skip - Skip human queue item and use premium models
+ */
+route("POST", "/api/human-queue/:id/skip", async (req) => {
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const id = pathParts[pathParts.length - 2]; // /api/human-queue/:id/skip
+
+  if (!isValidUUID(id)) {
+    return Response.json(
+      { error: "Invalid queue item ID format" },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const item = await db.getHumanQueueItem(id);
+    if (!item) {
+      return Response.json({ error: "Queue item not found" }, { status: 404 });
+    }
+
+    if (item.status !== "pending") {
+      return Response.json(
+        { error: `Cannot skip item with status: ${item.status}` },
+        { status: 400 },
+      );
+    }
+
+    // Mark as skipped
+    await db.skipHumanQueueItem(id);
+
+    // Update task to retry with auto_escalate mode
+    await db.updateTask(item.taskId, { status: "CODING" });
+
+    // Trigger reprocessing with auto_escalate (the orchestrator will pick it up)
+    console.log(`[Human Queue] Item ${id} skipped - will use premium models`);
+
+    return Response.json({
+      ok: true,
+      message: "Item skipped - will retry with premium models",
+      itemId: id,
+      taskId: item.taskId,
+    });
+  } catch (error) {
+    console.error("[Human Queue] Error skipping item:", error);
+    return Response.json(
+      { error: "Failed to skip human queue item" },
+      { status: 500 },
+    );
+  }
 });
 
 // ============================================
