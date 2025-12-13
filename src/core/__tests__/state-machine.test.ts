@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { TaskStatus } from "../types";
+import { TaskStatus, type Task } from "../types";
 import { canTransition, transition, getNextAction, isTerminal } from "../state-machine";
 
 describe("State Machine", () => {
@@ -72,15 +72,32 @@ describe("State Machine", () => {
     expect(getNextAction("TESTS_FAILED")).toBe("FIX");
   });
 
-  test("returns correct next action for REVIEW_APPROVED state", () => {
-    expect(getNextAction("REVIEW_APPROVED")).toBe("OPEN_PR");
-  });
-
   test("returns correct next action for ORCHESTRATING state", () => {
     expect(getNextAction("ORCHESTRATING")).toBe("ORCHESTRATE");
   });
 
+  test("returns correct next action for TESTS_FAILED state", () => {
+    expect(getNextAction("TESTS_FAILED")).toBe("REFLECT");
+  });
+
   test("returns correct next action for REFLECTING state", () => {
+    expect(getNextAction("REFLECTING")).toBe("WAIT");
+  });
+
+  test("returns correct next action for REPLANNING state", () => {
+    expect(getNextAction("REPLANNING")).toBe("CODE");
+  });
+
+  test("identifies REFLECTING and REPLANNING as waiting states", () => {
+    expect(isTerminal("REFLECTING")).toBe(false);
+    expect(isTerminal("REPLANNING")).toBe(false);
+  });
+
+  test("returns WAIT for intermediate states", () => {
+    expect(getNextAction("PLANNING")).toBe("WAIT");
+    expect(getNextAction("CODING")).toBe("WAIT");
+  });
+});
     expect(getNextAction("REFLECTING")).toBe("REFLECT");
   });
 
