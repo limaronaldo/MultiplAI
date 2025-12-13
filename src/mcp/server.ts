@@ -1,5 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -203,13 +204,32 @@ export function createMCPServer(deps: MCPServerDeps = {}): Server {
   });
 
   return server;
-}
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: router.tools,
+  }));
 
-/**
- * Start the MCP server with stdio transport
- */
-export async function startMCPServer(): Promise<void> {
-  const server = createMCPServer();
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  const isToolResult = (value: unknown): value is CallToolResult => {
+    if (!value || typeof value !== "object") return false;
+    const content = (value as { content?: unknown }).content;
+    return Array.isArray(content);
+  };
+
+  // Register tool call handler
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const result = await router.callTool(
+      request.params.name,
+      request.params.arguments ?? {},
+    );
+
+    // If a tool already returns an MCP CallToolResult (content/isError), pass it through.
+    if (isToolResult(result)) {
+      return result;
+    }
+
+    return {
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+    } satisfies CallToolResult;
+  });
+
+  return server;
 }
