@@ -55,25 +55,30 @@ export const AttemptRecordSchema = z.object({
   errors: z.array(z.string()),
   reflection: z.lazy(() => ReflectionOutputSchema).optional(),
   timestamp: z.date(),
+});
 
 export const ReflectionInputSchema = z.object({
   originalPlan: z.string(),
   generatedDiff: z.string(),
   validationErrors: z.array(z.string()),
   attemptNumber: z.number().int(),
+});
 
 export const ReflectionOutputSchema = z.object({
   analysis: z.string(),
   suggestedFixes: z.array(z.string()),
   shouldRetry: z.boolean(),
   revisedPlan: z.string().optional(),
+});
 
 export const LoopConfigSchema = z.object({
   maxAttempts: z.number().int(),
   enableReflection: z.boolean(),
+});
 
 export const LoopResultSchema = z.object({
   success: z.boolean(),
   finalDiff: z.string().optional(),
   attempts: z.array(AttemptRecordSchema),
   totalTokensUsed: z.number(),
+});
