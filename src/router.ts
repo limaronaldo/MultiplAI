@@ -1964,6 +1964,322 @@ route("POST", "/api/batch/sync", async (req) => {
   });
 });
 
+// ============================================
+// Distillation API
+// ============================================
+
+import {
+  getDistillationCollector,
+  getDistillationTrainer,
+  isDistillationEnabled,
+  isAutoCollectEnabled,
+} from "./core/distillation";
+
+/**
+ * GET /api/distillation/examples - List collected examples
+ */
+route("GET", "/api/distillation/examples", async (req) => {
+  if (!isDistillationEnabled()) {
+    return Response.json(
+      {
+        error: "Distillation not enabled",
+        hint: "Set ENABLE_DISTILLATION=true",
+      },
+      { status: 503 },
+    );
+  }
+
+  const url = new URL(req.url);
+  const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+  const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+  const complexity = url.searchParams.get("complexity") || undefined;
+  const effort = url.searchParams.get("effort") || undefined;
+
+  const collector = getDistillationCollector();
+  const examples = await collector.getExamples({
+    limit,
+    offset,
+    complexity,
+    effort,
+  });
+  const stats = await collector.getExampleStats();
+
+  return Response.json({ examples, stats, count: examples.length });
+});
+
+/**
+ * POST /api/distillation/collect - Trigger collection from recent tasks
+ */
+route("POST", "/api/distillation/collect", async (req) => {
+  if (!isDistillationEnabled()) {
+    return Response.json(
+      { error: "Distillation not enabled" },
+      { status: 503 },
+    );
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const { days, limit } = body as { days?: number; limit?: number };
+
+  const since = new Date(Date.now() - (days || 30) * 24 * 60 * 60 * 1000);
+
+  const collector = getDistillationCollector();
+  const examples = await collector.collectFromTasks({
+    since,
+    limit: limit || 100,
+  });
+  const saved = await collector.saveExamples(examples);
+
+  return Response.json({
+    ok: true,
+    message: `Collected ${examples.length} examples, saved ${saved}`,
+    collected: examples.length,
+    saved,
+  });
+});
+
+/**
+ * POST /api/distillation/train - Start fine-tuning job
+ */
+route("POST", "/api/distillation/train", async (req) => {
+  if (!isDistillationEnabled()) {
+    return Response.json(
+      { error: "Distillation not enabled" },
+      { status: 503 },
+    );
+  }
+
+  const body = await req.json();
+  const { baseModel, targetComplexity, targetEffort, runImmediately } =
+    body as {
+      baseModel: string;
+      targetComplexity?: string;
+      targetEffort?: string;
+      runImmediately?: boolean;
+    };
+
+  if (!baseModel) {
+    return Response.json({ error: "Missing baseModel" }, { status: 400 });
+  }
+
+  const trainer = getDistillationTrainer();
+  const job = await trainer.createJob({
+    baseModel,
+    targetComplexity,
+    targetEffort,
+  });
+
+  // Optionally start training immediately in background
+  if (runImmediately) {
+    trainer.runTrainingPipeline(job.id).catch((error) => {
+      console.error(`[Distillation] Training pipeline failed: ${error}`);
+    });
+  }
+
+  return Response.json({
+    ok: true,
+    message: runImmediately
+      ? `Started training job ${job.id}`
+      : `Created training job ${job.id}`,
+    job,
+  });
+});
+
+/**
+ * GET /api/distillation/jobs/:id - Get training job status
+ */
+route("GET", "/api/distillation/jobs/:id", async (req) => {
+  if (!isDistillationEnabled()) {
+    return Response.json(
+      { error: "Distillation not enabled" },
+      { status: 503 },
+    );
+  }
+
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const id = pathParts[4]; // /api/distillation/jobs/:id
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid job ID format" }, { status: 400 });
+  }
+
+  const trainer = getDistillationTrainer();
+  const job = await trainer.getJob(id);
+
+  if (!job) {
+    return Response.json({ error: "Job not found" }, { status: 404 });
+  }
+
+  return Response.json({ job });
+});
+
+/**
+ * GET /api/distillation/jobs - List training jobs
+ */
+route("GET", "/api/distillation/jobs", async (req) => {
+  if (!isDistillationEnabled()) {
+    return Response.json(
+      { error: "Distillation not enabled" },
+      { status: 503 },
+    );
+  }
+
+  const url = new URL(req.url);
+  const status = url.searchParams.get("status") as any;
+  const limit = parseInt(url.searchParams.get("limit") || "20", 10);
+
+  const trainer = getDistillationTrainer();
+  const jobs = await trainer.listJobs({ status, limit });
+
+  return Response.json({ jobs, count: jobs.length });
+});
+
+/**
+ * POST /api/distillation/jobs/:id/run - Run training pipeline
+ */
+route("POST", "/api/distillation/jobs/:id/run", async (req) => {
+  if (!isDistillationEnabled()) {
+    return Response.json(
+      { error: "Distillation not enabled" },
+      { status: 503 },
+    );
+  }
+
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const id = pathParts[4];
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid job ID format" }, { status: 400 });
+  }
+
+  const trainer = getDistillationTrainer();
+
+  // Run in background
+  trainer.runTrainingPipeline(id).catch((error) => {
+    console.error(`[Distillation] Training pipeline failed: ${error}`);
+  });
+
+  return Response.json({
+    ok: true,
+    message: `Started training pipeline for job ${id}`,
+  });
+});
+
+/**
+ * POST /api/distillation/evaluate - Evaluate fine-tuned model
+ */
+route("POST", "/api/distillation/evaluate", async (req) => {
+  if (!isDistillationEnabled()) {
+    return Response.json(
+      { error: "Distillation not enabled" },
+      { status: 503 },
+    );
+  }
+
+  const body = await req.json();
+  const { modelId, exampleCount } = body as {
+    modelId: string;
+    exampleCount?: number;
+  };
+
+  if (!modelId) {
+    return Response.json({ error: "Missing modelId" }, { status: 400 });
+  }
+
+  const collector = getDistillationCollector();
+  const trainer = getDistillationTrainer();
+
+  // Get examples for evaluation
+  const examples = await collector.getExamples({ limit: exampleCount || 10 });
+
+  if (examples.length === 0) {
+    return Response.json(
+      { error: "No examples available for evaluation" },
+      { status: 400 },
+    );
+  }
+
+  const results = await trainer.evaluateModel(modelId, examples);
+
+  return Response.json({
+    ok: true,
+    modelId,
+    results,
+  });
+});
+
+/**
+ * POST /api/distillation/deploy - Deploy model to production tier
+ */
+route("POST", "/api/distillation/deploy", async (req) => {
+  if (!isDistillationEnabled()) {
+    return Response.json(
+      { error: "Distillation not enabled" },
+      { status: 503 },
+    );
+  }
+
+  const body = await req.json();
+  const { jobId } = body as { jobId: string };
+
+  if (!jobId || !isValidUUID(jobId)) {
+    return Response.json(
+      { error: "Invalid or missing jobId" },
+      { status: 400 },
+    );
+  }
+
+  const trainer = getDistillationTrainer();
+
+  try {
+    await trainer.deployModel(jobId);
+    const job = await trainer.getJob(jobId);
+
+    return Response.json({
+      ok: true,
+      message: `Deployed model ${job?.fineTunedModelId}`,
+      job,
+    });
+  } catch (error) {
+    return Response.json({ error: String(error) }, { status: 400 });
+  }
+});
+
+/**
+ * GET /api/distillation/stats - Get distillation statistics
+ */
+route("GET", "/api/distillation/stats", async (req) => {
+  if (!isDistillationEnabled()) {
+    return Response.json(
+      { error: "Distillation not enabled" },
+      { status: 503 },
+    );
+  }
+
+  const collector = getDistillationCollector();
+  const trainer = getDistillationTrainer();
+
+  const exampleStats = await collector.getExampleStats();
+  const jobs = await trainer.listJobs({ limit: 100 });
+
+  const jobStats = {
+    total: jobs.length,
+    pending: jobs.filter((j) => j.status === "pending").length,
+    training: jobs.filter((j) => j.status === "training").length,
+    completed: jobs.filter((j) => j.status === "completed").length,
+    failed: jobs.filter((j) => j.status === "failed").length,
+    deployed: jobs.filter((j) => j.deployed).length,
+  };
+
+  return Response.json({
+    examples: exampleStats,
+    jobs: jobStats,
+    autoCollectEnabled: isAutoCollectEnabled(),
+  });
+});
+
 // Endpoint para Claude Code: lista issues aguardando review
 route("GET", "/api/review/pending", async (req) => {
   if (!linear) {

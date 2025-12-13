@@ -579,6 +579,83 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_bjt_task ON batch_job_tasks(task_id)`;
   console.log("✅ Created batch API tables");
 
+  // Distillation tables (v0.11) - model distillation pipeline
+  await sql`
+    CREATE TABLE IF NOT EXISTS distillation_examples (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      task_id UUID REFERENCES tasks(id),
+
+      -- Input
+      issue_title TEXT NOT NULL,
+      issue_body TEXT,
+      target_files TEXT[],
+      file_contents JSONB,
+      plan TEXT,
+
+      -- Output
+      diff TEXT NOT NULL,
+      commit_message TEXT,
+
+      -- Metadata
+      source_model VARCHAR(100),
+      complexity VARCHAR(10),
+      effort VARCHAR(20),
+      tokens_used INTEGER,
+
+      -- Quality signals
+      tests_passed BOOLEAN DEFAULT false,
+      review_approved BOOLEAN DEFAULT false,
+      pr_merged BOOLEAN DEFAULT false,
+      human_edits INTEGER DEFAULT 0,
+
+      -- Distillation status
+      included_in_training BOOLEAN DEFAULT false,
+      training_job_id VARCHAR(100),
+
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_de_task ON distillation_examples(task_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_de_quality ON distillation_examples(tests_passed, review_approved, pr_merged)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_de_complexity ON distillation_examples(complexity, effort)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_de_training ON distillation_examples(included_in_training)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS distillation_jobs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+      -- Configuration
+      base_model VARCHAR(100) NOT NULL,
+      target_complexity VARCHAR(10),
+      target_effort VARCHAR(20),
+
+      -- Files
+      training_file_id VARCHAR(100),
+      validation_file_id VARCHAR(100),
+      openai_job_id VARCHAR(100),
+
+      -- Progress
+      status VARCHAR(50) NOT NULL DEFAULT 'pending',
+      example_count INTEGER DEFAULT 0,
+
+      -- Results
+      fine_tuned_model_id VARCHAR(100),
+      eval_results JSONB,
+
+      -- Deployment
+      deployed BOOLEAN DEFAULT false,
+      deployed_at TIMESTAMPTZ,
+
+      -- Metadata
+      error TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_dj_status ON distillation_jobs(status)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_dj_deployed ON distillation_jobs(deployed) WHERE deployed = true`;
+  console.log("✅ Created distillation tables");
+
   console.log("\n✨ Migrations complete!");
 
   await sql.end();
