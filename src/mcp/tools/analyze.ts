@@ -41,39 +41,36 @@ export interface AnalyzeOutput {
 /**
  * Fetches a GitHub issue using the Octokit client
  */
-async function fetchGitHubIssue(
-  octokit: Octokit,
-  owner: string,
-  repo: string,
-  issueNumber: number
-): Promise<{ title: string; body: string; url: string }> {
-  const response = await octokit.issues.get({
-    owner,
-    repo,
-    issue_number: issueNumber,
-  });
+export function createAnalyzeHandler(deps: AnalyzeDeps) {
+  return async (args: unknown) => {
+    try {
+      const { repo, issueNumber } = AnalyzeArgsSchema.parse(args);
 
-  return {
-    title: response.data.title,
-    body: response.data.body || '',
-    url: response.data.html_url,
+      const github = deps.getGitHubClient();
+      const planner = deps.getPlannerAgent();
+
+      const issue = await github.getIssue(repo, issueNumber);
+      const repoContext = await github.getRepoContext(repo, []);
+      const plannerOutput = await planner.run({
+        issueTitle: issue.title,
+        issueBody: issue.body,
+        repoContext,
+      });
+
+      return {
+        complexity: plannerOutput.estimatedComplexity,
+        targetFiles: plannerOutput.targetFiles,
+        plan: plannerOutput.plan,
+        confidence: confidenceFromComplexity(plannerOutput.estimatedComplexity),
+        recommendation: recommendationFromComplexity(
+          plannerOutput.estimatedComplexity,
+        ),
+      };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Unknown error' };
+    }
   };
 }
-
-/**
- * Simple analysis based on issue content
- * This provides a basic implementation that can be enhanced with PlannerAgent later
- */
-function analyzeIssueContent(title: string, body: string): { complexity: 'low' | 'medium' | 'high'; targetFiles: string[]; plan: string; confidence: number } {
-  const content = `${title} ${body}`.toLowerCase();
-  const lines = body.split('\n').filter(line => line.trim());
-  
-  // Estimate complexity based on content length and keywords
-  let complexity: 'low' | 'medium' | 'high' = 'low';
-  if (content.includes('refactor') || content.includes('breaking') || content.includes('migration') || lines.length > 20) {
-    complexity = 'high';
-  } else if (content.includes('feature') || content.includes('add') || content.includes('implement') || lines.length > 10) {
-    complexity = 'medium';
   }
   
   // Extract potential file paths from content
