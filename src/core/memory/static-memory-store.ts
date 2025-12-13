@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from "fs/promises";
+import { readFile, writeFile, mkdir, readdir } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
 import {
@@ -222,8 +222,6 @@ export class StaticMemoryStore {
       return repos;
     }
 
-    const { readdir } = await import("fs/promises");
-
     try {
       const owners = await readdir(this.configDir);
 
@@ -244,8 +242,6 @@ export class StaticMemoryStore {
     return repos;
   }
 }
-
-// =============================================================================
 // SINGLETON MANAGEMENT
 // =============================================================================
 
