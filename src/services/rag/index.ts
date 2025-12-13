@@ -7,3 +7,6 @@ export type { CodeChunk, SearchResult, SearchOptions, IndexStats } from './types
 
 // Export chunker helpers
 export { chunkTypeScript, extractExports, extractImports, generateChunkId } from './chunker.js';
+
+// Export RagService wrapper
+export { RagService } from './rag-service.js';
