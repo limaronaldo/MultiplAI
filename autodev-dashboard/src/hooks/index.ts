@@ -11,3 +11,5 @@ export {
 export { useAnalytics } from "./useAnalytics";
 export { useLogs, formatLogTime, getLogLevelColor } from "./useLogs";
 export type { LogLevel, LogEntry } from "./useLogs";
+export { usePendingReviews } from "./usePendingReviews";
+export type { PendingReview } from "./usePendingReviews";
