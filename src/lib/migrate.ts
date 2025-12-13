@@ -656,6 +656,58 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_dj_deployed ON distillation_jobs(deployed) WHERE deployed = true`;
   console.log("✅ Created distillation tables");
 
+  // Task evals tables (v0.12) - task quality measurement
+  await sql`
+    CREATE TABLE IF NOT EXISTS task_evals (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      task_id UUID REFERENCES tasks(id),
+
+      -- Success
+      succeeded BOOLEAN NOT NULL,
+      attempts_required INTEGER,
+      fix_loops INTEGER,
+
+      -- Quality
+      diff_lines_generated INTEGER,
+      diff_lines_final INTEGER,
+      code_quality_score DECIMAL(5,2),
+
+      -- Efficiency
+      total_tokens INTEGER,
+      total_cost_usd DECIMAL(10,4),
+      total_duration_ms INTEGER,
+
+      -- Context
+      models_used TEXT[],
+      final_model VARCHAR(100),
+      complexity VARCHAR(10),
+      effort VARCHAR(20),
+      repo VARCHAR(255),
+
+      evaluated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_te_task ON task_evals(task_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_te_repo ON task_evals(repo)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_te_succeeded ON task_evals(succeeded)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_te_evaluated ON task_evals(evaluated_at)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_te_model ON task_evals(final_model)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_te_complexity ON task_evals(complexity)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS eval_benchmarks (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name VARCHAR(255) NOT NULL,
+      description TEXT,
+      metric VARCHAR(50) NOT NULL,
+      threshold DECIMAL(10,4),
+      operator VARCHAR(10) NOT NULL DEFAULT 'gte',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_eb_metric ON eval_benchmarks(metric)`;
+  console.log("✅ Created task evals tables");
+
   console.log("\n✨ Migrations complete!");
 
   await sql.end();

@@ -1975,6 +1975,8 @@ import {
   isAutoCollectEnabled,
 } from "./core/distillation";
 
+import { getEvalCollector, getEvalAnalyzer } from "./core/evals";
+
 /**
  * GET /api/distillation/examples - List collected examples
  */
@@ -2278,6 +2280,215 @@ route("GET", "/api/distillation/stats", async (req) => {
     jobs: jobStats,
     autoCollectEnabled: isAutoCollectEnabled(),
   });
+});
+
+// ============================================
+// Task Evals API
+// ============================================
+
+/**
+ * GET /api/evals/tasks/:taskId - Get eval for specific task
+ */
+route("GET", "/api/evals/tasks/:taskId", async (req) => {
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const taskId = pathParts[4]; // /api/evals/tasks/:taskId
+
+  if (!isValidUUID(taskId)) {
+    return Response.json({ error: "Invalid task ID format" }, { status: 400 });
+  }
+
+  const collector = getEvalCollector();
+  let evalData = await collector.getTaskEval(taskId);
+
+  // If not found, try to collect it
+  if (!evalData) {
+    evalData = await collector.collectFromTask(taskId);
+  }
+
+  if (!evalData) {
+    return Response.json({ error: "Eval not found" }, { status: 404 });
+  }
+
+  return Response.json({ eval: evalData });
+});
+
+/**
+ * GET /api/evals/summary - Aggregated metrics
+ */
+route("GET", "/api/evals/summary", async (req) => {
+  const url = new URL(req.url);
+  const days = parseInt(url.searchParams.get("days") || "30", 10);
+  const repo = url.searchParams.get("repo") || undefined;
+
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const analyzer = getEvalAnalyzer();
+  const summary = await analyzer.getSummary({ since, repo });
+
+  return Response.json(summary);
+});
+
+/**
+ * GET /api/evals/by-model - Compare model performance
+ */
+route("GET", "/api/evals/by-model", async (req) => {
+  const url = new URL(req.url);
+  const days = parseInt(url.searchParams.get("days") || "30", 10);
+  const repo = url.searchParams.get("repo") || undefined;
+
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const analyzer = getEvalAnalyzer();
+  const comparisons = await analyzer.compareModels({ since, repo });
+
+  return Response.json({ models: comparisons });
+});
+
+/**
+ * GET /api/evals/by-complexity - Metrics by task complexity
+ */
+route("GET", "/api/evals/by-complexity", async (req) => {
+  const url = new URL(req.url);
+  const days = parseInt(url.searchParams.get("days") || "30", 10);
+  const repo = url.searchParams.get("repo") || undefined;
+
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const analyzer = getEvalAnalyzer();
+  const breakdown = await analyzer.getByComplexity({ since, repo });
+
+  return Response.json({ complexity: breakdown });
+});
+
+/**
+ * GET /api/evals/trends - Performance over time
+ */
+route("GET", "/api/evals/trends", async (req) => {
+  const url = new URL(req.url);
+  const days = parseInt(url.searchParams.get("days") || "30", 10);
+  const granularity = (url.searchParams.get("granularity") || "day") as
+    | "day"
+    | "week"
+    | "month";
+  const repo = url.searchParams.get("repo") || undefined;
+
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const analyzer = getEvalAnalyzer();
+  const trends = await analyzer.getTrends({ since, granularity, repo });
+
+  return Response.json({ trends });
+});
+
+/**
+ * POST /api/evals/collect - Trigger eval collection from recent tasks
+ */
+route("POST", "/api/evals/collect", async (req) => {
+  const body = await req.json().catch(() => ({}));
+  const { days, limit } = body as { days?: number; limit?: number };
+
+  const since = new Date(Date.now() - (days || 7) * 24 * 60 * 60 * 1000);
+
+  const collector = getEvalCollector();
+  const evals = await collector.collectFromRecentTasks({
+    since,
+    limit: limit || 100,
+  });
+
+  return Response.json({
+    ok: true,
+    message: `Collected ${evals.length} evals`,
+    collected: evals.length,
+  });
+});
+
+/**
+ * POST /api/evals/benchmark - Create benchmark
+ */
+route("POST", "/api/evals/benchmark", async (req) => {
+  const body = await req.json();
+  const { name, description, metric, threshold, operator } = body as {
+    name: string;
+    description?: string;
+    metric: string;
+    threshold: number;
+    operator: string;
+  };
+
+  if (!name || !metric || threshold === undefined || !operator) {
+    return Response.json(
+      { error: "Missing required fields: name, metric, threshold, operator" },
+      { status: 400 },
+    );
+  }
+
+  const analyzer = getEvalAnalyzer();
+  const benchmark = await analyzer.createBenchmark({
+    name,
+    description,
+    metric: metric as any,
+    threshold,
+    operator: operator as any,
+  });
+
+  return Response.json({
+    ok: true,
+    message: `Created benchmark: ${name}`,
+    benchmark,
+  });
+});
+
+/**
+ * GET /api/evals/benchmarks - List benchmarks
+ */
+route("GET", "/api/evals/benchmarks", async (req) => {
+  const analyzer = getEvalAnalyzer();
+  const benchmarks = await analyzer.getBenchmarks();
+
+  return Response.json({ benchmarks });
+});
+
+/**
+ * POST /api/evals/benchmarks/run - Run all benchmarks
+ */
+route("POST", "/api/evals/benchmarks/run", async (req) => {
+  const body = await req.json().catch(() => ({}));
+  const { days, repo } = body as { days?: number; repo?: string };
+
+  const since = new Date(Date.now() - (days || 30) * 24 * 60 * 60 * 1000);
+
+  const analyzer = getEvalAnalyzer();
+  const results = await analyzer.runBenchmarks({ since, repo });
+
+  const passed = results.filter((r) => r.passed).length;
+  const failed = results.filter((r) => !r.passed).length;
+
+  return Response.json({
+    ok: true,
+    summary: { total: results.length, passed, failed },
+    results,
+  });
+});
+
+/**
+ * GET /api/evals/recent - Get recent evals
+ */
+route("GET", "/api/evals/recent", async (req) => {
+  const url = new URL(req.url);
+  const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+  const repo = url.searchParams.get("repo") || undefined;
+  const succeeded = url.searchParams.get("succeeded");
+
+  const collector = getEvalCollector();
+  const evals = await collector.getRecentEvals({
+    limit,
+    repo,
+    succeeded:
+      succeeded === "true" ? true : succeeded === "false" ? false : undefined,
+  });
+
+  return Response.json({ evals, count: evals.length });
 });
 
 // Endpoint para Claude Code: lista issues aguardando review

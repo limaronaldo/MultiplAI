@@ -2,6 +2,7 @@
  * Evals Module
  *
  * LLM evaluation and judge alignment system.
+ * Task quality measurement and analytics.
  */
 
 export {
@@ -38,3 +39,20 @@ export {
   // Pre-built graders
   AutoDevGraders,
 } from "./graders";
+
+// Task Evals
+export {
+  type TaskEvalMetrics,
+  type EvalSummary,
+  type ModelComparison,
+  type ComplexityBreakdown,
+  type TrendDataPoint,
+  type Benchmark,
+  type BenchmarkResult,
+  TOKEN_COSTS,
+  calculateCost,
+  estimateTokenSplit,
+} from "./task-evals";
+
+export { EvalCollector, getEvalCollector } from "./eval-collector";
+export { EvalAnalyzer, getEvalAnalyzer } from "./eval-analyzer";
