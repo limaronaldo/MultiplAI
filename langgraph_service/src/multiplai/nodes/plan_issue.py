@@ -6,8 +6,6 @@ implementation plan from the current graph state.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from multiplai.types import GraphState, Plan
 
 

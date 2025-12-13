@@ -7,19 +7,14 @@ to an LLM client (e.g., Anthropic) to generate real patches.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, TypeAlias
+from typing import Any, Dict, TypeAlias
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
+
 from multiplai.config import get_settings
 
 GraphState: TypeAlias = Dict[str, Any]
-
-if TYPE_CHECKING:
-    # This block exists to mirror the project's pattern of importing types only
-    # for static analysis. A shared GraphState definition may be introduced in
-    # the future; at that point this module should import it here.
-    pass
 
 
 async def execute_issue(state: GraphState) -> GraphState:
@@ -69,7 +64,9 @@ async def execute_issue(state: GraphState) -> GraphState:
             return new_state
 
     settings = get_settings()
-    llm = ChatAnthropic(api_key=settings.anthropic_api_key, model="claude-3-5-sonnet-20240620")
+    llm = ChatAnthropic(
+        api_key=settings.anthropic_api_key, model="claude-3-5-sonnet-20240620"
+    )
 
     system_prompt = (
         "You are an expert software engineer. Your task is to generate a unified diff "
@@ -91,8 +88,10 @@ async def execute_issue(state: GraphState) -> GraphState:
         response = await llm.ainvoke(messages)
         unified_diff = response.content
         if isinstance(unified_diff, list):
-             # Handle case where content might be list of blocks (though unlikely for text model without tools)
-             unified_diff = "\n".join([block.text for block in unified_diff if hasattr(block, "text")])
+            # Handle case where content might be list of blocks (though unlikely for text model without tools)
+            unified_diff = "\n".join(
+                [block.text for block in unified_diff if hasattr(block, "text")]
+            )
 
         # Strip markdown code blocks if present
         if unified_diff.startswith("```diff"):
