@@ -58,8 +58,12 @@ export class TemporalTracker {
   private byCanonical = new Map<string, TemporalEntity[]>();
   private byId = new Map<string, TemporalEntity>();
 
-  async recordVersion(entity: ResolvedEntity, commitSha: string): Promise<TemporalEntity> {
-    const now = new Date();
+  async recordVersion(
+    entity: ResolvedEntity,
+    commitSha: string,
+    recordedAt?: Date,
+  ): Promise<TemporalEntity> {
+    const now = recordedAt ?? new Date();
     const canonicalId = entity.canonicalId;
     const versions = this.byCanonical.get(canonicalId) ?? [];
     const current = [...versions].reverse().find((v) => v.validUntil === null) ?? null;
@@ -126,4 +130,3 @@ export class TemporalTracker {
     this.byId.set(entityId, v);
   }
 }
-
