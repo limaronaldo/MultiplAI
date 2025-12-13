@@ -181,12 +181,28 @@ export class OpenRouterClient {
               max_tokens: params.maxTokens,
               temperature: params.temperature,
               reasoning: { effort },
-              // Prefer Parasail (US, zero data retention, no training)
-              // DeepSeek and Chutes both train on prompts
-              provider: {
-                order: ["Parasail"],
-                data_collection: "deny",
-              },
+              // Provider preferences based on model
+              // - Kimi K2: Nebius/Baseten (both zero retention)
+              // - DeepSeek: Allow any provider (Parasail may timeout)
+              // - Others: Prefer Parasail (zero retention)
+              ...(params.model.includes("kimi")
+                ? {
+                    provider: {
+                      order: ["Nebius Token Factory", "Baseten"],
+                      data_collection: "deny",
+                    },
+                  }
+                : params.model.includes("deepseek")
+                  ? {
+                      // DeepSeek: Don't restrict provider to avoid timeouts
+                      // Note: DeepSeek native provider trains on prompts
+                    }
+                  : {
+                      provider: {
+                        order: ["Parasail"],
+                        data_collection: "deny",
+                      },
+                    }),
             }),
           },
         );
