@@ -4,6 +4,7 @@ import { OpenRouterClient } from "./openrouter";
 import { OpenAIDirectClient } from "./openai-direct";
 import { getFlexClient, isFlexEnabled } from "./openai-flex";
 import { ALL_MODEL_CONFIGS } from "../core/model-selection";
+import type { AgentTool } from "../core/tool-generator";
 
 /**
  * Resolve reasoning model config name to actual model + reasoningEffort
@@ -43,6 +44,15 @@ export interface CompletionParams {
   // Service tier: "auto" (default) or "flex" (50% cheaper, slower)
   // Use "flex" for non-urgent tasks like evals, KG sync, embeddings
   serviceTier?: "auto" | "flex";
+}
+
+export interface ToolCompletionParams {
+  model: string;
+  maxTokens: number;
+  systemPrompt: string;
+  userPrompt: string;
+  tool: AgentTool;
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
 }
 
 // Model to provider mapping
@@ -222,6 +232,51 @@ export class LLMClient {
       case "anthropic":
       default:
         return getAnthropicClient().complete({ ...params, model: actualModel });
+    }
+  }
+
+  /**
+   * Complete with a tool call for structured output
+   * Routes to the appropriate provider's completeWithTool method
+   */
+  async completeWithTool<T = unknown>(
+    params: ToolCompletionParams,
+  ): Promise<T> {
+    // Resolve reasoning model config names
+    const resolved = resolveReasoningModelConfig(params.model);
+    const actualModel = resolved.model;
+    const reasoningEffort = resolved.reasoningEffort || params.reasoningEffort;
+
+    const provider = getProviderForModel(actualModel);
+
+    switch (provider) {
+      case "openai-direct":
+        return getOpenAIDirectClient().completeWithTool<T>({
+          model: actualModel,
+          maxTokens: params.maxTokens,
+          systemPrompt: params.systemPrompt,
+          userPrompt: params.userPrompt,
+          tool: params.tool,
+          reasoningEffort,
+        });
+      case "openrouter":
+        return getOpenRouterClient().completeWithTool<T>({
+          model: actualModel,
+          maxTokens: params.maxTokens,
+          systemPrompt: params.systemPrompt,
+          userPrompt: params.userPrompt,
+          tool: params.tool,
+          reasoningEffort,
+        });
+      case "anthropic":
+      default:
+        return getAnthropicClient().completeWithTool<T>({
+          model: actualModel,
+          maxTokens: params.maxTokens,
+          systemPrompt: params.systemPrompt,
+          userPrompt: params.userPrompt,
+          tool: params.tool,
+        });
     }
   }
 }

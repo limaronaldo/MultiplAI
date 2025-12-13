@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import type { AgentTool } from "../core/tool-generator";
 
 interface CompletionParams {
   model: string;
@@ -6,6 +7,14 @@ interface CompletionParams {
   temperature: number;
   systemPrompt: string;
   userPrompt: string;
+}
+
+interface ToolCompletionParams {
+  model: string;
+  maxTokens: number;
+  systemPrompt: string;
+  userPrompt: string;
+  tool: AgentTool;
 }
 
 // Retry configuration
@@ -101,5 +110,76 @@ export class AnthropicClient {
 
     // Should never reach here, but TypeScript needs it
     throw lastError || new Error("Unknown error after retries");
+  }
+
+  /**
+   * Complete with a tool call for structured output
+   * Returns the parsed JSON from the tool call input
+   */
+  async completeWithTool<T = unknown>(
+    params: ToolCompletionParams,
+  ): Promise<T> {
+    const startTime = Date.now();
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const response = await this.client.messages.create({
+          model: params.model,
+          max_tokens: params.maxTokens,
+          system: params.systemPrompt,
+          messages: [
+            {
+              role: "user",
+              content: params.userPrompt,
+            },
+          ],
+          tools: [
+            {
+              name: params.tool.name,
+              description: params.tool.description,
+              input_schema: params.tool
+                .input_schema as Anthropic.Tool.InputSchema,
+            },
+          ],
+          tool_choice: { type: "tool", name: params.tool.name },
+        });
+
+        const duration = Date.now() - startTime;
+        const tokensUsed =
+          (response.usage?.input_tokens || 0) +
+          (response.usage?.output_tokens || 0);
+
+        console.log(
+          `[LLM] ${params.model} (tool:${params.tool.name}) | ${tokensUsed} tokens | ${duration}ms`,
+        );
+
+        // Extract tool use from response
+        const toolUse = response.content.find(
+          (block) => block.type === "tool_use",
+        );
+
+        if (!toolUse || toolUse.type !== "tool_use") {
+          throw new Error("No tool use in response");
+        }
+
+        return toolUse.input as T;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        if (isRetryableError(error) && attempt < MAX_RETRIES) {
+          const delay = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+          console.warn(
+            `[LLM] ${params.model} (tool) attempt ${attempt}/${MAX_RETRIES} failed: ${lastError.message}. Retrying in ${delay}ms...`,
+          );
+          await sleep(delay);
+        } else {
+          console.error("[LLM] Error:", error);
+          throw error;
+        }
+      }
+    }
+
+    throw lastError || new Error("Unknown error after tool retries");
   }
 }
