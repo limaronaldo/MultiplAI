@@ -40,30 +40,24 @@ export const AttemptRecordSchema = z.object({
   success: z.boolean(),
   error: z.string(),
   timestamp: z.coerce.date(),
+export interface ReflectionOutput {
+  diagnosis: string;
+  rootCause: ReflectionRootCause;
+  recommendation: ReflectionRecommendation;
+  feedback: string;
+  confidence: number;
+}
+
+export const AttemptRecordSchema = z.object({
+  approach: z.string(),
+  success: z.boolean(),
+  error: z.string(),
+  timestamp: z.coerce.date(),
 });
 
-export const ReflectionInputSchema = z.object({
-  originalIssue: z.string(),
 export const ReflectionInputSchema = z.object({
   originalIssue: z.string(),
   plan: z.array(z.string()),
-  diff: z.string(),
-  testOutput: z.string(),
-  attemptNumber: z.number().int().nonnegative(),
-  previousAttempts: z.array(AttemptRecordSchema),
-});
-
-export const ReflectionOutputSchema = z.object({
-  diagnosis: z.string(),
-  rootCause: z.enum(["plan", "code", "test", "environment"]),
-  recommendation: z.enum(["replan", "fix", "abort"]),
-  feedback: z.string(),
-  confidence: z.number().min(0).max(1),
-});
-
-export const LoopConfigSchema = z.object({
-  maxIterations: z.number().int().positive(),
-  maxReplans: z.number().int().nonnegative(),
   confidenceThreshold: z.number().min(0).max(1),
 });
 
