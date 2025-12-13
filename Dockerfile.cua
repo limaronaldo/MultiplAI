@@ -1,0 +1,42 @@
+# Dockerfile for Computer Use Agent (CUA)
+# Issue #325 - Docker setup for sandboxed execution
+#
+# This Dockerfile creates an isolated environment for running CUA
+# with Playwright for browser automation.
+
+FROM mcr.microsoft.com/playwright:v1.40.0-jammy
+
+WORKDIR /app
+
+# Install Bun
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:$PATH"
+
+# Copy package files
+COPY package.json bun.lockb ./
+
+# Install dependencies
+RUN bun install --frozen-lockfile
+
+# Copy source code
+COPY src/ ./src/
+COPY tsconfig.json ./
+
+# Security: Create non-root user for CUA execution
+RUN useradd -m -s /bin/bash cuauser && \
+    chown -R cuauser:cuauser /app
+
+# Switch to non-root user
+USER cuauser
+
+# Environment configuration
+ENV NODE_ENV=production
+ENV CUA_BROWSER_HEADLESS=true
+ENV CUA_ALLOWED_URLS=localhost,127.0.0.1
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3000/api/health || exit 1
+
+# Default command (can be overridden)
+CMD ["bun", "run", "start"]

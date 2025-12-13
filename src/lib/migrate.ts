@@ -708,6 +708,40 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_eb_metric ON eval_benchmarks(metric)`;
   console.log("✅ Created task evals tables");
 
+  // Visual test runs table (v0.13) - CUA visual testing results
+  await sql`
+    CREATE TABLE IF NOT EXISTS visual_test_runs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
+
+      -- Test configuration
+      app_url TEXT NOT NULL,
+      test_goals TEXT[] NOT NULL,
+
+      -- Results
+      status VARCHAR(50) NOT NULL DEFAULT 'running',
+      pass_rate DECIMAL(5,2),
+      total_tests INTEGER,
+      passed_tests INTEGER,
+      failed_tests INTEGER,
+      results JSONB,
+
+      -- Artifacts
+      screenshots TEXT[],
+
+      -- Metadata
+      config JSONB,
+      error TEXT,
+
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_vtr_task ON visual_test_runs(task_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_vtr_status ON visual_test_runs(status)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_vtr_created ON visual_test_runs(created_at)`;
+  console.log("✅ Created visual test runs table");
+
   console.log("\n✨ Migrations complete!");
 
   await sql.end();
