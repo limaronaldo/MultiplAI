@@ -1,13 +1,13 @@
 import { z } from "zod";
-import type { MCPToolDefinition } from "../types.js";
+import type { MCPToolDefinition, ToolHandler } from "../types.js";
 import type { TaskEvent, Task } from "../../core/types.js";
 import { parseRepoString, type StaticMemory } from "../../core/memory/index.js";
 
 export const memoryTool: MCPToolDefinition = {
-  name: "autodev.memory",
   description: "Query AutoDev memory for a repository",
   inputSchema: {
     type: "object",
+++ b/src/mcp/tools/memory.ts
     properties: {
       repo: {
         type: "string",
@@ -39,37 +39,47 @@ export interface MemoryDeps {
   };
   getLearningStore: () => {
     getSummary: (repo: string) => Promise<unknown>;
-    getConventions: (repo: string, minConfidence?: number) => Promise<unknown[]>;
-    listFixPatterns: (repo: string, limit?: number) => Promise<unknown[]>;
-    listFailures: (repo: string, limit?: number) => Promise<unknown[]>;
-  };
-  getDb: () => {
-    getRecentTasksByRepo: (repo: string, limit: number) => Promise<Task[]>;
-    getRecentConsensusDecisions: (
-      repo: string,
-      limit: number,
-    ) => Promise<
-      Array<{
-        taskId: string;
+    if (query === "config") {
+      const staticStore = deps.getStaticMemoryStore();
+      const parsedRepo = parseRepoString(repo);
+      const memory = await staticStore.load(parsedRepo);
+      return { ok: true, repo, query, config: memory };
+    }
+
+    if (query === "recent_tasks") {
+++ b/src/mcp/tools/memory.ts
+        ok: true,
+        repo,
+        query,
         createdAt: Date;
         agent: string | null;
         metadata: Record<string, unknown> | null;
         githubIssueNumber: number;
-        githubIssueTitle: string;
-      }>
-    >;
-    getTaskEvents: (taskId: string) => Promise<TaskEvent[]>;
-  };
-}
+      const learning = deps.getLearningStore();
 
-export function createMemoryHandler(deps: MemoryDeps) {
-  return async (args: unknown) => {
-    const { repo, query, limit } = MemoryArgsSchema.parse(args);
-    const resolvedLimit = limit ?? 10;
+      const [summary, conventions, fixPatterns, failures] = await Promise.all([
+        learning.getSummary(repo) as Promise<{ patterns?: Pattern[] }>,
+        learning.getConventions(repo, 0.0),
+        learning.listFixPatterns(repo, resolvedLimit),
+        learning.listFailures(repo, resolvedLimit),
 
-    if (query === "config") {
-      const staticStore = deps.getStaticMemoryStore();
-      const parsedRepo = parseRepoString(repo);
+      // Handle empty task list gracefully
+      if (tasks.length === 0) {
+        response.tasks = [];
+      }
+
+      return response;
+    }
+
+    if (query === "patterns") {
+++ b/src/mcp/tools/memory.ts
+      return {
+        ok: true,
+        patterns: summary.patterns || [],
+        repo,
+        query,
+        summary,
+++ b/src/mcp/tools/memory.ts
       const memory = await staticStore.load(parsedRepo);
       return { ok: true, repo, query, memory };
     }
@@ -84,10 +94,14 @@ export function createMemoryHandler(deps: MemoryDeps) {
         tasks: tasks.map((t) => ({
           id: t.id,
           status: t.status,
-          githubIssueNumber: t.githubIssueNumber,
-          githubIssueTitle: t.githubIssueTitle,
-          prUrl: t.prUrl || null,
-          attemptCount: t.attemptCount,
+    return { ok: false, error: `Unknown query: ${query}` };
+  };
+}
+
+export const memoryHandler: ToolHandler = {
+  handler: createMemoryHandler,
+};
+++ b/tests/mcp-memory-tool.test.ts
           createdAt: t.createdAt,
           updatedAt: t.updatedAt,
         })),
@@ -138,3 +152,151 @@ export function createMemoryHandler(deps: MemoryDeps) {
   };
 }
 
+import { describe, it, expect, beforeEach, vi } from 'bun:test';
+import { McpMemoryTool } from '../src/mcp-memory-tool';
+import { z } from 'zod';
+
+ Server: vi.fn().mockImplementation(() => ({
+   setRequestHandler: vi.fn(),
+   connect: vi.fn(),
+ })),
+ StdioServerTransport: vi.fn(),
+ CallToolRequestSchema: z.object({}),
+ ListToolsRequestSchema: z.object({}),
+ store: vi.fn(),
+ retrieve: vi.fn(),
+ search: vi.fn(),
+ delete: vi.fn(),
+ list: vi.fn(),
+ clear: vi.fn(),
+ MemoryStore: vi.fn().mockImplementation(() => mockMemoryStore),
+ let tool: McpMemoryTool;
+ beforeEach(() => {
+   vi.clearAllMocks();
+   tool = new McpMemoryTool();
+ });
+ describe('Tool Registration', () => {
+   it('should register all required tools', () => {
+     const mockSetRequestHandler = vi.fn();
+     tool.server.setRequestHandler = mockSetRequestHandler;
+     
+     tool.registerTools();
+     
+     // Should register handlers for both ListToolsRequestSchema and CallToolRequestSchema
+     expect(mockSetRequestHandler).toHaveBeenCalledTimes(2);
+   });
+ });
+ describe('Query Types', () => {
+   it('should handle semantic search queries', async () => {
+     const mockResults = [{ id: '1', content: 'test content', metadata: {} }];
+     mockMemoryStore.search.mockResolvedValue(mockResults);
+     
+     const result = await tool.handleToolCall({
+       name: 'memory_search',
+       arguments: { query: 'test query', type: 'semantic' }
+     });
+     
+     expect(mockMemoryStore.search).toHaveBeenCalledWith('test query', { type: 'semantic' });
+     expect(result).toEqual({
+       content: [{ type: 'text', text: JSON.stringify(mockResults, null, 2) }]
+     });
+   });
+   it('should handle keyword search queries', async () => {
+     const mockResults = [{ id: '2', content: 'keyword match', metadata: {} }];
+     mockMemoryStore.search.mockResolvedValue(mockResults);
+     
+     const result = await tool.handleToolCall({
+       name: 'memory_search',
+       arguments: { query: 'keyword', type: 'keyword' }
+     });
+     
+     expect(mockMemoryStore.search).toHaveBeenCalledWith('keyword', { type: 'keyword' });
+     expect(result).toEqual({
+       content: [{ type: 'text', text: JSON.stringify(mockResults, null, 2) }]
+     });
+   });
+   it('should handle hybrid search queries', async () => {
+     const mockResults = [{ id: '3', content: 'hybrid result', metadata: {} }];
+     mockMemoryStore.search.mockResolvedValue(mockResults);
+     
+     const result = await tool.handleToolCall({
+       name: 'memory_search',
+       arguments: { query: 'hybrid query', type: 'hybrid' }
+     });
+     
+     expect(mockMemoryStore.search).toHaveBeenCalledWith('hybrid query', { type: 'hybrid' });
+     expect(result).toEqual({
+       content: [{ type: 'text', text: JSON.stringify(mockResults, null, 2) }]
+     });
+   });
+ });
+ describe('Edge Cases', () => {
+   it('should handle empty query gracefully', async () => {
+     mockMemoryStore.search.mockResolvedValue([]);
+     
+     const result = await tool.handleToolCall({
+       name: 'memory_search',
+       arguments: { query: '', type: 'semantic' }
+     });
+     
+     expect(mockMemoryStore.search).toHaveBeenCalledWith('', { type: 'semantic' });
+     expect(result).toEqual({
+       content: [{ type: 'text', text: '[]' }]
+     });
+   });
+   it('should handle invalid query type', async () => {
+     await expect(tool.handleToolCall({
+       name: 'memory_search',
+       arguments: { query: 'test', type: 'invalid' }
+     })).rejects.toThrow();
+   });
+   it('should handle search errors gracefully', async () => {
+     mockMemoryStore.search.mockRejectedValue(new Error('Search failed'));
+     
+     await expect(tool.handleToolCall({
+       name: 'memory_search',
+       arguments: { query: 'test', type: 'semantic' }
+     })).rejects.toThrow('Search failed');
+   });
+ });
+ describe('Tool Operations', () => {
+   it('should store memory successfully', async () => {
+     mockMemoryStore.store.mockResolvedValue('stored-id');
+     
+     const result = await tool.handleToolCall({
+       name: 'memory_store',
+       arguments: { content: 'test content', metadata: { tags: ['test'] } }
+     });
+     
+     expect(mockMemoryStore.store).toHaveBeenCalledWith('test content', { tags: ['test'] });
+     expect(result).toEqual({
+       content: [{ type: 'text', text: 'Memory stored with ID: stored-id' }]
+     });
+   });
+   it('should retrieve memory by ID', async () => {
+     const mockMemory = { id: 'test-id', content: 'test content', metadata: {} };
+     mockMemoryStore.retrieve.mockResolvedValue(mockMemory);
+     
+     const result = await tool.handleToolCall({
+       name: 'memory_retrieve',
+       arguments: { id: 'test-id' }
+     });
+     
+     expect(mockMemoryStore.retrieve).toHaveBeenCalledWith('test-id');
+     expect(result).toEqual({
+       content: [{ type: 'text', text: JSON.stringify(mockMemory, null, 2) }]
+     });
+   });
+   it('should handle non-existent memory retrieval', async () => {
+     mockMemoryStore.retrieve.mockResolvedValue(null);
+     
+     const result = await tool.handleToolCall({
+       name: 'memory_retrieve',
+       arguments: { id: 'non-existent' }
+     });
+     
+     expect(result).toEqual({
+       content: [{ type: 'text', text: 'Memory not found' }]
+     });
+   });
+ });
