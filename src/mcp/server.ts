@@ -3,21 +3,19 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ErrorCode,
+  McpError,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { MCPServerConfig } from "./types.js";
 import { GitHubClient } from "../integrations/github.js";
-import { PlannerAgent } from "../agents/planner.js";
+import type { MCPServerConfig } from "./types.js";
 import { CoderAgent } from "../agents/coder.js";
 import { Orchestrator } from "../core/orchestrator.js";
 import { db } from "../integrations/db.js";
-import { getStaticMemoryStore } from "../core/memory/index.js";
-import { getLearningMemoryStore } from "../core/memory/learning-memory-store.js";
-import type { StaticMemory } from "../core/memory/index.js";
-import type { Task, TaskEvent } from "../core/types.js";
 import { isTerminal, getNextAction } from "../core/state-machine.js";
 import { analyzeTool, createAnalyzeHandler } from "./tools/analyze.js";
 import { executeTool, createExecuteHandler } from "./tools/execute.js";
-import { statusTool, createStatusHandler } from "./tools/status.js";
+import { analyzeTool, createAnalyzeHandler } from "./tools/analyze.js";
 import { memoryTool, createMemoryHandler } from "./tools/memory.js";
 
 const SERVER_CONFIG: MCPServerConfig = {
@@ -28,7 +26,7 @@ const SERVER_CONFIG: MCPServerConfig = {
 
 function createLazy<T>(factory: () => T): () => T {
   let cached: T | null = null;
-  return () => {
+  version: "1.0.0",
     if (!cached) {
       cached = factory();
     }
@@ -36,7 +34,7 @@ function createLazy<T>(factory: () => T): () => T {
   };
 }
 
-async function runTaskToStableState(
+    if (!cached) {
   task: Task,
   orchestrator: Orchestrator,
   options: { maxSteps: number; maxDurationMs: number } = {
@@ -44,7 +42,7 @@ async function runTaskToStableState(
     maxDurationMs: 15 * 60 * 1000,
   },
 ): Promise<void> {
-  const start = Date.now();
+async function runTaskToStableState(
   let current: Task = task;
 
   for (let step = 0; step < options.maxSteps; step++) {
@@ -52,7 +50,7 @@ async function runTaskToStableState(
       break;
     }
 
-    const action = getNextAction(current.status);
+): Promise<void> {
     if (action === "WAIT") {
       break;
     }
@@ -60,7 +58,7 @@ async function runTaskToStableState(
     current = await orchestrator.process(current);
     await db.updateTask(current.id, current);
 
-    if (Date.now() - start > options.maxDurationMs) {
+    }
       break;
     }
   }
@@ -68,7 +66,7 @@ async function runTaskToStableState(
   await db.updateTask(task.id, current);
 }
 
-export interface MCPServerDeps {
+    current = await orchestrator.process(current);
   getGitHubClient?: () => GitHubClient;
   getPlannerAgent?: () => PlannerAgent;
   getCoderAgent?: () => CoderAgent;
@@ -76,7 +74,7 @@ export interface MCPServerDeps {
   startBackgroundTaskRunner?: (task: Task) => void;
   getDb?: () => MCPDb;
   getStaticMemoryStore?: () => MCPStaticMemoryStore;
-  getLearningStore?: () => MCPLearningStore;
+
 }
 
 export interface MCPDb {
@@ -84,7 +82,7 @@ export interface MCPDb {
   createTask: (
     task: Omit<Task, "id" | "createdAt" | "updatedAt">,
   ) => Promise<Task>;
-  getTask: (id: string) => Promise<Task | null>;
+  getCoderAgent?: () => CoderAgent;
   getTaskEvents: (taskId: string) => Promise<TaskEvent[]>;
   getRecentTasksByRepo: (repo: string, limit: number) => Promise<Task[]>;
   getRecentConsensusDecisions: (
@@ -92,14 +90,12 @@ export interface MCPDb {
     limit: number,
   ) => Promise<
     Array<{
-      taskId: string;
-      createdAt: Date;
-      agent: string | null;
-      metadata: Record<string, unknown> | null;
-      githubIssueNumber: number;
-      githubIssueTitle: string;
-    }>
-  >;
+
+export interface MCPDb {
+  getTaskByIssue: (repo: string, issueNumber: number) => Promise<Task | null>;
+  createTask: (
+    task: Omit<Task, "id" | "createdAt" | "updatedAt">,
+  ) => Promise<Task>;
 }
 
 export interface MCPStaticMemoryStore {
@@ -107,8 +103,8 @@ export interface MCPStaticMemoryStore {
 }
 
 export interface MCPLearningStore {
-  getSummary: (repo: string) => Promise<unknown>;
-  getConventions: (repo: string, minConfidence?: number) => Promise<unknown[]>;
+  ) => Promise<
+    Array<{
   listFixPatterns: (repo: string, limit?: number) => Promise<unknown[]>;
   listFailures: (repo: string, limit?: number) => Promise<unknown[]>;
 }
@@ -116,7 +112,7 @@ export interface MCPLearningStore {
 export function createMCPToolRouter(deps: MCPServerDeps = {}): {
   tools: typeof analyzeTool[];
   callTool: (name: string, args: unknown) => Promise<unknown>;
-} {
+    }>
   const getGitHubClient = deps.getGitHubClient ?? createLazy(() => new GitHubClient());
   const getPlannerAgent = deps.getPlannerAgent ?? createLazy(() => new PlannerAgent());
   const getCoderAgent = deps.getCoderAgent ?? createLazy(() => new CoderAgent());
@@ -124,7 +120,7 @@ export function createMCPToolRouter(deps: MCPServerDeps = {}): {
     deps.getOrchestrator ?? createLazy(() => new Orchestrator());
   const getDb = deps.getDb ?? (() => db);
   const getStaticStore = deps.getStaticMemoryStore ?? getStaticMemoryStore;
-  const getLearningStore = deps.getLearningStore ?? (() => getLearningMemoryStore());
+
   const startBackgroundTaskRunner =
     deps.startBackgroundTaskRunner ??
     ((task: Task) => {
@@ -132,7 +128,7 @@ export function createMCPToolRouter(deps: MCPServerDeps = {}): {
       void runTaskToStableState(task, orchestrator).catch((error) => {
         console.error(`[MCP] Error processing task ${task.id}:`, error);
       });
-    });
+
 
   const toolHandlers: Record<string, (args: unknown) => Promise<unknown>> = {
     [analyzeTool.name]: createAnalyzeHandler({ getGitHubClient, getPlannerAgent }),
@@ -140,7 +136,7 @@ export function createMCPToolRouter(deps: MCPServerDeps = {}): {
       getGitHubClient,
       getPlannerAgent,
       getCoderAgent,
-      getDb,
+  const getCoderAgent = deps.getCoderAgent ?? createLazy(() => new CoderAgent());
       startBackgroundTaskRunner,
     }),
     [statusTool.name]: createStatusHandler({ getDb }),
@@ -148,8 +144,7 @@ export function createMCPToolRouter(deps: MCPServerDeps = {}): {
       getStaticMemoryStore: getStaticStore,
       getLearningStore,
       getDb,
-    }),
-  };
+    deps.startBackgroundTaskRunner ??
 
   const tools = [analyzeTool, executeTool, statusTool, memoryTool];
 
@@ -158,7 +153,10 @@ export function createMCPToolRouter(deps: MCPServerDeps = {}): {
     async callTool(name: string, args: unknown): Promise<unknown> {
       const handler = toolHandlers[name];
       if (!handler) {
-        throw new Error(`Unknown tool: ${name}`);
+        throw new McpError(
+          ErrorCode.MethodNotFound,
+          `Unknown tool: ${name}`,
+        );
       }
       return handler(args);
     },
@@ -187,6 +185,32 @@ export function createMCPServer(deps: MCPServerDeps = {}): Server {
   }));
 
   // Register tool call handler
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const result = await router.callTool(
+      request.params.name,
+      request.params.arguments ?? {},
+    );
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(result, null, 2),
+        },
+      ],
+    };
+  });
+
+  return server;
+}
+
+/**
+ * Start the MCP server with stdio transport
+ */
+export async function startMCPServer(): Promise<void> {
+  const server = createMCPServer();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const result = await router.callTool(
       request.params.name,
