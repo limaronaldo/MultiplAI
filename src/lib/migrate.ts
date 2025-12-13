@@ -463,6 +463,122 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_ie_repo ON invalidation_events(repo_full_name)`;
   console.log("✅ Added knowledge graph repo scoping");
 
+  // Prompt optimization tables (v0.10) - prompt versioning and A/B testing
+  await sql`
+    CREATE TABLE IF NOT EXISTS prompt_versions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      prompt_id VARCHAR(50) NOT NULL,
+      version INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      is_active BOOLEAN DEFAULT FALSE,
+
+      -- Performance metrics
+      tasks_executed INTEGER DEFAULT 0,
+      success_rate DECIMAL(5,2),
+      avg_tokens INTEGER,
+
+      UNIQUE(prompt_id, version)
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_pv_prompt ON prompt_versions(prompt_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_pv_active ON prompt_versions(prompt_id) WHERE is_active = TRUE`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS prompt_optimization_data (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      prompt_id VARCHAR(50) NOT NULL,
+      task_id UUID REFERENCES tasks(id),
+
+      -- Input/Output
+      input_variables JSONB,
+      output TEXT,
+
+      -- Annotations
+      rating VARCHAR(10),
+      output_feedback TEXT,
+      failure_mode VARCHAR(50),
+
+      -- Grader results
+      grader_results JSONB,
+
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_pod_prompt ON prompt_optimization_data(prompt_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_pod_task ON prompt_optimization_data(task_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_pod_rating ON prompt_optimization_data(rating) WHERE rating IS NOT NULL`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS ab_tests (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      prompt_id VARCHAR(50) NOT NULL,
+      version_a INTEGER NOT NULL,
+      version_b INTEGER NOT NULL,
+      traffic_split DECIMAL(3,2) NOT NULL DEFAULT 0.5,
+      status VARCHAR(50) NOT NULL DEFAULT 'pending',
+
+      -- Results
+      version_a_stats JSONB,
+      version_b_stats JSONB,
+      p_value DECIMAL(10,6),
+      winner VARCHAR(20),
+
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ab_prompt ON ab_tests(prompt_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ab_status ON ab_tests(status)`;
+  console.log("✅ Created prompt optimization tables");
+
+  // Batch API tables (v0.10) - OpenAI Batch API job tracking
+  await sql`
+    CREATE TABLE IF NOT EXISTS batch_jobs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      openai_batch_id VARCHAR(100) UNIQUE,
+      job_type VARCHAR(50) NOT NULL,
+
+      -- Status
+      status VARCHAR(50) NOT NULL DEFAULT 'pending',
+      input_file_id VARCHAR(100),
+      output_file_id VARCHAR(100),
+      error_file_id VARCHAR(100),
+
+      -- Counts
+      total_requests INTEGER,
+      completed_requests INTEGER DEFAULT 0,
+      failed_requests INTEGER DEFAULT 0,
+
+      -- Timing
+      submitted_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+
+      -- Metadata
+      metadata JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_bj_status ON batch_jobs(status)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_bj_openai ON batch_jobs(openai_batch_id)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS batch_job_tasks (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      batch_job_id UUID REFERENCES batch_jobs(id) ON DELETE CASCADE,
+      task_id UUID REFERENCES tasks(id),
+      custom_id VARCHAR(100) NOT NULL,
+      status VARCHAR(50),
+      result JSONB,
+      error JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_bjt_batch ON batch_job_tasks(batch_job_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_bjt_task ON batch_job_tasks(task_id)`;
+  console.log("✅ Created batch API tables");
+
   console.log("\n✨ Migrations complete!");
 
   await sql.end();
