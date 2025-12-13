@@ -64,6 +64,11 @@ export interface ModelTier {
  * All use model "gpt-5.2" but with different reasoning effort levels.
  * Internal config names for selection logic.
  *
+/*
+ * Hybrid Strategy (Option C): Mixed-model approach prioritizing cost savings.
+ * Routes simple tasks to efficient models (e.g., GPT-3.5) and complex tasks to premium models (e.g., Claude/GPT-4).
+ */
+
  * GPT-5.2 Reasoning Effort Levels:
  * - none: Minimal reasoning, fastest, cheapest
  * - low: Light reasoning
