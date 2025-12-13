@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import type { AgentTool } from "../core/tool-generator";
 
 interface CompletionParams {
   model: string;
@@ -10,6 +11,15 @@ interface CompletionParams {
   previousResponseId?: string;
   // GPT-5.2 reasoning effort: "none" | "low" | "medium" | "high" | "xhigh"
   // Default is "high", use "xhigh" for Fixer agent
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
+}
+
+interface ToolCompletionParams {
+  model: string;
+  maxTokens: number;
+  systemPrompt: string;
+  userPrompt: string;
+  tool: AgentTool;
   reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
 }
 
@@ -320,6 +330,89 @@ export class OpenAIDirectClient {
       tokens: tokensUsed,
       responseId: response.id, // Return for context reuse in subsequent calls
     };
+  }
+
+  /**
+   * Complete with a tool call for structured output
+   * Uses chat completions API with function calling
+   */
+  async completeWithTool<T = unknown>(
+    params: ToolCompletionParams,
+  ): Promise<T> {
+    const startTime = Date.now();
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const isReasoning = this.isReasoningModel(params.model);
+
+        const requestParams: any = {
+          model: params.model,
+          messages: [
+            { role: "system", content: params.systemPrompt },
+            { role: "user", content: params.userPrompt },
+          ],
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: params.tool.name,
+                description: params.tool.description,
+                parameters: params.tool.input_schema,
+              },
+            },
+          ],
+          tool_choice: {
+            type: "function",
+            function: { name: params.tool.name },
+          },
+        };
+
+        // Reasoning models use max_completion_tokens
+        if (isReasoning) {
+          requestParams.max_completion_tokens = params.maxTokens;
+          if (params.reasoningEffort) {
+            requestParams.reasoning_effort = params.reasoningEffort;
+          }
+        } else {
+          requestParams.max_tokens = params.maxTokens;
+        }
+
+        const response =
+          await this.client.chat.completions.create(requestParams);
+
+        const duration = Date.now() - startTime;
+        const tokensUsed =
+          (response.usage?.prompt_tokens || 0) +
+          (response.usage?.completion_tokens || 0);
+
+        console.log(
+          `[LLM] OpenAI/${params.model} (tool:${params.tool.name}) | ${tokensUsed} tokens | ${duration}ms`,
+        );
+
+        const toolCall = response.choices[0]?.message?.tool_calls?.[0] as any;
+        if (!toolCall || !toolCall.function) {
+          throw new Error("No tool call in response");
+        }
+
+        return JSON.parse(toolCall.function.arguments) as T;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        if (isRetryableError(error) && attempt < MAX_RETRIES) {
+          const delay = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+          console.warn(
+            `[LLM] OpenAI/${params.model} (tool) attempt ${attempt}/${MAX_RETRIES} failed: ${lastError.message}. Retrying in ${delay}ms...`,
+          );
+          await sleep(delay);
+        } else {
+          console.error("[LLM] OpenAI Tool Error:", error);
+          throw error;
+        }
+      }
+    }
+
+    throw lastError || new Error("Unknown error after tool retries");
   }
 }
 

@@ -1,4 +1,5 @@
 import { OpenRouter } from "@openrouter/sdk";
+import type { AgentTool } from "../core/tool-generator";
 
 interface CompletionParams {
   model: string;
@@ -8,6 +9,15 @@ interface CompletionParams {
   userPrompt: string;
   // Reasoning effort for models like DeepSeek V3.2 Speciale
   // Maps: none→low, low→low, medium→medium, high→high, xhigh→high
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
+}
+
+interface ToolCompletionParams {
+  model: string;
+  maxTokens: number;
+  systemPrompt: string;
+  userPrompt: string;
+  tool: AgentTool;
   reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
 }
 
@@ -303,6 +313,91 @@ export class OpenRouterClient {
       console.error("[LLM] OpenRouter Error:", error);
       throw error;
     }
+  }
+
+  /**
+   * Complete with a tool call for structured output
+   * Uses OpenAI-compatible function calling via raw fetch
+   */
+  async completeWithTool<T = unknown>(
+    params: ToolCompletionParams,
+  ): Promise<T> {
+    const startTime = Date.now();
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const response = await fetch(
+          "https://openrouter.ai/api/v1/chat/completions",
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: params.model,
+              messages: [
+                { role: "system", content: params.systemPrompt },
+                { role: "user", content: params.userPrompt },
+              ],
+              max_tokens: params.maxTokens,
+              tools: [
+                {
+                  type: "function",
+                  function: {
+                    name: params.tool.name,
+                    description: params.tool.description,
+                    parameters: params.tool.input_schema,
+                  },
+                },
+              ],
+              tool_choice: {
+                type: "function",
+                function: { name: params.tool.name },
+              },
+            }),
+          },
+        );
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(
+            `OpenRouter API error: ${response.status} - ${JSON.stringify(errorData)}`,
+          );
+        }
+
+        const data = await response.json();
+        const duration = Date.now() - startTime;
+        const tokensUsed = data.usage?.total_tokens || 0;
+
+        console.log(
+          `[LLM] OpenRouter/${params.model} (tool:${params.tool.name}) | ${tokensUsed} tokens | ${duration}ms`,
+        );
+
+        const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+        if (!toolCall) {
+          throw new Error("No tool call in response");
+        }
+
+        return JSON.parse(toolCall.function.arguments) as T;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        if (isRetryableError(error) && attempt < MAX_RETRIES) {
+          const delay = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+          console.warn(
+            `[LLM] OpenRouter/${params.model} (tool) attempt ${attempt}/${MAX_RETRIES} failed: ${lastError.message}. Retrying in ${delay}ms...`,
+          );
+          await sleep(delay);
+        } else {
+          console.error("[LLM] OpenRouter Tool Error:", error);
+          throw error;
+        }
+      }
+    }
+
+    throw lastError || new Error("Unknown error after tool retries");
   }
 }
 
