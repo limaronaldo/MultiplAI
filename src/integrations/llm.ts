@@ -168,7 +168,19 @@ export class LLMClient {
 
     switch (provider) {
       case "openai":
-        return getOpenAIClient().complete({ ...params, model: actualModel });
+        return getOpenAIClient().complete({
+          model: actualModel,
+          maxTokens: params.maxTokens,
+          temperature: params.temperature,
+          systemPrompt: params.systemPrompt,
+          userPrompt: params.userPrompt,
+          reasoningEffort:
+            reasoningEffort === "low" ||
+            reasoningEffort === "medium" ||
+            reasoningEffort === "high"
+              ? reasoningEffort
+              : undefined,
+        });
       case "openai-direct":
         // Pass reasoningEffort for GPT-5.2 models
         return getOpenAIDirectClient().complete({
