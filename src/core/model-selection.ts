@@ -29,7 +29,7 @@
  * XS low               │ deepseek-speciale-low    │ ~$0.005   │ OpenRouter (ZDR)
  * XS medium            │ gpt-5.2-medium           │ ~$0.08    │ OpenAI Direct
  * XS high              │ gpt-5.2-high             │ ~$0.15    │ OpenAI Direct
- * XS default           │ grok-code-fast-1         │ ~$0.01    │ OpenRouter (ZDR)
+ * XS default           │ gpt-5.2-medium           │ ~$0.08    │ OpenAI Direct
  * ─────────────────────────────────────────────────
  * S low                │ grok-code-fast-1         │ ~$0.01    │ OpenRouter (ZDR)
  * S medium             │ gpt-5.2-low              │ ~$0.03    │ OpenAI Direct
@@ -339,7 +339,7 @@ export function selectModels(context: SelectionContext): ModelSelection {
  * - low: DeepSeek Speciale (low) - ultra-cheap for typos
  * - medium: DeepSeek Speciale (medium) - cheap for simple bugs
  * - high: GPT-5.2 (high) - proven quality for complex tasks
- * - undefined: DeepSeek Speciale (medium) (default)
+ * - undefined: GPT-5.2 (medium) (default)
  *
  * Escalation path:
  * - Attempt 0: Effort-based (DeepSeek or GPT-5.2)
@@ -399,12 +399,12 @@ function selectForXS(
     };
   }
 
-  // undefined effort → default to Grok Code Fast (ultra-cheap, fast)
+  // undefined effort → default to GPT-5.2 medium (reliable quality)
   return {
-    tier: "fast",
-    models: ["x-ai/grok-code-fast-1"],
+    tier: "medium",
+    models: ["gpt-5.2-medium"],
     useMultiAgent: false,
-    reason: "XS (no effort specified) → Grok Code Fast ~$0.01",
+    reason: "XS (no effort specified) → GPT-5.2 (medium) ~$0.08",
   };
 }
 
