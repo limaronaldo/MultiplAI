@@ -110,7 +110,20 @@ Review this implementation. Remember:
 `.trim();
 
     const response = await this.complete(SYSTEM_PROMPT, userPrompt);
+
+    // Debug: Log response info
+    console.log(`[Reviewer] Response type: ${typeof response}`);
+    console.log(`[Reviewer] Response length: ${String(response).length}`);
+    console.log(
+      `[Reviewer] Response preview: ${String(response).slice(0, 300)}...`,
+    );
+
     const parsed = this.parseJSON<ReviewerOutput>(response);
+
+    // Debug: Log parsed keys
+    console.log(
+      `[Reviewer] Parsed keys: ${Object.keys(parsed || {}).join(", ")}`,
+    );
 
     // Post-process: downgrade REQUEST_CHANGES to APPROVE if only minor issues
     const result = ReviewerOutputSchema.parse(parsed);

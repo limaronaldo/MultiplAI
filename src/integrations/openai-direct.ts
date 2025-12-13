@@ -241,6 +241,19 @@ export class OpenAIDirectClient {
     // Extract text from response - GPT-5.2 provides output_text directly
     let content = (response as any).output_text;
 
+    // Debug: Log response structure for codex models
+    if (isCodex) {
+      console.log(
+        `[OpenAI] Codex response keys: ${Object.keys(response).join(", ")}`,
+      );
+      console.log(`[OpenAI] Codex output_text exists: ${!!content}`);
+      if (!content) {
+        console.log(
+          `[OpenAI] Codex full response: ${JSON.stringify(response).slice(0, 1000)}`,
+        );
+      }
+    }
+
     if (!content) {
       // Fallback 1: try extracting from output array (older format)
       let extractedContent = "";

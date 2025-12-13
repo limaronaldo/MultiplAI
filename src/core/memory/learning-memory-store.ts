@@ -27,6 +27,17 @@ const MAX_CONVENTIONS_PER_REPO = 50;
 const MAX_FAILURES_PER_REPO = 50;
 const MIN_SUCCESS_RATE = 0.3; // Remove patterns below this
 
+/**
+ * Safely parse JSONB data from database.
+ * Some Postgres drivers return jsonb columns as strings instead of objects.
+ */
+function parseJsonbData<T>(data: unknown): T {
+  if (typeof data === "string") {
+    return JSON.parse(data) as T;
+  }
+  return data as T;
+}
+
 export class LearningMemoryStore {
   // =========================================================================
   // FIX PATTERNS
@@ -411,7 +422,9 @@ export class LearningMemoryStore {
     const results = await sql`
       SELECT data FROM learning_fix_patterns WHERE repo = ${repo}
     `;
-    return results.map((r) => FixPatternSchema.parse((r as any).data));
+    return results.map((r) =>
+      FixPatternSchema.parse(parseJsonbData((r as any).data)),
+    );
   }
 
   private async findSimilarFixPattern(
@@ -468,7 +481,9 @@ export class LearningMemoryStore {
     const results = await sql`
       SELECT data FROM learning_conventions WHERE repo = ${repo}
     `;
-    return results.map((r) => CodebaseConventionSchema.parse((r as any).data));
+    return results.map((r) =>
+      CodebaseConventionSchema.parse(parseJsonbData((r as any).data)),
+    );
   }
 
   private async getConventionById(
@@ -479,7 +494,7 @@ export class LearningMemoryStore {
       SELECT data FROM learning_conventions WHERE id = ${id}
     `;
     if (results.length === 0) return null;
-    return CodebaseConventionSchema.parse(results[0].data);
+    return CodebaseConventionSchema.parse(parseJsonbData(results[0].data));
   }
 
   private async findSimilarConvention(
@@ -531,7 +546,9 @@ export class LearningMemoryStore {
     const results = await sql`
       SELECT data FROM learning_failures WHERE repo = ${repo}
     `;
-    return results.map((r) => FailureModeSchema.parse((r as any).data));
+    return results.map((r) =>
+      FailureModeSchema.parse(parseJsonbData((r as any).data)),
+    );
   }
 
   private async findSimilarFailure(

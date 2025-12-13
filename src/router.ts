@@ -606,6 +606,24 @@ route("POST", "/api/jobs", async (req) => {
       // Check if task already exists for this issue
       const existingTask = await db.getTaskByIssue(repo, issueNumber);
       if (existingTask) {
+        // If task is in a terminal state, reset it to NEW so it can be reprocessed
+        if (
+          existingTask.status === "FAILED" ||
+          existingTask.status === "COMPLETED"
+        ) {
+          await db.updateTask(existingTask.id, {
+            status: "NEW",
+            lastError: undefined,
+            attemptCount: 0,
+            currentDiff: undefined,
+            branchName: undefined,
+            prNumber: undefined,
+            prUrl: undefined,
+          });
+          console.log(
+            `[Job] Reset task ${existingTask.id} from ${existingTask.status} to NEW`,
+          );
+        }
         taskIds.push(existingTask.id);
         continue;
       }
@@ -971,9 +989,7 @@ route("GET", "/api/logs/stream", async (req) => {
     id: "00000000-0000-0000-0000-000000000000",
   };
 
-  function parseCursor(
-    cursor: string | null,
-  ): { createdAt: Date; id: string } {
+  function parseCursor(cursor: string | null): { createdAt: Date; id: string } {
     if (!cursor) return DEFAULT_CURSOR;
     const [createdAtStr, id] = cursor.split("|");
     const createdAt = new Date(createdAtStr);

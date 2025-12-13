@@ -134,7 +134,27 @@ Analyze this issue and provide your implementation plan as JSON.
 `.trim();
 
     const response = await this.complete(SYSTEM_PROMPT, userPrompt);
+
+    // Debug: Log raw response type and preview
+    console.log(`[Planner] Response type: ${typeof response}`);
+    console.log(
+      `[Planner] Response preview: ${String(response).slice(0, 500)}...`,
+    );
+
+    // Handle case where response is already an object (some API responses)
+    if (typeof response === "object" && response !== null) {
+      console.log(
+        `[Planner] Response is already an object, validating directly`,
+      );
+      return PlannerOutputSchema.parse(response);
+    }
+
     const parsed = this.parseJSON<PlannerOutput>(response);
+
+    // Debug: Log parsed result
+    console.log(
+      `[Planner] Parsed result keys: ${Object.keys(parsed || {}).join(", ")}`,
+    );
 
     // Validate with Zod
     return PlannerOutputSchema.parse(parsed);

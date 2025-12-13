@@ -497,7 +497,12 @@ export const db = {
       WHERE task_id = ${taskId}
     `;
     if (!result?.orchestration) return null;
-    return OrchestrationStateSchema.parse(result.orchestration);
+    // Handle case where postgres driver returns jsonb as string
+    const data =
+      typeof result.orchestration === "string"
+        ? JSON.parse(result.orchestration)
+        : result.orchestration;
+    return OrchestrationStateSchema.parse(data);
   },
 
   /**
