@@ -53,6 +53,11 @@ import {
 import { normalizePatch, detectPatchFormat } from "./patch-formats";
 import { ragRuntime } from "../services/rag/rag-runtime";
 import { KnowledgeGraphService } from "./knowledge-graph/knowledge-graph-service";
+import {
+  AgenticLoopController,
+  type LoopConfig,
+  type LoopResult,
+} from "./agentic";
 
 const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
 const ENABLE_LEARNING = process.env.ENABLE_LEARNING !== "false"; // Default to true
@@ -900,6 +905,113 @@ export class Orchestrator {
   }
 
   /**
+   * Run the Agentic Loop for self-correcting code generation
+   * Issue #193, #219 - Agentic Loop with Self-Correction
+   */
+  private async runAgenticLoop(task: Task): Promise<Task> {
+    const logger = this.getLogger(task);
+    logger.info("Using Agentic Loop for self-correction");
+
+    // Transition to REFLECTING state
+    task = this.updateStatus(task, "REFLECTING");
+
+    // Store error before fix for learning
+    this.errorBeforeFix = task.lastError;
+
+    // Build loop config from AutoDevConfig
+    const loopConfig: LoopConfig = {
+      maxIterations: this.config.agenticLoopMaxIterations,
+      maxReplans: this.config.agenticLoopMaxReplans,
+      confidenceThreshold: this.config.agenticLoopConfidenceThreshold,
+    };
+
+    // Create and run the agentic loop controller
+    const loopController = new AgenticLoopController();
+    const result = await loopController.run(
+      task,
+      task.lastError || "",
+      loopConfig,
+    );
+
+    // Log agentic loop metrics (Issue #220)
+    const metrics = loopController.getMetrics();
+    await this.logEvent(task, "AGENTIC_LOOP_COMPLETE", "agentic-loop", {
+      success: result.success,
+      iterations: result.iterations,
+      replans: result.replans,
+      reason: result.reason,
+      reflectionCalls: metrics.reflectionCalls,
+      fixAttempts: metrics.fixAttempts,
+      replanAttempts: metrics.replanAttempts,
+      totalDurationMs: metrics.totalDurationMs,
+    });
+
+    if (!result.success) {
+      // Agentic loop failed - increment attempt count and potentially fail task
+      task.attemptCount++;
+      task.lastError = result.reason;
+
+      if (task.attemptCount >= task.maxAttempts) {
+        return this.failTask(
+          task,
+          createOrchestratorError(
+            "AGENTIC_LOOP_EXHAUSTED",
+            `Agentic loop failed after ${result.iterations} iterations: ${result.reason}`,
+            task.id,
+            false,
+          ),
+        );
+      }
+
+      // Fall back to simple fix mode on next attempt
+      logger.warn(
+        `Agentic loop failed, will retry with simple fix (attempt ${task.attemptCount}/${task.maxAttempts})`,
+      );
+      return this.updateStatus(task, "TESTS_FAILED");
+    }
+
+    // Check if we need to replan (the loop indicated a plan change)
+    if ((result as any).replanned) {
+      logger.info("Agentic loop replanned - transitioning to REPLANNING");
+      task = this.updateStatus(task, "REPLANNING");
+      // After replan, need to recode
+      return this.updateStatus(task, "CODING");
+    }
+
+    // Success - update task with the fixed diff
+    if (result.finalDiff) {
+      task.currentDiff = result.finalDiff;
+      task.commitMessage = `fix: apply agentic loop corrections (${result.iterations} iterations)`;
+
+      // Validate and apply diff
+      if (VALIDATE_DIFF) {
+        const validationResult = await this.validateAndApplyDiff(
+          task,
+          result.finalDiff,
+          task.commitMessage,
+          logger,
+          { applyToGitHub: !USE_FOREMAN },
+        );
+        if (!validationResult.success) {
+          return validationResult.task;
+        }
+      } else {
+        if (!USE_FOREMAN) {
+          await this.github.applyDiff(
+            task.githubRepo,
+            task.branchName!,
+            result.finalDiff,
+            task.commitMessage,
+          );
+        }
+      }
+    }
+
+    logger.info(`Agentic loop succeeded after ${result.iterations} iterations`);
+    return this.updateStatus(task, "CODING_DONE");
+  }
+
+  /**
    * Execute commands for a task
    */
   private async executeCommands(
@@ -1097,6 +1209,13 @@ export class Orchestrator {
       "Cannot run fix",
     );
 
+    const logger = this.getLogger(task);
+
+    // Use Agentic Loop if enabled (Issue #193, #219)
+    if (this.config.useAgenticLoop) {
+      return this.runAgenticLoop(task);
+    }
+
     // Store error before fix for learning (Issue #195)
     this.errorBeforeFix = task.lastError;
 
@@ -1149,7 +1268,6 @@ export class Orchestrator {
     };
 
     let fixerOutput;
-    const logger = this.getLogger(task);
 
     // Select models based on effort level and attempt count (escalation)
     const selectionContext: SelectionContext = {

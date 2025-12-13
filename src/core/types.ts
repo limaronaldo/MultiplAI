@@ -490,7 +490,8 @@ export interface TaskEvent {
     | "PR_OPENED"
     | "FAILED"
     | "COMPLETED"
-    | "CONSENSUS_DECISION"; // Multi-agent selection decision
+    | "CONSENSUS_DECISION" // Multi-agent selection decision
+    | "AGENTIC_LOOP_COMPLETE"; // Agentic loop finished (Issue #193)
   agent?: string;
   inputSummary?: string;
   outputSummary?: string;
@@ -567,6 +568,11 @@ export interface AutoDevConfig {
   allowedPaths: string[];
   blockedPaths: string[];
   autoDevLabel: string;
+  // Agentic Loop configuration (Issue #193)
+  useAgenticLoop: boolean;
+  agenticLoopMaxIterations: number;
+  agenticLoopMaxReplans: number;
+  agenticLoopConfidenceThreshold: number;
 }
 
 export const defaultConfig: AutoDevConfig = {
@@ -576,6 +582,19 @@ export const defaultConfig: AutoDevConfig = {
   allowedPaths: ["src/", "lib/", "tests/", "test/"],
   blockedPaths: [".env", "secrets/", ".github/workflows/"],
   autoDevLabel: "auto-dev",
+  // Agentic Loop defaults (Issue #193)
+  useAgenticLoop: process.env.USE_AGENTIC_LOOP === "true",
+  agenticLoopMaxIterations: parseInt(
+    process.env.AGENTIC_LOOP_MAX_ITERATIONS || "5",
+    10,
+  ),
+  agenticLoopMaxReplans: parseInt(
+    process.env.AGENTIC_LOOP_MAX_REPLANS || "2",
+    10,
+  ),
+  agenticLoopConfidenceThreshold: parseFloat(
+    process.env.AGENTIC_LOOP_CONFIDENCE_THRESHOLD || "0.6",
+  ),
 };
 
 // ============================================

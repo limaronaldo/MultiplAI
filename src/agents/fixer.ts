@@ -121,6 +121,7 @@ ${input.errorLogs}
 
 ${input.knowledgeGraphContext ? `\n## Knowledge Graph Context (best-effort)\n${input.knowledgeGraphContext}\n` : ""}
 ${ragContext ? `\n## Related Code (RAG)\n${ragContext}\n` : ""}
+${this.buildReflectionSection(input)}
 
 ## Current File Contents
 Note: depending on execution mode, these contents may reflect the base branch *before* the diff above is applied. Use \`currentDiff\` as the source of truth for the intended changes, and output a single complete diff that reaches the fixed final state.
@@ -276,5 +277,74 @@ Analyze the error and generate a fixed diff in JSON format.
     }
 
     return errors;
+  }
+
+  /**
+   * Build the reflection feedback section for the prompt
+   * Issue #217 - Use reflection insights to guide fix strategy
+   */
+  private buildReflectionSection(input: FixerInput): string {
+    if (!input.reflectionFeedback && !input.rootCause) {
+      return "";
+    }
+
+    let section = "\n## Reflection Analysis (Agentic Loop)\n\n";
+
+    if (input.rootCause) {
+      section += `**Root Cause**: ${input.rootCause}\n`;
+      section += this.getRootCauseGuidance(input.rootCause);
+    }
+
+    if (input.reflectionDiagnosis) {
+      section += `\n**Diagnosis**: ${input.reflectionDiagnosis}\n`;
+    }
+
+    if (input.reflectionFeedback) {
+      section += `\n**Feedback**: ${input.reflectionFeedback}\n`;
+    }
+
+    section += `
+**IMPORTANT**: The reflection analysis above provides insights into why previous attempts failed.
+Use this information to:
+1. Address the specific root cause identified
+2. Avoid repeating the same mistakes
+3. Apply the targeted fix strategy for this type of error
+`;
+
+    return section;
+  }
+
+  /**
+   * Get specific guidance based on root cause type
+   */
+  private getRootCauseGuidance(rootCause: ReflectionRootCause): string {
+    switch (rootCause) {
+      case "plan":
+        return `
+> The issue is with the plan itself, not the implementation.
+> Focus on: Adjusting the approach rather than just fixing syntax.
+> The fix may require a different strategy than originally planned.
+`;
+      case "code":
+        return `
+> The issue is in the code implementation.
+> Focus on: Fixing the specific code error while maintaining the original plan.
+> Look for typos, logic errors, missing imports, or incorrect API usage.
+`;
+      case "test":
+        return `
+> The issue is with the test setup or expectations, not the implementation.
+> Focus on: Ensuring the test correctly validates the intended behavior.
+> The implementation may be correct but the test needs adjustment.
+`;
+      case "environment":
+        return `
+> The issue is environmental (dependencies, config, permissions).
+> Focus on: Ensuring all dependencies are properly installed and configured.
+> Check for missing packages, incorrect versions, or configuration issues.
+`;
+      default:
+        return "";
+    }
   }
 }
