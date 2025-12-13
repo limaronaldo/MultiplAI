@@ -181,6 +181,12 @@ export class OpenRouterClient {
               max_tokens: params.maxTokens,
               temperature: params.temperature,
               reasoning: { effort },
+              // Prefer Parasail (US, zero data retention, no training)
+              // DeepSeek and Chutes both train on prompts
+              provider: {
+                order: ["Parasail"],
+                data_collection: "deny",
+              },
             }),
           },
         );
