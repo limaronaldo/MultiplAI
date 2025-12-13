@@ -49,7 +49,13 @@
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
+/*
+ * Hybrid Strategy (Option C): Mixed-model approach prioritizing cost savings.
+ * Routes simple tasks to efficient models (e.g., GPT-3.5) and complex tasks to premium models (e.g., Claude/GPT-4).
+ */
+
 import { EffortLevel } from "./types";
+
 
 export interface ModelTier {
   name: string;
@@ -61,32 +67,19 @@ export interface ModelTier {
 /**
  * GPT-5.2 Configurations
  *
+ *
  * All use model "gpt-5.2" but with different reasoning effort levels.
  * Internal config names for selection logic.
- *
- */
-
-import { EffortLevel } from "./types";
-
-/*
- * Hybrid Strategy (Option C): Mixed-model approach prioritizing cost savings.
- * Routes simple tasks to efficient models (e.g., GPT-3.5) and complex tasks to premium models (e.g., Claude/GPT-4).
- */
-
-/**
- * GPT-5.2 Configurations
- * - none: Minimal reasoning, fastest, cheapest
- * All use model "gpt-5.2" but with different reasoning effort levels.
- * Internal config names for selection logic.
- *
  *
  * GPT-5.2 Reasoning Effort Levels:
  * - none: Minimal reasoning, fastest, cheapest
  * - low: Light reasoning
-} as const;
-
-export type GPT52ConfigName = keyof typeof GPT52_CONFIGS;
-
+ * - medium: Balanced reasoning
+ * - high: Thorough reasoning (default for coding)
+ * - xhigh: Extended reasoning (for Fixer agent)
+ */
+export const GPT52_CONFIGS = {
+  "gpt-5.2-none": {
 /**
  * DeepSeek V3.2 Special Edition Configurations
  *
