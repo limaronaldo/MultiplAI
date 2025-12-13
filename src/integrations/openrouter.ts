@@ -163,9 +163,11 @@ export class OpenRouterClient {
     };
     const effort = effortMap[params.reasoningEffort || "medium"] || "medium";
 
-    // Triple max_tokens for DeepSeek Speciale (reasoning uses ~80% of tokens)
+    // For DeepSeek Speciale, reasoning uses ~80% of tokens
+    // Cap at 80K to leave room for input (context limit is 163K)
+    const DEEPSEEK_MAX_OUTPUT = 80000;
     const effectiveMaxTokens = params.model.includes("deepseek")
-      ? params.maxTokens * 3
+      ? Math.min(params.maxTokens * 3, DEEPSEEK_MAX_OUTPUT)
       : params.maxTokens;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
