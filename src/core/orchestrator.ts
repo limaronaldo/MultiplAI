@@ -444,17 +444,31 @@ export class Orchestrator {
       breakdownOutput.parallelGroups,
     );
 
-    // Persist orchestration state to session_memory
-    await db.initializeOrchestration(task.id, task.orchestrationState);
-    logger.info(
-      `Persisted orchestration state with ${subtaskDefinitions.length} subtasks`,
-    );
+        }
+      }
+    }
 
-    logger.info(
-      `Execution order: ${breakdownOutput.executionOrder.join(" -> ")}`,
-    );
-    if (breakdownOutput.parallelGroups) {
-      logger.info(
+    // Prepare previous feedback and failed approaches from learning context
+    let previousFeedback = "None";
+    let failedApproaches: string[] = [];
+    if (learningContext.includes("Known Failure Modes")) {
+      // Extract from learningContext - simplified extraction
+      const failureMatch = learningContext.match(/Known Failure Modes.*?(\n|$)/s);
+      if (failureMatch) previousFeedback = failureMatch[0].trim();
+      // For failedApproaches, extract avoidance strategies
+      const avoidMatches = learningContext.match(/Avoid: ([^\n]+)/g);
+      if (avoidMatches) failedApproaches = avoidMatches.map(m => m.replace('Avoid: ', ''));
+    }
+
+    // Chama o Planner Agent
+    const enrichedIssueBody = task.githubIssueBody + learningContext;
+    const plannerOutput = await this.planner.run({
+      issueTitle: task.githubIssueTitle,
+      issueBody: enrichedIssueBody,
+      repoContext,
+      previousFeedback,
+      failedApproaches,
+    });
         `Parallel groups: ${breakdownOutput.parallelGroups.map((g) => `[${g.join(", ")}]`).join(", ")}`,
       );
     }
