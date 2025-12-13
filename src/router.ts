@@ -226,6 +226,8 @@ async function handlePushEvent(payload: any): Promise<Response> {
 async function handleIssueEvent(payload: GitHubIssueEvent): Promise<Response> {
   const { action, issue, repository } = payload;
 
+  console.log(`[Webhook] Issue #${issue.number} action: ${action}`);
+
   // Sync newly opened issues to Linear (two-way sync)
   if (action === "opened" && linear) {
     const githubIssueUrl = `https://github.com/${repository.full_name}/issues/${issue.number}`;
