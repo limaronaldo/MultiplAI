@@ -1,44 +1,46 @@
-import { tools, getHandler } from './tools/registry';
-  const getGitHubClient = deps.getGitHubClient ?? createLazy(() => new GitHubClient());
-  const getPlannerAgent = deps.getPlannerAgent ?? createLazy(() => new PlannerAgent());
-  const getCoderAgent = deps.getCoderAgent ?? createLazy(() => new CoderAgent());
-  const getOrchestrator =
-    deps.getOrchestrator ?? createLazy(() => new Orchestrator());
-  const getDb = deps.getDb ?? (() => db);
-  const getStaticStore = deps.getStaticMemoryStore ?? getStaticMemoryStore;
-  const getLearningStore = deps.getLearningStore ?? (() => getLearningMemoryStore());
-  const startBackgroundTaskRunner =
-    deps.startBackgroundTaskRunner ??
-    ((task: Task) => {
-      const orchestrator = getOrchestrator();
-      void runTaskToStableState(task, orchestrator).catch((error) => {
-        console.error(`[MCP] Error processing task ${task.id}:`, error);
-      });
-    });
+import { analyzeTool, createAnalyzeHandler } from "./analyze.js";
+import { executeTool, createExecuteHandler } from "./execute.js";
+import { statusTool, createStatusHandler } from "./status.js";
+import { memoryTool, createMemoryHandler } from "./memory.js";
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools,
-  }));
+export type ToolHandler = (args: unknown) => Promise<unknown>;
 
-  // Register tool call handler
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const handlerCreator = getHandler(request.params.name);
-    const handler = handlerCreator({
-      getGitHubClient,
-      getPlannerAgent,
-      getCoderAgent,
-      getDb,
-      getStaticMemoryStore: getStaticStore,
-      getLearningStore,
-      startBackgroundTaskRunner,
-    });
-    const result = await handler(request.params.arguments ?? {});
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(result, null, 2),
-        },
-      ],
-    };
-  });
+// Keep deps type broad so server/tooling can pass a single deps object.
+// Each wrapper below forwards only the needed properties to the underlying tool.
+export type ToolHandlerCreator = (deps: any) => ToolHandler;
+
+export const tools = [analyzeTool, executeTool, statusTool, memoryTool];
+
+export const handlers: Record<string, ToolHandlerCreator> = {
+  [analyzeTool.name]: (deps) =>
+    createAnalyzeHandler({
+      getGitHubClient: deps.getGitHubClient,
+      getPlannerAgent: deps.getPlannerAgent,
+    }),
+  [executeTool.name]: (deps) =>
+    createExecuteHandler({
+      getGitHubClient: deps.getGitHubClient,
+      getPlannerAgent: deps.getPlannerAgent,
+      getCoderAgent: deps.getCoderAgent,
+      getDb: deps.getDb,
+      startBackgroundTaskRunner: deps.startBackgroundTaskRunner,
+    }),
+  [statusTool.name]: (deps) =>
+    createStatusHandler({
+      getDb: deps.getDb,
+    }),
+  [memoryTool.name]: (deps) =>
+    createMemoryHandler({
+      getStaticMemoryStore: deps.getStaticMemoryStore,
+      getLearningStore: deps.getLearningStore,
+      getDb: deps.getDb,
+    }),
+};
+
+export function getHandler(name: string): ToolHandlerCreator {
+  const handler = handlers[name];
+  if (!handler) {
+    throw new Error(`Unknown tool: ${name}`);
+  }
+  return handler;
+}
