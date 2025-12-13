@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, List, TypeAlias
 
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import HumanMessage, SystemMessage
+from multiplai.config import get_settings
+
 GraphState: TypeAlias = Dict[str, Any]
 
 if TYPE_CHECKING:
@@ -47,27 +51,65 @@ async def execute_issue(state: GraphState) -> GraphState:
         new_state["error"] = "No target_files specified; unable to execute issue."
         return new_state
 
-    # plan is intentionally unused in this placeholder implementation.
-    _ = plan
-
-    # TODO: Integrate Anthropic client to convert `plan` into an actual patch.
-    removed_prefix = "-" * 3 + " a/"
-    added_prefix = "+" * 3 + " b/"
-    hunk_header = "@" * 2 + " -0,0 +1,1 " + "@" * 2
-
-    diff_lines: List[str] = []
+    # Read the content of the target files
+    file_contents = {}
     for file_path in target_files:
-        diff_lines.extend(
-            [
-                f"{removed_prefix}{file_path}",
-                f"{added_prefix}{file_path}",
-                hunk_header,
-                "+# TODO: apply planned changes",
-                "",
-            ]
-        )
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                file_contents[file_path] = f.read()
+        except FileNotFoundError:
+            new_state: GraphState = dict(state)
+            new_state["status"] = "error"
+            new_state["error"] = f"File not found: {file_path}"
+            return new_state
+        except Exception as e:
+            new_state: GraphState = dict(state)
+            new_state["status"] = "error"
+            new_state["error"] = f"Error reading file {file_path}: {e}"
+            return new_state
 
-    unified_diff = "\n".join(diff_lines).rstrip("\n") + "\n"
+    settings = get_settings()
+    llm = ChatAnthropic(api_key=settings.anthropic_api_key, model="claude-3-5-sonnet-20240620")
+
+    system_prompt = (
+        "You are an expert software engineer. Your task is to generate a unified diff "
+        "to apply the planned changes to the codebase. "
+        "You will be provided with the plan and the content of the target files. "
+        "Output ONLY the unified diff. Do not include any explanations or markdown formatting."
+    )
+
+    user_content = f"Plan:\n{plan}\n\n"
+    for file_path, content in file_contents.items():
+        user_content += f"File: {file_path}\nContent:\n{content}\n\n"
+
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_content),
+    ]
+
+    try:
+        response = await llm.ainvoke(messages)
+        unified_diff = response.content
+        if isinstance(unified_diff, list):
+             # Handle case where content might be list of blocks (though unlikely for text model without tools)
+             unified_diff = "\n".join([block.text for block in unified_diff if hasattr(block, "text")])
+
+        # Strip markdown code blocks if present
+        if unified_diff.startswith("```diff"):
+            unified_diff = unified_diff[7:]
+        elif unified_diff.startswith("```"):
+            unified_diff = unified_diff[3:]
+
+        if unified_diff.endswith("```"):
+            unified_diff = unified_diff[:-3]
+
+        unified_diff = unified_diff.strip()
+
+    except Exception as e:
+        new_state: GraphState = dict(state)
+        new_state["status"] = "error"
+        new_state["error"] = f"Error generating patch: {e}"
+        return new_state
 
     new_state: GraphState = dict(state)
     new_state["diff"] = unified_diff
