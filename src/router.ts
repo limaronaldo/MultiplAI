@@ -1477,6 +1477,493 @@ route("POST", "/api/linear/sync", async (req) => {
   }
 });
 
+// ============================================
+// Prompt Optimization API
+// ============================================
+
+import {
+  getPromptOptimizer,
+  isPromptOptimizationEnabled,
+} from "./core/prompt-optimization";
+
+/**
+ * GET /api/prompts - List all prompts with their versions
+ */
+route("GET", "/api/prompts", async (req) => {
+  if (!isPromptOptimizationEnabled()) {
+    return Response.json(
+      {
+        error: "Prompt optimization not enabled",
+        hint: "Set ENABLE_PROMPT_OPTIMIZATION=true",
+      },
+      { status: 503 },
+    );
+  }
+
+  const optimizer = getPromptOptimizer();
+  const promptIds = ["planner", "coder", "fixer", "reviewer", "breakdown"];
+
+  const prompts = await Promise.all(
+    promptIds.map(async (id) => {
+      const versions = await optimizer.listPromptVersions(id);
+      const active = versions.find((v) => v.isActive);
+      return {
+        id,
+        activeVersion: active?.version || null,
+        totalVersions: versions.length,
+        successRate: active?.successRate || null,
+        tasksExecuted: active?.tasksExecuted || 0,
+      };
+    }),
+  );
+
+  return Response.json({ prompts });
+});
+
+/**
+ * GET /api/prompts/:id/versions - List versions for a prompt
+ */
+route("GET", "/api/prompts/:id/versions", async (req) => {
+  if (!isPromptOptimizationEnabled()) {
+    return Response.json(
+      { error: "Prompt optimization not enabled" },
+      { status: 503 },
+    );
+  }
+
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const promptId = pathParts[3]; // /api/prompts/:id/versions
+
+  const optimizer = getPromptOptimizer();
+  const versions = await optimizer.listPromptVersions(promptId);
+
+  return Response.json({ promptId, versions });
+});
+
+/**
+ * POST /api/prompts/:id/export - Export dataset for optimization
+ */
+route("POST", "/api/prompts/:id/export", async (req) => {
+  if (!isPromptOptimizationEnabled()) {
+    return Response.json(
+      { error: "Prompt optimization not enabled" },
+      { status: 503 },
+    );
+  }
+
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const promptId = pathParts[3];
+
+  const body = await req.json().catch(() => ({}));
+  const { minRows, onlyAnnotated, format } = body as {
+    minRows?: number;
+    onlyAnnotated?: boolean;
+    format?: "json" | "jsonl";
+  };
+
+  const optimizer = getPromptOptimizer();
+
+  try {
+    if (format === "jsonl") {
+      const jsonl = await optimizer.exportAsJSONL(promptId);
+      return new Response(jsonl, {
+        headers: {
+          "Content-Type": "application/jsonl",
+          "Content-Disposition": `attachment; filename="${promptId}_dataset.jsonl"`,
+        },
+      });
+    }
+
+    const dataset = await optimizer.exportDataset(promptId, {
+      minRows,
+      onlyAnnotated,
+    });
+    return Response.json(dataset);
+  } catch (error) {
+    return Response.json({ error: String(error) }, { status: 400 });
+  }
+});
+
+/**
+ * POST /api/prompts/:id/import - Import optimized prompt
+ */
+route("POST", "/api/prompts/:id/import", async (req) => {
+  if (!isPromptOptimizationEnabled()) {
+    return Response.json(
+      { error: "Prompt optimization not enabled" },
+      { status: 503 },
+    );
+  }
+
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const promptId = pathParts[3];
+
+  const body = await req.json();
+  const { content, metadata } = body as {
+    content: string;
+    metadata?: Record<string, unknown>;
+  };
+
+  if (!content) {
+    return Response.json({ error: "Missing content field" }, { status: 400 });
+  }
+
+  const optimizer = getPromptOptimizer();
+  const version = await optimizer.importOptimizedPrompt(
+    promptId,
+    content,
+    metadata,
+  );
+
+  return Response.json({
+    ok: true,
+    message: `Imported new version ${version.version} for ${promptId}`,
+    version,
+  });
+});
+
+/**
+ * POST /api/prompts/:id/ab-test - Start A/B test
+ */
+route("POST", "/api/prompts/:id/ab-test", async (req) => {
+  if (!isPromptOptimizationEnabled()) {
+    return Response.json(
+      { error: "Prompt optimization not enabled" },
+      { status: 503 },
+    );
+  }
+
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const promptId = pathParts[3];
+
+  const body = await req.json();
+  const { versionA, versionB, trafficSplit } = body as {
+    versionA: number;
+    versionB: number;
+    trafficSplit?: number;
+  };
+
+  if (!versionA || !versionB) {
+    return Response.json(
+      { error: "Missing versionA or versionB" },
+      { status: 400 },
+    );
+  }
+
+  const optimizer = getPromptOptimizer();
+
+  try {
+    const test = await optimizer.startABTest(
+      promptId,
+      versionA,
+      versionB,
+      trafficSplit,
+    );
+    return Response.json({
+      ok: true,
+      message: `Started A/B test for ${promptId}`,
+      test,
+    });
+  } catch (error) {
+    return Response.json({ error: String(error) }, { status: 400 });
+  }
+});
+
+/**
+ * GET /api/prompts/:id/ab-test/results - Get A/B test results
+ */
+route("GET", "/api/prompts/:id/ab-test/results", async (req) => {
+  if (!isPromptOptimizationEnabled()) {
+    return Response.json(
+      { error: "Prompt optimization not enabled" },
+      { status: 503 },
+    );
+  }
+
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const promptId = pathParts[3];
+
+  const optimizer = getPromptOptimizer();
+  const test = await optimizer.getRunningABTest(promptId);
+
+  if (!test) {
+    return Response.json(
+      { error: "No running A/B test found" },
+      { status: 404 },
+    );
+  }
+
+  return Response.json({ promptId, test });
+});
+
+/**
+ * POST /api/prompts/:id/deploy/:version - Deploy specific version
+ */
+route("POST", "/api/prompts/:id/deploy/:version", async (req) => {
+  if (!isPromptOptimizationEnabled()) {
+    return Response.json(
+      { error: "Prompt optimization not enabled" },
+      { status: 503 },
+    );
+  }
+
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const promptId = pathParts[3];
+  const version = parseInt(pathParts[5], 10);
+
+  if (isNaN(version)) {
+    return Response.json({ error: "Invalid version number" }, { status: 400 });
+  }
+
+  const optimizer = getPromptOptimizer();
+  await optimizer.deployVersion(promptId, version);
+
+  return Response.json({
+    ok: true,
+    message: `Deployed version ${version} for ${promptId}`,
+  });
+});
+
+// ============================================
+// Batch API
+// ============================================
+
+import {
+  getBatchJobRunner,
+  isBatchApiEnabled,
+  type BatchRequest,
+} from "./integrations/openai-batch";
+
+/**
+ * POST /api/batch/create - Create a new batch job
+ */
+route("POST", "/api/batch/create", async (req) => {
+  if (!isBatchApiEnabled()) {
+    return Response.json(
+      { error: "Batch API not enabled", hint: "Set ENABLE_BATCH_API=true" },
+      { status: 503 },
+    );
+  }
+
+  const body = await req.json();
+  const { jobType, requests, metadata } = body as {
+    jobType:
+      | "task_processing"
+      | "eval_run"
+      | "embedding_compute"
+      | "reprocess_failed";
+    requests: BatchRequest[];
+    metadata?: Record<string, unknown>;
+  };
+
+  if (!jobType || !requests || !Array.isArray(requests)) {
+    return Response.json(
+      { error: "Missing jobType or requests array" },
+      { status: 400 },
+    );
+  }
+
+  const runner = getBatchJobRunner();
+  const job = await runner.createJob(jobType, requests, metadata);
+
+  return Response.json({
+    ok: true,
+    message: `Created batch job with ${requests.length} requests`,
+    job,
+  });
+});
+
+/**
+ * GET /api/batch/:id - Get batch job status
+ */
+route("GET", "/api/batch/:id", async (req) => {
+  if (!isBatchApiEnabled()) {
+    return Response.json({ error: "Batch API not enabled" }, { status: 503 });
+  }
+
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const id = pathParts[3];
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid job ID format" }, { status: 400 });
+  }
+
+  const runner = getBatchJobRunner();
+  const job = await runner.getJob(id);
+
+  if (!job) {
+    return Response.json({ error: "Job not found" }, { status: 404 });
+  }
+
+  // Sync status from OpenAI if in progress
+  if (job.status === "submitted" || job.status === "in_progress") {
+    const updated = await runner.syncJobStatus(id);
+    return Response.json({ job: updated });
+  }
+
+  return Response.json({ job });
+});
+
+/**
+ * GET /api/batch/:id/results - Get batch job results
+ */
+route("GET", "/api/batch/:id/results", async (req) => {
+  if (!isBatchApiEnabled()) {
+    return Response.json({ error: "Batch API not enabled" }, { status: 503 });
+  }
+
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const id = pathParts[3];
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid job ID format" }, { status: 400 });
+  }
+
+  const runner = getBatchJobRunner();
+  const job = await runner.getJob(id);
+
+  if (!job) {
+    return Response.json({ error: "Job not found" }, { status: 404 });
+  }
+
+  const tasks = await runner.getJobTasks(id);
+
+  return Response.json({
+    job,
+    tasks,
+    summary: {
+      total: tasks.length,
+      completed: tasks.filter((t) => t.status === "completed").length,
+      failed: tasks.filter((t) => t.status === "failed").length,
+      pending: tasks.filter((t) => t.status === "pending").length,
+    },
+  });
+});
+
+/**
+ * POST /api/batch/:id/submit - Submit a pending batch job to OpenAI
+ */
+route("POST", "/api/batch/:id/submit", async (req) => {
+  if (!isBatchApiEnabled()) {
+    return Response.json({ error: "Batch API not enabled" }, { status: 503 });
+  }
+
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const id = pathParts[3];
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid job ID format" }, { status: 400 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const { requests, endpoint } = body as {
+    requests: BatchRequest[];
+    endpoint?: "/v1/responses" | "/v1/chat/completions";
+  };
+
+  if (!requests || !Array.isArray(requests)) {
+    return Response.json({ error: "Missing requests array" }, { status: 400 });
+  }
+
+  const runner = getBatchJobRunner();
+  const job = await runner.submitJob(id, requests, endpoint);
+
+  return Response.json({
+    ok: true,
+    message: `Submitted batch job to OpenAI`,
+    job,
+  });
+});
+
+/**
+ * POST /api/batch/:id/cancel - Cancel a batch job
+ */
+route("POST", "/api/batch/:id/cancel", async (req) => {
+  if (!isBatchApiEnabled()) {
+    return Response.json({ error: "Batch API not enabled" }, { status: 503 });
+  }
+
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const id = pathParts[3];
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid job ID format" }, { status: 400 });
+  }
+
+  const runner = getBatchJobRunner();
+  const job = await runner.cancelJob(id);
+
+  return Response.json({
+    ok: true,
+    message: "Batch job cancelled",
+    job,
+  });
+});
+
+/**
+ * GET /api/batch - List batch jobs
+ */
+route("GET", "/api/batch", async (req) => {
+  if (!isBatchApiEnabled()) {
+    return Response.json({ error: "Batch API not enabled" }, { status: 503 });
+  }
+
+  const url = new URL(req.url);
+  const status = url.searchParams.get("status") as any;
+  const jobType = url.searchParams.get("jobType") as any;
+  const limit = parseInt(url.searchParams.get("limit") || "20", 10);
+
+  const runner = getBatchJobRunner();
+  const jobs = await runner.listJobs({ status, jobType, limit });
+
+  return Response.json({ jobs, count: jobs.length });
+});
+
+/**
+ * POST /api/batch/sync - Sync all in-progress jobs with OpenAI
+ */
+route("POST", "/api/batch/sync", async (req) => {
+  if (!isBatchApiEnabled()) {
+    return Response.json({ error: "Batch API not enabled" }, { status: 503 });
+  }
+
+  const runner = getBatchJobRunner();
+  const jobsToSync = await runner.getJobsNeedingSync();
+
+  const results = await Promise.all(
+    jobsToSync.map(async (job) => {
+      try {
+        const updated = await runner.syncJobStatus(job.id);
+
+        // Process completed jobs
+        if (updated.status === "completed" && updated.outputFileId) {
+          await runner.processCompletedJob(job.id);
+        }
+
+        return { id: job.id, status: updated.status, synced: true };
+      } catch (error) {
+        return { id: job.id, error: String(error), synced: false };
+      }
+    }),
+  );
+
+  return Response.json({
+    ok: true,
+    message: `Synced ${results.filter((r) => r.synced).length}/${jobsToSync.length} jobs`,
+    results,
+  });
+});
+
 // Endpoint para Claude Code: lista issues aguardando review
 route("GET", "/api/review/pending", async (req) => {
   if (!linear) {
