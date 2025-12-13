@@ -23,6 +23,7 @@ const RETRYABLE_ERRORS = [
   "ECONNRESET",
   "ETIMEDOUT",
   "socket hang up",
+  "429", // Rate limit
   "502",
   "503",
   "529",

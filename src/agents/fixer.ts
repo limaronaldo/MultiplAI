@@ -69,7 +69,7 @@ export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
     // DeepSeek Speciale - cheap reasoning for debugging
     super({
       model: modelOverride || DEFAULT_FIXER_MODEL,
-      maxTokens: 65536,
+      maxTokens: 32768,
       temperature: 0.2,
     });
   }

@@ -586,6 +586,6 @@ export interface JobRunnerConfig {
 }
 
 export const defaultJobRunnerConfig: JobRunnerConfig = {
-  maxParallel: 3,
+  maxParallel: 4,
   continueOnError: true,
 };
