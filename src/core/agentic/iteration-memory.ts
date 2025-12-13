@@ -1,4 +1,4 @@
-interface AttemptRecord {
+export interface AttemptRecord {
   approach: string;
   success: boolean;
   details?: string;
