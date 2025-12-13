@@ -742,6 +742,67 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_vtr_created ON visual_test_runs(created_at)`;
   console.log("✅ Created visual test runs table");
 
+  // Model benchmarks table (v0.14) - aggregated model performance metrics
+  await sql`
+    CREATE TABLE IF NOT EXISTS model_benchmarks (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+      -- Model identification
+      model_id VARCHAR(100) NOT NULL,
+      agent VARCHAR(50) NOT NULL,
+
+      -- Time period for aggregation
+      period_start TIMESTAMPTZ NOT NULL,
+      period_end TIMESTAMPTZ NOT NULL,
+      period_type VARCHAR(20) NOT NULL DEFAULT 'day',
+
+      -- Task counts
+      total_tasks INTEGER NOT NULL DEFAULT 0,
+      successful_tasks INTEGER NOT NULL DEFAULT 0,
+      failed_tasks INTEGER NOT NULL DEFAULT 0,
+
+      -- Token metrics
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      avg_tokens_per_task DECIMAL(10,2),
+      total_input_tokens INTEGER DEFAULT 0,
+      total_output_tokens INTEGER DEFAULT 0,
+
+      -- Response time metrics
+      total_duration_ms BIGINT NOT NULL DEFAULT 0,
+      avg_duration_ms INTEGER,
+      p50_duration_ms INTEGER,
+      p95_duration_ms INTEGER,
+      p99_duration_ms INTEGER,
+
+      -- Cost metrics
+      total_cost_usd DECIMAL(10,4) DEFAULT 0,
+      avg_cost_per_task DECIMAL(10,4),
+
+      -- Quality metrics
+      avg_attempts DECIMAL(4,2),
+      first_try_success_rate DECIMAL(5,2),
+
+      -- Complexity breakdown
+      xs_tasks INTEGER DEFAULT 0,
+      s_tasks INTEGER DEFAULT 0,
+      m_tasks INTEGER DEFAULT 0,
+      l_tasks INTEGER DEFAULT 0,
+
+      -- Metadata
+      repo VARCHAR(255),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+
+      UNIQUE(model_id, agent, period_start, period_type, repo)
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_mb_model ON model_benchmarks(model_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_mb_agent ON model_benchmarks(agent)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_mb_period ON model_benchmarks(period_start, period_end)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_mb_repo ON model_benchmarks(repo) WHERE repo IS NOT NULL`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_mb_type ON model_benchmarks(period_type)`;
+  console.log("✅ Created model benchmarks table");
+
   console.log("\n✨ Migrations complete!");
 
   await sql.end();

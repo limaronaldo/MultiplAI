@@ -3050,6 +3050,262 @@ route("GET", "/api/evals/recent", async (req) => {
   return Response.json({ evals, count: evals.length });
 });
 
+// ============================================
+// Model Benchmarks API (Issue #346)
+// ============================================
+
+import { getBenchmarkCollector, getBenchmarkAnalyzer } from "./core/benchmarks";
+
+/**
+ * GET /api/benchmarks - Get benchmark summary
+ * Query params:
+ *   - days: number of days to look back (default: 30)
+ *   - repo: optional filter by repository
+ */
+route("GET", "/api/benchmarks", async (req) => {
+  const url = new URL(req.url);
+  const days = parseInt(url.searchParams.get("days") || "30", 10);
+  const repo = url.searchParams.get("repo") || undefined;
+
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  try {
+    const analyzer = getBenchmarkAnalyzer();
+    const summary = await analyzer.getSummary({ since, repo });
+
+    return Response.json(summary);
+  } catch (error) {
+    console.error("[API] Failed to get benchmark summary:", error);
+    return Response.json(
+      { error: "Failed to fetch benchmark summary" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/benchmarks/models - List all models with benchmarks
+ */
+route("GET", "/api/benchmarks/models", async () => {
+  try {
+    const analyzer = getBenchmarkAnalyzer();
+    const models = await analyzer.getModels();
+
+    return Response.json({ models, count: models.length });
+  } catch (error) {
+    console.error("[API] Failed to get benchmark models:", error);
+    return Response.json(
+      { error: "Failed to fetch benchmark models" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/benchmarks/compare - Compare model performance
+ * Query params:
+ *   - days: number of days to look back (default: 30)
+ *   - repo: optional filter by repository
+ *   - agent: optional filter by agent type
+ *   - minTasks: minimum tasks required (default: 1)
+ */
+route("GET", "/api/benchmarks/compare", async (req) => {
+  const url = new URL(req.url);
+  const days = parseInt(url.searchParams.get("days") || "30", 10);
+  const repo = url.searchParams.get("repo") || undefined;
+  const agent = url.searchParams.get("agent") || undefined;
+  const minTasks = parseInt(url.searchParams.get("minTasks") || "1", 10);
+
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  try {
+    const analyzer = getBenchmarkAnalyzer();
+    const comparisons = await analyzer.compareModels({
+      since,
+      repo,
+      agent,
+      minTasks,
+    });
+
+    return Response.json({
+      models: comparisons,
+      count: comparisons.length,
+      config: { days, repo: repo || null, agent: agent || null, minTasks },
+    });
+  } catch (error) {
+    console.error("[API] Failed to compare models:", error);
+    return Response.json(
+      { error: "Failed to compare models" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/benchmarks/trends - Get historical performance trends
+ * Query params:
+ *   - days: number of days to look back (default: 30)
+ *   - modelId: optional filter by model
+ *   - periodType: day, week, month (default: day)
+ *   - repo: optional filter by repository
+ */
+route("GET", "/api/benchmarks/trends", async (req) => {
+  const url = new URL(req.url);
+  const days = parseInt(url.searchParams.get("days") || "30", 10);
+  const modelId = url.searchParams.get("modelId") || undefined;
+  const periodType = (url.searchParams.get("periodType") || "day") as
+    | "day"
+    | "week"
+    | "month";
+  const repo = url.searchParams.get("repo") || undefined;
+
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  try {
+    const analyzer = getBenchmarkAnalyzer();
+    const trends = await analyzer.getTrends({
+      modelId,
+      since,
+      periodType,
+      repo,
+    });
+
+    return Response.json({
+      trends,
+      count: trends.length,
+      config: {
+        days,
+        modelId: modelId || null,
+        periodType,
+        repo: repo || null,
+      },
+    });
+  } catch (error) {
+    console.error("[API] Failed to get benchmark trends:", error);
+    return Response.json(
+      { error: "Failed to fetch benchmark trends" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/benchmarks/recent - Get recent benchmark records
+ * Query params:
+ *   - limit: max results (default: 50)
+ *   - modelId: optional filter by model
+ *   - agent: optional filter by agent
+ *   - repo: optional filter by repository
+ */
+route("GET", "/api/benchmarks/recent", async (req) => {
+  const url = new URL(req.url);
+  const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+  const modelId = url.searchParams.get("modelId") || undefined;
+  const agent = url.searchParams.get("agent") || undefined;
+  const repo = url.searchParams.get("repo") || undefined;
+
+  try {
+    const analyzer = getBenchmarkAnalyzer();
+    const benchmarks = await analyzer.getRecentBenchmarks({
+      limit,
+      modelId,
+      agent,
+      repo,
+    });
+
+    return Response.json({ benchmarks, count: benchmarks.length });
+  } catch (error) {
+    console.error("[API] Failed to get recent benchmarks:", error);
+    return Response.json(
+      { error: "Failed to fetch recent benchmarks" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/benchmarks/aggregate - Trigger benchmark aggregation
+ * Body: { days?: number, periodType?: string, repo?: string }
+ */
+route("POST", "/api/benchmarks/aggregate", async (req) => {
+  const body = await req.json().catch(() => ({}));
+  const { days, periodType, repo } = body as {
+    days?: number;
+    periodType?: "hour" | "day" | "week" | "month";
+    repo?: string;
+  };
+
+  const since = new Date(Date.now() - (days || 30) * 24 * 60 * 60 * 1000);
+
+  try {
+    const collector = getBenchmarkCollector();
+    const count = await collector.aggregateBenchmarks({
+      since,
+      periodType: periodType || "day",
+      repo,
+    });
+
+    return Response.json({
+      ok: true,
+      message: `Aggregated ${count} benchmark records`,
+      aggregated: count,
+    });
+  } catch (error) {
+    console.error("[API] Failed to aggregate benchmarks:", error);
+    return Response.json(
+      { error: "Failed to aggregate benchmarks" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/benchmarks/model/:modelId - Get benchmarks for a specific model
+ */
+route("GET", "/api/benchmarks/model/:modelId", async (req) => {
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const modelId = decodeURIComponent(pathParts[pathParts.length - 1]);
+  const days = parseInt(url.searchParams.get("days") || "30", 10);
+
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  try {
+    const analyzer = getBenchmarkAnalyzer();
+
+    // Get comparison for this model
+    const modelComparison = (
+      await analyzer.compareModels({ since, minTasks: 0 })
+    ).find((m) => m.modelId === modelId);
+
+    // Get trends for this model
+    const trends = await analyzer.getTrends({
+      modelId,
+      since,
+      periodType: "day",
+    });
+
+    // Get recent benchmarks
+    const recent = await analyzer.getRecentBenchmarks({
+      modelId,
+      limit: 10,
+    });
+
+    return Response.json({
+      modelId,
+      summary: modelComparison || null,
+      trends,
+      recent,
+    });
+  } catch (error) {
+    console.error("[API] Failed to get model benchmarks:", error);
+    return Response.json(
+      { error: "Failed to fetch model benchmarks" },
+      { status: 500 },
+    );
+  }
+});
+
 // Endpoint para Claude Code: lista issues aguardando review
 route("GET", "/api/review/pending", async (req) => {
   if (!linear) {
