@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ReflectionRootCause } from "./agentic/types";
 export * from "./agentic/types";
 
 // ============================================
@@ -43,6 +44,8 @@ export const TaskStatus = {
   TESTS_PASSED: "TESTS_PASSED",
   TESTS_FAILED: "TESTS_FAILED",
   FIXING: "FIXING",
+  REFLECTING: "REFLECTING",
+  REPLANNING: "REPLANNING",
   REVIEWING: "REVIEWING",
   REVIEW_APPROVED: "REVIEW_APPROVED",
   REVIEW_REJECTED: "REVIEW_REJECTED",
@@ -91,6 +94,7 @@ export interface Task {
   attemptCount: number;
   maxAttempts: number;
   lastError?: string;
+  rootCause?: ReflectionRootCause | null;
 
   // Parent-child relationship (for orchestrated tasks)
   parentTaskId?: string | null;

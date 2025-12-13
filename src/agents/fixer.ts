@@ -1,5 +1,9 @@
 import { BaseAgent } from "./base";
-import { FixerOutput, FixerOutputSchema } from "../core/types";
+import {
+  FixerOutput,
+  FixerOutputSchema,
+  type ReflectionRootCause,
+} from "../core/types";
 import { ragRuntime, type RagSearchResult } from "../services/rag/rag-runtime";
 
 interface FixerInput {
@@ -11,6 +15,10 @@ interface FixerInput {
   knowledgeGraphContext?: string;
   // RAG context (optional)
   repoFullName?: string;
+  // Reflection feedback (Issue #217 - Agentic Loop integration)
+  reflectionFeedback?: string;
+  rootCause?: ReflectionRootCause;
+  reflectionDiagnosis?: string;
 }
 
 // Default fixer model - Kimi K2 Thinking for tool-oriented debugging
