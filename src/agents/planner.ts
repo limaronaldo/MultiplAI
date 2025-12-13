@@ -1,5 +1,6 @@
 import { BaseAgent } from "./base";
 import { PlannerOutput, PlannerOutputSchema } from "../core/types";
+import { RagService } from "../services/rag";
 
 // Default planner model - can be overridden via env var
 // Planner uses Kimi K2 Thinking for agentic planning with 262K context
@@ -41,47 +42,64 @@ When the change involves 3+ files, include a "multiFilePlan" with:
 ### Dependency Layers (execute in this order):
 1. **types**: Type definitions, interfaces, schemas (no deps)
 2. **utils**: Utility functions (depend on types)
-3. **services**: Business logic (depend on types, utils)
-4. **components**: UI/handlers (depend on services)
-5. **tests**: Test files (depend on all above)
-
-## Command Execution (optional)
-
+export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
+  constructor() {
+    // Kimi K2 Thinking - agentic reasoning model optimized for planning
+    this.ragService = new RagService();
+    super({
+      model: DEFAULT_PLANNER_MODEL,
+      temperature: 0.3,
 If the task requires running shell commands (installing packages, migrations, etc.), include:
 - "commands": Array of commands to execute
-- "commandOrder": "before_diff" or "after_diff"
+  }
 
-### Available Command Types (prefer bun_add for this project):
-- bun_add: { type: "bun_add", packages: ["zod"], dev?: true }  // PREFERRED for package installation
-- npm_install: { type: "npm_install", packages: ["lodash", "@types/lodash"], dev?: true }
-- pnpm_add: { type: "pnpm_add", packages: ["axios"], dev?: true }
-- yarn_add: { type: "yarn_add", packages: ["react"], dev?: true }
-- prisma_migrate: { type: "prisma_migrate", name: "add_users_table" }
-- prisma_generate: { type: "prisma_generate" }
-- prisma_db_push: { type: "prisma_db_push" }
-- drizzle_generate: { type: "drizzle_generate" }
-- drizzle_migrate: { type: "drizzle_migrate" }
-- create_directory: { type: "create_directory", path: "src/new-feature" }
-- typecheck: { type: "typecheck" }
-- lint_fix: { type: "lint_fix" }
-- format: { type: "format" }
+  async run(input: PlannerInput): Promise<PlannerOutput> {
+    let ragContext = "";
+    const userPrompt = `
+## Issue Title
+${input.issueTitle}
+---
 
-### When to use commands:
-- Package installation: Include BEFORE diff (so code can import them)
-- Prisma/Drizzle generate: Include AFTER diff (after schema changes)
-- Directory creation: Include BEFORE diff
-- Formatting/linting: Include AFTER diff
+Analyze this issue and provide your implementation plan as JSON.
+`.trim();
 
-Respond ONLY with valid JSON matching this schema:
-{
-  "definitionOfDone": ["string array of acceptance criteria"],
-  "plan": ["string array of implementation steps"],
-  "targetFiles": ["string array of file paths"],
-  "estimatedComplexity": "XS" | "S" | "M" | "L" | "XL",
-  "risks": ["optional array of potential issues"],
-  "commands": [  // Optional: commands to run
-    { "type": "bun_add", "packages": ["zod"], "dev": false },
-    { "type": "prisma_generate" }
+    // Check if RAG is initialized and perform search
+    if (this.ragService.isInitialized()) {
+      const ragResults = await this.ragService.search(input.issueBody);
+      if (ragResults.snippets) {
+        ragContext += `\n\n## Relevant Code Snippets from RAG Search\n${ragResults.snippets}\n`;
+      }
+      if (ragResults.suggestedFiles) {
+        ragContext += `\n## Suggested Files from RAG\n${ragResults.suggestedFiles.map(f => `- ${f}`).join('\n')}\n`;
+      }
+    }
+
+    const enrichedIssueBody = (input.issueBody || "No description provided") + ragContext;
+
+    const response = await this.complete(SYSTEM_PROMPT, userPrompt);
+
+      `[Planner] Response preview: ${String(response).slice(0, 500)}...`,
+    );
+
+    // Handle case where response is already an object (some API responses)
+    if (typeof response === "object" && response !== null) {
+      console.log(
+        `[Planner] Response is already an object, validating directly`,
+      );
+
+    const parsed = this.parseJSON<PlannerOutput>(response);
+
+    // Debug: Log parsed result
+    console.log(
+      `[Planner] Parsed result keys: ${Object.keys(parsed || {}).join(", ")}`,
+    );
+
+    // Validate with Zod
+    return PlannerOutputSchema.parse(parsed);
+  }
+}
+
+  private ragService: RagService;
   ],
   "commandOrder": "before_diff" | "after_diff",  // When to run commands
   "multiFilePlan": {  // Include for M+ complexity with 3+ files
