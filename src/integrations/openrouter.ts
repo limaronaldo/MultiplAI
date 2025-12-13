@@ -6,6 +6,9 @@ interface CompletionParams {
   temperature: number;
   systemPrompt: string;
   userPrompt: string;
+  // Reasoning effort for models like DeepSeek V3.2 Speciale
+  // Maps: none→low, low→low, medium→medium, high→high, xhigh→high
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
 }
 
 // Retry configuration
@@ -51,13 +54,18 @@ export class OpenRouterClient {
   }
 
   async complete(params: CompletionParams): Promise<string> {
+    // Use raw fetch for reasoning models (SDK doesn't support reasoning parameter yet)
+    if (params.reasoningEffort) {
+      return this.completeWithReasoning(params);
+    }
+
     const startTime = Date.now();
     let lastError: Error | null = null;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
-        // Use streaming to get usage info including reasoning tokens
-        const stream = await this.client.chat.send({
+        // Build request options
+        const requestOptions: any = {
           model: params.model,
           messages: [
             {
@@ -75,7 +83,12 @@ export class OpenRouterClient {
           streamOptions: {
             includeUsage: true,
           },
-        });
+        };
+
+        // Use streaming to get usage info including reasoning tokens
+        const stream = (await this.client.chat.send(
+          requestOptions,
+        )) as unknown as AsyncIterable<any>;
 
         let content = "";
         let tokensUsed = 0;
@@ -126,6 +139,94 @@ export class OpenRouterClient {
     }
 
     // Should never reach here, but TypeScript needs it
+    throw lastError || new Error("Unknown error after retries");
+  }
+
+  /**
+   * Complete with reasoning effort using raw fetch (SDK doesn't support reasoning yet)
+   * Used for DeepSeek V3.2 Speciale and other reasoning models
+   */
+  private async completeWithReasoning(
+    params: CompletionParams,
+  ): Promise<string> {
+    const startTime = Date.now();
+    let lastError: Error | null = null;
+
+    // Map effort levels to OpenRouter's supported values (low/medium/high)
+    const effortMap: Record<string, "low" | "medium" | "high"> = {
+      none: "low",
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "high",
+    };
+    const effort = effortMap[params.reasoningEffort || "medium"] || "medium";
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const response = await fetch(
+          "https://openrouter.ai/api/v1/chat/completions",
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: params.model,
+              messages: [
+                { role: "system", content: params.systemPrompt },
+                { role: "user", content: params.userPrompt },
+              ],
+              max_tokens: params.maxTokens,
+              temperature: params.temperature,
+              reasoning: { effort },
+            }),
+          },
+        );
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(
+            `OpenRouter API error: ${response.status} - ${JSON.stringify(errorData)}`,
+          );
+        }
+
+        const data = await response.json();
+        const duration = Date.now() - startTime;
+
+        const content = data.choices?.[0]?.message?.content || "";
+        const tokensUsed = data.usage?.total_tokens || 0;
+        const reasoningTokens =
+          data.usage?.completion_tokens_details?.reasoning_tokens || 0;
+
+        let logMsg = `[LLM] OpenRouter/${params.model} (${effort}) | ${tokensUsed} tokens | ${duration}ms`;
+        if (reasoningTokens > 0) {
+          logMsg += ` | reasoning: ${reasoningTokens}`;
+        }
+        console.log(logMsg);
+
+        if (!content) {
+          throw new Error("No content in response");
+        }
+
+        return content;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        if (isRetryableError(error) && attempt < MAX_RETRIES) {
+          const delay = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+          console.warn(
+            `[LLM] OpenRouter/${params.model} attempt ${attempt}/${MAX_RETRIES} failed: ${lastError.message}. Retrying in ${delay}ms...`,
+          );
+          await sleep(delay);
+        } else {
+          console.error("[LLM] OpenRouter Error:", error);
+          throw error;
+        }
+      }
+    }
+
     throw lastError || new Error("Unknown error after retries");
   }
 
@@ -208,6 +309,8 @@ export const OPENROUTER_MODELS = {
   "deepseek/deepseek-chat": "DeepSeek Chat",
   "deepseek/deepseek-r1": "DeepSeek R1 (Reasoning)",
   "deepseek/deepseek-v3.2": "DeepSeek V3.2",
+  "deepseek/deepseek-v3.2-speciale":
+    "DeepSeek V3.2 Special Edition (Reasoning)",
 
   // Mistral via OpenRouter
   "mistralai/mistral-large-2411": "Mistral Large",

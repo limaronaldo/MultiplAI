@@ -2,20 +2,21 @@ import { AnthropicClient } from "./anthropic";
 import { OpenAIClient } from "./openai";
 import { OpenRouterClient } from "./openrouter";
 import { OpenAIDirectClient } from "./openai-direct";
-import { GPT52_CONFIGS } from "../core/model-selection";
+import { REASONING_MODEL_CONFIGS } from "../core/model-selection";
 
 /**
- * Resolve GPT-5.2 config name to actual model + reasoningEffort
+ * Resolve reasoning model config name to actual model + reasoningEffort
  *
- * Config names like "gpt-5.2-medium" map to:
- * - model: "gpt-5.2"
- * - reasoningEffort: "medium"
+ * Config names like "gpt-5.2-medium" or "deepseek-speciale-high" map to:
+ * - model: "gpt-5.2" or "deepseek/deepseek-v3.2-speciale"
+ * - reasoningEffort: "medium" or "high"
  */
-function resolveGPT52Config(configName: string): {
+function resolveReasoningModelConfig(configName: string): {
   model: string;
   reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
 } {
-  const config = GPT52_CONFIGS[configName as keyof typeof GPT52_CONFIGS];
+  const config =
+    REASONING_MODEL_CONFIGS[configName as keyof typeof REASONING_MODEL_CONFIGS];
   if (config) {
     return config;
   }
@@ -158,8 +159,8 @@ export function getProviderForModel(model: string): LLMProvider {
 
 export class LLMClient {
   async complete(params: CompletionParams): Promise<string> {
-    // Resolve GPT-5.2 config names (e.g., gpt-5.2-medium → model: gpt-5.2, effort: medium)
-    const resolved = resolveGPT52Config(params.model);
+    // Resolve reasoning model config names (e.g., gpt-5.2-medium, deepseek-speciale-high)
+    const resolved = resolveReasoningModelConfig(params.model);
     const actualModel = resolved.model;
     const reasoningEffort = resolved.reasoningEffort || params.reasoningEffort;
 
@@ -179,9 +180,11 @@ export class LLMClient {
           reasoningEffort,
         });
       case "openrouter":
+        // Pass reasoningEffort for DeepSeek and other reasoning models
         return getOpenRouterClient().complete({
           ...params,
           model: actualModel,
+          reasoningEffort,
         });
       case "anthropic":
       default:

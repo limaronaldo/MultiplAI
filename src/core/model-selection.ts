@@ -74,6 +74,46 @@ export const GPT52_CONFIGS = {
 export type GPT52ConfigName = keyof typeof GPT52_CONFIGS;
 
 /**
+ * DeepSeek V3.2 Special Edition Configurations
+ *
+ * DeepSeek's reasoning model via OpenRouter with configurable effort levels.
+ * Uses "reasoning.effort" parameter in OpenRouter API.
+ *
+ * Reasoning Effort Levels:
+ * - low: Light reasoning (~40 tokens), fastest, cheapest
+ * - medium: Balanced reasoning (~100 tokens)
+ * - high: Thorough reasoning (~200+ tokens)
+ *
+ * Cost: ~$0.0002 per request (very cheap reasoning model)
+ */
+export const DEEPSEEK_CONFIGS = {
+  "deepseek-speciale-low": {
+    model: "deepseek/deepseek-v3.2-speciale",
+    reasoningEffort: "low" as const,
+  },
+  "deepseek-speciale-medium": {
+    model: "deepseek/deepseek-v3.2-speciale",
+    reasoningEffort: "medium" as const,
+  },
+  "deepseek-speciale-high": {
+    model: "deepseek/deepseek-v3.2-speciale",
+    reasoningEffort: "high" as const,
+  },
+} as const;
+
+export type DeepSeekConfigName = keyof typeof DEEPSEEK_CONFIGS;
+
+/**
+ * All reasoning model configurations (GPT-5.2 + DeepSeek)
+ */
+export const REASONING_MODEL_CONFIGS = {
+  ...GPT52_CONFIGS,
+  ...DEEPSEEK_CONFIGS,
+} as const;
+
+export type ReasoningModelConfigName = keyof typeof REASONING_MODEL_CONFIGS;
+
+/**
  * Model tiers from cheapest to most expensive
  *
  * ⚠️ DO NOT MODIFY without user approval - see header comment
