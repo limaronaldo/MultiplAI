@@ -16,9 +16,9 @@ export interface OrchestratorError extends Error {
 export function createOrchestratorError(
   code: string,
   message: string,
-  taskId: string,
   recoverable: boolean = false,
 ): OrchestratorError {
+  const error: OrchestratorError = new Error(message) as OrchestratorError;
   TESTS_FAILED: "TESTS_FAILED",
   FIXING: "FIXING",
   REVIEWING: "REVIEWING",
@@ -30,9 +30,19 @@ export function createOrchestratorError(
   FIXING: "FIXING",
   REVIEWING: "REVIEWING",
   REVIEW_APPROVED: "REVIEW_APPROVED",
+  error.code = code;
+  error.taskId = taskId;
+  error.recoverable = recoverable;
+  REFLECTING: "REFLECTING",
+  return error;
+}
+
 // ============================================
 
-export const TaskStatus = {
+// ============================================
+// Task Status
+// ============================================
+  REVIEW_APPROVED: "REVIEW_APPROVED",
   NEW: "NEW",
   PLANNING: "PLANNING",
   PLANNING_DONE: "PLANNING_DONE",
@@ -42,7 +52,15 @@ export const TaskStatus = {
   CODING: "CODING",
   CODING_DONE: "CODING_DONE",
   TESTING: "TESTING",
-  TESTS_PASSED: "TESTS_PASSED",
+  BREAKING_DOWN: "BREAKING_DOWN",
+  TESTS_FAILED: "TESTS_FAILED",
+  FIXING: "FIXING",
+  REVIEWING: "REVIEWING",
+  REFLECTING: "REFLECTING",
+  REPLANNING: "REPLANNING",
+  REVIEW_APPROVED: "REVIEW_APPROVED",
+  REVIEW_REJECTED: "REVIEW_REJECTED",
+  PR_CREATED: "PR_CREATED",
   TESTS_FAILED: "TESTS_FAILED",
   FIXING: "FIXING",
   REVIEWING: "REVIEWING",
