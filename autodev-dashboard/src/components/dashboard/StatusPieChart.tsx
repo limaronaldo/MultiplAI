@@ -1,3 +1,255 @@
+
+import React, { useMemo } from "react";
+import {
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  type TooltipProps,
+} from "recharts";
+
+type TaskStatus =
+  | "todo"
+  | "backlog"
+  | "new"
+  | "in_progress"
+  | "doing"
+  | "active"
+  | "blocked"
+  | "on_hold"
+  | "stuck"
+  | "done"
+  | "completed"
+  | "closed"
+  | "resolved";
+
+type StatusCounts = Record<string, number>;
+
+type StatusGroupKey = "todo" | "inProgress" | "blocked" | "done" | "other";
+
+type GroupDefinition = {
+  key: StatusGroupKey;
+  label: string;
+  color: string;
+  statuses: readonly TaskStatus[];
+};
+
+const GROUPS: readonly GroupDefinition[] = [
+  {
+    key: "todo",
+    label: "To do",
+    color: "#64748b",
+    statuses: ["todo", "backlog", "new"],
+  },
+  {
+    key: "inProgress",
+    label: "In progress",
+    color: "#3b82f6",
+    statuses: ["in_progress", "doing", "active"],
+  },
+  {
+    key: "blocked",
+    label: "Blocked",
+    color: "#f97316",
+    statuses: ["blocked", "on_hold", "stuck"],
+  },
+  {
+    key: "done",
+    label: "Done",
+    color: "#22c55e",
+    statuses: ["done", "completed", "closed", "resolved"],
+  },
+];
+
+function normalizeStatusKey(key: string): string {
+  return key.trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+function toNumber(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+type ChartDatum = {
+  key: StatusGroupKey;
+  name: string;
+  value: number;
+  color: string;
+};
+
+function DefaultTooltip({ active, payload }: TooltipProps<number, string>) {
+  if (!active || !payload || payload.length === 0) return null;
+
+  const item = payload[0];
+  const name = typeof item?.name === "string" ? item.name : "";
+  const value = toNumber(item?.value);
+
+  return (
+    <div
+      style={{
+        background: "white",
+        border: "1px solid rgba(0, 0, 0, 0.08)",
+        borderRadius: 8,
+        padding: "8px 10px",
+        boxShadow: "0 6px 18px rgba(0, 0, 0, 0.08)",
+      }}
+    >
+      <div style={{ fontSize: 12, color: "rgba(0, 0, 0, 0.7)", marginBottom: 2 }}>{name}</div>
+      <div style={{ fontSize: 14, fontWeight: 600 }}>{value.toLocaleString()} tasks</div>
+    </div>
+  );
+}
+
+export type StatusPieChartProps = {
+  /**
+   * Map of status -> count.
+   * Keys are normalized (case-insensitive); spaces are treated as underscores.
+   */
+  statusCounts?: StatusCounts;
+  loading?: boolean;
+  error?: string | null;
+  title?: string;
+  className?: string;
+  /** Height of the chart area (excluding title/legend). */
+  height?: number;
+};
+
+export default function StatusPieChart({
+  statusCounts,
+  loading = false,
+  error = null,
+  title = "Status distribution",
+  className,
+  height = 240,
+}: StatusPieChartProps) {
+  const { chartData, total } = useMemo(() => {
+    const normalized: Record<string, number> = {};
+    for (const [rawKey, rawValue] of Object.entries(statusCounts ?? {})) {
+      const key = normalizeStatusKey(rawKey);
+      normalized[key] = (normalized[key] ?? 0) + toNumber(rawValue);
+    }
+
+    const groupKeysByStatus = new Map<string, StatusGroupKey>();
+    for (const group of GROUPS) {
+      for (const status of group.statuses) {
+        groupKeysByStatus.set(status, group.key);
+      }
+    }
+
+    const totalsByGroup: Record<StatusGroupKey, number> = {
+      todo: 0,
+      inProgress: 0,
+      blocked: 0,
+      done: 0,
+      other: 0,
+    };
+
+    for (const [key, value] of Object.entries(normalized)) {
+      const groupKey = groupKeysByStatus.get(key);
+      if (groupKey) {
+        totalsByGroup[groupKey] += value;
+      } else {
+        totalsByGroup.other += value;
+      }
+    }
+
+    const data: ChartDatum[] = [
+      ...GROUPS.map((g) => ({
+        key: g.key,
+        name: g.label,
+        value: totalsByGroup[g.key],
+        color: g.color,
+      })),
+      {
+        key: "other",
+        name: "Other",
+        value: totalsByGroup.other,
+        color: "#a855f7",
+      },
+    ].filter((d) => d.value > 0);
+
+    const sum = data.reduce((acc, d) => acc + d.value, 0);
+    return { chartData: data, total: sum };
+  }, [statusCounts]);
+
+  if (loading) {
+    return (
+      <div className={className} style={{ padding: 16, border: "1px solid rgba(0,0,0,0.08)", borderRadius: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>{title}</div>
+        <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(0,0,0,0.55)" }}>
+          Loading status distribution…
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className={className} style={{ padding: 16, border: "1px solid rgba(0,0,0,0.08)", borderRadius: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>{title}</div>
+        <div style={{ color: "#b91c1c", fontSize: 13 }}>Failed to load status data: {error}</div>
+      </div>
+    );
+  }
+
+  if (!statusCounts || total === 0) {
+    return (
+      <div className={className} style={{ padding: 16, border: "1px solid rgba(0,0,0,0.08)", borderRadius: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>{title}</div>
+        <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(0,0,0,0.55)" }}>
+          No status data available.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={className} style={{ padding: 16, border: "1px solid rgba(0,0,0,0.08)", borderRadius: 12 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
+        <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
+        <div style={{ fontSize: 12, color: "rgba(0,0,0,0.6)" }}>{total.toLocaleString()} total</div>
+      </div>
+
+      <div style={{ width: "100%", height }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Tooltip content={<DefaultTooltip />} />
+            <Pie
+              data={chartData}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              innerRadius="55%"
+              outerRadius="80%"
+              paddingAngle={2}
+              stroke="rgba(0,0,0,0.08)"
+              strokeWidth={1}
+              isAnimationActive={false}
+            >
+              {chartData.map((entry) => (
+                <Cell key={entry.key} fill={entry.color} />
+              ))}
+            </Pie>
+            <Legend
+              verticalAlign="bottom"
+              align="center"
+              iconType="circle"
+              wrapperStyle={{ paddingTop: 12 }}
+              formatter={(value) => <span style={{ color: "rgba(0,0,0,0.75)", fontSize: 12 }}>{value}</span>}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
 import React, { useMemo } from 'react';
 import {
   Cell,
