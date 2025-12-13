@@ -132,6 +132,37 @@ export const GLM_CONFIGS = {
 export type GLMConfigName = keyof typeof GLM_CONFIGS;
 
 /**
+ * MoonshotAI Kimi K2 Thinking Configuration
+ *
+ * Moonshot AI's most advanced open reasoning model. Trillion-parameter MoE
+ * architecture (32B active per forward pass) optimized for agentic,
+ * long-horizon reasoning with persistent step-by-step thought and tool use.
+ *
+ * Specs:
+ * - Context: 262K tokens (256K usable)
+ * - Max Output: 163-262K tokens
+ * - Input: $0.45-0.60/M tokens
+ * - Output: $2.35-2.50/M tokens
+ * - Providers: Nebius Token Factory (NL), Baseten (US)
+ * - Data Policy: Zero retention, no prompt training
+ * - Latency: 0.37-0.49s, Throughput: 97-112tps
+ *
+ * Capabilities:
+ * - Stable multi-agent behavior through 200-300 tool calls
+ * - Benchmarks: HLE, BrowseComp, SWE-Multilingual, LiveCodeBench
+ * - Autonomous research, coding, and writing without drift
+ *
+ * Ideal for: Complex agentic tasks, multi-step reasoning, tool-heavy workflows
+ */
+export const KIMI_CONFIGS = {
+  "kimi-k2-thinking": {
+    model: "moonshotai/kimi-k2-thinking",
+  },
+} as const;
+
+export type KimiConfigName = keyof typeof KIMI_CONFIGS;
+
+/**
  * All reasoning model configurations (GPT-5.2 + DeepSeek)
  */
 export const REASONING_MODEL_CONFIGS = {
@@ -140,11 +171,12 @@ export const REASONING_MODEL_CONFIGS = {
 } as const;
 
 /**
- * All model configurations (reasoning + multimodal)
+ * All model configurations (reasoning + multimodal + agentic)
  */
 export const ALL_MODEL_CONFIGS = {
   ...REASONING_MODEL_CONFIGS,
   ...GLM_CONFIGS,
+  ...KIMI_CONFIGS,
 } as const;
 
 export type ReasoningModelConfigName = keyof typeof REASONING_MODEL_CONFIGS;
