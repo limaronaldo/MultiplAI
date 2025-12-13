@@ -546,3 +546,334 @@ export const StatusPieChart: React.FC = () => {
 };
 
 export default StatusPieChart;
+import React, { useMemo } from "react";
+import {
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  type TooltipProps,
+} from "recharts";
+
+export type TaskStatus =
+  | "todo"
+  | "backlog"
+  | "new"
+  | "in_progress"
+  | "doing"
+  | "active"
+  | "blocked"
+  | "on_hold"
+  | "stuck"
+  | "done"
+  | "completed"
+  | "closed"
+  | "resolved";
+
+type StatusGroupKey = "todo" | "inProgress" | "blocked" | "done" | "other";
+
+type GroupDefinition = {
+  key: Exclude<StatusGroupKey, "other">;
+  label: string;
+  color: string;
+  statuses: readonly TaskStatus[];
+};
+
+const GROUPS: readonly GroupDefinition[] = [
+  {
+    key: "todo",
+    label: "To do",
+    color: "#64748b",
+    statuses: ["todo", "backlog", "new"],
+  },
+  {
+    key: "inProgress",
+    label: "In progress",
+    color: "#3b82f6",
+    statuses: ["in_progress", "doing", "active"],
+  },
+  {
+    key: "blocked",
+    label: "Blocked",
+    color: "#f97316",
+    statuses: ["blocked", "on_hold", "stuck"],
+  },
+  {
+    key: "done",
+    label: "Done",
+    color: "#22c55e",
+    statuses: ["done", "completed", "closed", "resolved"],
+  },
+];
+
+const OTHER_COLOR = "#a855f7";
+
+type AnalyticsResult = {
+  statusCounts?: Record<string, number>;
+  isLoading: boolean;
+  error: string | null;
+};
+
+/**
+ * Local implementation to satisfy build/type-checking within this isolated change.
+ * In the full application, this is expected to be replaced by the real analytics hook.
+ */
+function useAnalytics(): AnalyticsResult {
+  return {
+    statusCounts: undefined,
+    isLoading: false,
+    error: null,
+  };
+}
+
+function normalizeStatusKey(key: string): string {
+  return key.trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+function toFiniteNumber(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+type ChartDatum = {
+  key: StatusGroupKey;
+  name: string;
+  value: number;
+  color: string;
+};
+
+function StatusTooltip({ active, payload }: TooltipProps<number, string>) {
+  if (!active || !payload || payload.length === 0) return null;
+
+  const item = payload[0];
+  const name = typeof item?.name === "string" ? item.name : "";
+  const value = toFiniteNumber(item?.value);
+
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: "1px solid rgba(0, 0, 0, 0.08)",
+        borderRadius: 8,
+        padding: "8px 10px",
+        boxShadow: "0 6px 18px rgba(0, 0, 0, 0.08)",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 12,
+          color: "rgba(0, 0, 0, 0.7)",
+          marginBottom: 2,
+        }}
+      >
+        {name}
+      </div>
+      <div style={{ fontSize: 14, fontWeight: 600 }}>
+        {value.toLocaleString()} tasks
+      </div>
+    </div>
+  );
+}
+
+export type StatusPieChartProps = {
+  title?: string;
+  className?: string;
+  /** Height of the chart area (excluding title/legend). */
+  height?: number;
+};
+
+export function StatusPieChart({
+  title = "Status distribution",
+  className,
+  height = 240,
+}: StatusPieChartProps) {
+  const { statusCounts, isLoading, error } = useAnalytics();
+
+  const { chartData, total } = useMemo(() => {
+    const normalizedCounts: Record<string, number> = {};
+    for (const [rawKey, rawValue] of Object.entries(statusCounts ?? {})) {
+      const key = normalizeStatusKey(rawKey);
+      normalizedCounts[key] = (normalizedCounts[key] ?? 0) + toFiniteNumber(rawValue);
+    }
+
+    const groupKeyByStatus = new Map<string, Exclude<StatusGroupKey, "other">>();
+    for (const group of GROUPS) {
+      for (const status of group.statuses) {
+        groupKeyByStatus.set(status, group.key);
+      }
+    }
+
+    const totalsByGroup: Record<StatusGroupKey, number> = {
+      todo: 0,
+      inProgress: 0,
+      blocked: 0,
+      done: 0,
+      other: 0,
+    };
+
+    for (const [status, value] of Object.entries(normalizedCounts)) {
+      const groupKey = groupKeyByStatus.get(status);
+      if (groupKey) {
+        totalsByGroup[groupKey] += value;
+      } else {
+        totalsByGroup.other += value;
+      }
+    }
+
+    const data: ChartDatum[] = [
+      ...GROUPS.map((group) => ({
+        key: group.key,
+        name: group.label,
+        value: totalsByGroup[group.key],
+        color: group.color,
+      })),
+      {
+        key: "other",
+        name: "Other",
+        value: totalsByGroup.other,
+        color: OTHER_COLOR,
+      },
+    ].filter((d) => d.value > 0);
+
+    const sum = data.reduce((acc, d) => acc + d.value, 0);
+    return { chartData: data, total: sum };
+  }, [statusCounts]);
+
+  if (isLoading) {
+    return (
+      <div
+        className={className}
+        style={{
+          padding: 16,
+          border: "1px solid rgba(0,0,0,0.08)",
+          borderRadius: 12,
+        }}
+      >
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>{title}</div>
+        <div
+          style={{
+            height,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "rgba(0,0,0,0.55)",
+          }}
+        >
+          Loading status distribution…
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div
+        className={className}
+        style={{
+          padding: 16,
+          border: "1px solid rgba(0,0,0,0.08)",
+          borderRadius: 12,
+        }}
+      >
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>{title}</div>
+        <div style={{ color: "#b91c1c", fontSize: 13 }}>
+          Failed to load status data: {error}
+        </div>
+      </div>
+    );
+  }
+
+  if (!statusCounts || total === 0) {
+    return (
+      <div
+        className={className}
+        style={{
+          padding: 16,
+          border: "1px solid rgba(0,0,0,0.08)",
+          borderRadius: 12,
+        }}
+      >
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>{title}</div>
+        <div
+          style={{
+            height,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "rgba(0,0,0,0.55)",
+          }}
+        >
+          No status data available.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={className}
+      style={{
+        padding: 16,
+        border: "1px solid rgba(0,0,0,0.08)",
+        borderRadius: 12,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: 12,
+          marginBottom: 10,
+        }}
+      >
+        <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
+        <div style={{ fontSize: 12, color: "rgba(0,0,0,0.6)" }}>
+          {total.toLocaleString()} total
+        </div>
+      </div>
+
+      <div style={{ width: "100%", height }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Tooltip content={<StatusTooltip />} />
+            <Pie
+              data={chartData}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              innerRadius="55%"
+              outerRadius="80%"
+              paddingAngle={2}
+              stroke="rgba(0,0,0,0.08)"
+              strokeWidth={1}
+              isAnimationActive={false}
+            >
+              {chartData.map((entry) => (
+                <Cell key={entry.key} fill={entry.color} />
+              ))}
+            </Pie>
+            <Legend
+              verticalAlign="bottom"
+              align="center"
+              iconType="circle"
+              wrapperStyle={{ paddingTop: 12 }}
+              formatter={(value) => (
+                <span style={{ color: "rgba(0,0,0,0.75)", fontSize: 12 }}>{value}</span>
+              )}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+export default StatusPieChart;
