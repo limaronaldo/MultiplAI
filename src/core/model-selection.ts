@@ -64,25 +64,19 @@ export interface ModelTier {
  * All use model "gpt-5.2" but with different reasoning effort levels.
  * Internal config names for selection logic.
  *
- */
-
-import { EffortLevel } from "./types";
-
-/*
- * Hybrid Strategy (Option C): Mixed-model approach prioritizing cost savings.
- * Routes simple tasks to efficient models (e.g., GPT-3.5) and complex tasks to premium models (e.g., Claude/GPT-4).
- */
-
-/**
- * GPT-5.2 Configurations
- * - none: Minimal reasoning, fastest, cheapest
- * All use model "gpt-5.2" but with different reasoning effort levels.
- * Internal config names for selection logic.
- *
- *
  * GPT-5.2 Reasoning Effort Levels:
  * - none: Minimal reasoning, fastest, cheapest
  * - low: Light reasoning
+ * - medium: Balanced reasoning
+ * - high: Thorough reasoning (default for gpt-5.2)
+ * - xhigh: Maximum reasoning (hardest problems)
+ */
+export const GPT52_CONFIGS = {
+  "gpt-5.2-none": { model: "gpt-5.2", reasoningEffort: "none" as const },
+  "gpt-5.2-low": { model: "gpt-5.2", reasoningEffort: "low" as const },
+  "gpt-5.2-medium": { model: "gpt-5.2", reasoningEffort: "medium" as const },
+  "gpt-5.2-high": { model: "gpt-5.2", reasoningEffort: "high" as const },
+  "gpt-5.2-xhigh": { model: "gpt-5.2", reasoningEffort: "xhigh" as const },
 } as const;
 
 export type GPT52ConfigName = keyof typeof GPT52_CONFIGS;
