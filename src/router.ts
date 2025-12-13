@@ -15,6 +15,7 @@ import { LinearService } from "./integrations/linear";
 import { knowledgeGraphSync } from "./core/knowledge-graph/sync-service";
 import { ragRuntime } from "./services/rag/rag-runtime";
 import { GitHubClient } from "./integrations/github";
+import { getInputGuardrails, isGuardrailsEnabled } from "./core/guardrails";
 import { createHmac, timingSafeEqual } from "crypto";
 import { Octokit } from "octokit";
 
@@ -188,16 +189,26 @@ async function handlePushEvent(payload: any): Promise<Response> {
   const commits = Array.isArray(payload?.commits) ? payload.commits : [];
 
   if (!repo || typeof repo !== "string") {
-    return Response.json({ ok: false, error: "Missing repository.full_name" }, { status: 400 });
+    return Response.json(
+      { ok: false, error: "Missing repository.full_name" },
+      { status: 400 },
+    );
   }
 
   if (!knowledgeGraphSync.enabled()) {
-    return Response.json({ ok: true, message: "Knowledge graph sync disabled" });
+    return Response.json({
+      ok: true,
+      message: "Knowledge graph sync disabled",
+    });
   }
 
   const changedFiles = new Set<string>();
   for (const c of commits) {
-    for (const p of [...(c.added ?? []), ...(c.modified ?? []), ...(c.removed ?? [])]) {
+    for (const p of [
+      ...(c.added ?? []),
+      ...(c.modified ?? []),
+      ...(c.removed ?? []),
+    ]) {
       if (typeof p === "string") changedFiles.add(p);
     }
   }
@@ -267,6 +278,69 @@ async function handleIssueEvent(payload: GitHubIssueEvent): Promise<Response> {
         message: "Task already exists",
         taskId: existingTask.id,
       });
+    }
+
+    // Run input guardrails validation (Issue #239)
+    if (isGuardrailsEnabled()) {
+      const guardrails = getInputGuardrails();
+      const guardrailResult = await guardrails.validate({
+        title: issue.title,
+        body: issue.body || "",
+        labels: issue.labels.map((l) => l.name),
+      });
+
+      console.log(
+        `[Guardrails] Issue #${issue.number}: ${guardrailResult.action} - ${guardrailResult.reason}`,
+      );
+
+      if (guardrailResult.action === "reject") {
+        // Add label and comment explaining rejection
+        const github = new GitHubClient();
+        await github.addLabels(repository.full_name, issue.number, [
+          "autodev-rejected",
+        ]);
+        await github.addComment(
+          repository.full_name,
+          issue.number,
+          `🚫 **AutoDev cannot process this issue.**\n\n${guardrailResult.reason}`,
+        );
+        return Response.json({
+          ok: false,
+          message: "Issue rejected by guardrails",
+          reason: guardrailResult.reason,
+        });
+      }
+
+      if (guardrailResult.action === "clarify") {
+        // Add needs-info label and comment asking for clarification
+        const github = new GitHubClient();
+        await github.addLabels(repository.full_name, issue.number, [
+          "needs-info",
+        ]);
+        await github.addComment(
+          repository.full_name,
+          issue.number,
+          guardrails.generateClarificationComment(guardrailResult),
+        );
+        return Response.json({
+          ok: false,
+          message: "Issue needs clarification",
+          reason: guardrailResult.reason,
+          missingInfo: guardrailResult.details.missingInfo,
+        });
+      }
+
+      if (guardrailResult.action === "warn") {
+        // Log warning but continue processing
+        console.warn(
+          `[Guardrails] Warning for issue #${issue.number}: ${guardrailResult.reason}`,
+        );
+        if (guardrailResult.details.securityConcerns) {
+          console.warn(
+            `[Guardrails] Security concerns: ${guardrailResult.details.securityConcerns.join(", ")}`,
+          );
+        }
+      }
     }
 
     // Tenta encontrar issue correspondente no Linear
@@ -505,7 +579,8 @@ route("POST", "/api/rag/index", async (req) => {
     return Response.json({ error: "Invalid repo" }, { status: 400 });
   }
 
-  const ref = typeof (body as any).ref === "string" ? (body as any).ref : undefined;
+  const ref =
+    typeof (body as any).ref === "string" ? (body as any).ref : undefined;
   const maxFilesRaw = (body as any).maxFiles;
   const maxFiles =
     typeof maxFilesRaw === "number"
@@ -565,10 +640,13 @@ route("POST", "/api/rag/search", async (req) => {
       : typeof (body as any).repoFullName === "string"
         ? (body as any).repoFullName
         : "";
-  const query = typeof (body as any).query === "string" ? (body as any).query : "";
+  const query =
+    typeof (body as any).query === "string" ? (body as any).query : "";
   const limitRaw = (body as any).limit;
   const limit =
-    typeof limitRaw === "number" ? Math.min(Math.max(Math.floor(limitRaw), 1), 50) : 10;
+    typeof limitRaw === "number"
+      ? Math.min(Math.max(Math.floor(limitRaw), 1), 50)
+      : 10;
 
   if (!isValidRepo(repo)) {
     return Response.json({ error: "Invalid repo" }, { status: 400 });
@@ -584,7 +662,9 @@ route("POST", "/api/rag/search", async (req) => {
     const message = error instanceof Error ? error.message : String(error);
     const stats = ragRuntime.getStats();
     const status =
-      message.includes("not ready") || message.includes("not initialized") ? 409 : 400;
+      message.includes("not ready") || message.includes("not initialized")
+        ? 409
+        : 400;
     return Response.json({ error: message, stats }, { status });
   }
 });
@@ -597,10 +677,16 @@ route("POST", "/api/knowledge-graph/sync/:repo", async (req) => {
     return Response.json({ error: "Invalid repo" }, { status: 400 });
   }
   if (!knowledgeGraphSync.enabled()) {
-    return Response.json({ error: "Knowledge graph sync disabled" }, { status: 400 });
+    return Response.json(
+      { error: "Knowledge graph sync disabled" },
+      { status: 400 },
+    );
   }
   void knowledgeGraphSync.triggerFullSync({ repoFullName: repo });
-  return Response.json({ ok: true, message: "Full sync scheduled" }, { status: 202 });
+  return Response.json(
+    { ok: true, message: "Full sync scheduled" },
+    { status: 202 },
+  );
 });
 
 route("GET", "/api/knowledge-graph/status/:repo", async (req) => {

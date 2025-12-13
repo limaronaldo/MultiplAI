@@ -2,6 +2,7 @@ import { AnthropicClient } from "./anthropic";
 import { OpenAIClient } from "./openai";
 import { OpenRouterClient } from "./openrouter";
 import { OpenAIDirectClient } from "./openai-direct";
+import { getFlexClient, isFlexEnabled } from "./openai-flex";
 import { ALL_MODEL_CONFIGS } from "../core/model-selection";
 
 /**
@@ -39,6 +40,9 @@ export interface CompletionParams {
   // GPT-5.2 reasoning effort: "none" | "low" | "medium" | "high" | "xhigh"
   // Default is "high", use "xhigh" for Fixer agent
   reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
+  // Service tier: "auto" (default) or "flex" (50% cheaper, slower)
+  // Use "flex" for non-urgent tasks like evals, KG sync, embeddings
+  serviceTier?: "auto" | "flex";
 }
 
 // Model to provider mapping
@@ -163,6 +167,23 @@ export class LLMClient {
     const resolved = resolveReasoningModelConfig(params.model);
     const actualModel = resolved.model;
     const reasoningEffort = resolved.reasoningEffort || params.reasoningEffort;
+
+    // Use Flex processing for eligible requests (50% cost savings)
+    // Only works with OpenAI models that support service_tier
+    if (
+      params.serviceTier === "flex" &&
+      isFlexEnabled() &&
+      (actualModel.includes("gpt-5") || actualModel.includes("gpt-4"))
+    ) {
+      return getFlexClient().complete({
+        model: actualModel,
+        maxTokens: params.maxTokens,
+        temperature: params.temperature,
+        systemPrompt: params.systemPrompt,
+        userPrompt: params.userPrompt,
+        reasoningEffort,
+      });
+    }
 
     const provider = getProviderForModel(actualModel);
 
