@@ -9,6 +9,10 @@ import {
 import type { MCPServerConfig } from "./types.js";
 import { GitHubClient } from "../integrations/github.js";
   McpError,
+} from "@modelcontextprotocol/sdk/types.js";
+import type { MCPServerConfig } from "./types.js";
+import { GitHubClient } from "../integrations/github.js";
+  McpError,
 import { CoderAgent } from "../agents/coder.js";
 import { Orchestrator } from "../core/orchestrator.js";
 import { db } from "../integrations/db.js";
@@ -16,7 +20,6 @@ import { isTerminal, getNextAction } from "../core/state-machine.js";
 import { analyzeTool, createAnalyzeHandler } from "./tools/analyze.js";
 import { executeTool, createExecuteHandler } from "./tools/execute.js";
 import { analyzeTool, createAnalyzeHandler } from "./tools/analyze.js";
-import { memoryTool, createMemoryHandler } from "./tools/memory.js";
 
 const SERVER_CONFIG: MCPServerConfig = {
   name: "autodev-mcp",
@@ -26,6 +29,7 @@ const SERVER_CONFIG: MCPServerConfig = {
 
 function createLazy<T>(factory: () => T): () => T {
   let cached: T | null = null;
+  description: "AutoDev MCP Server for AI-assisted code generation",
 };
     if (!cached) {
       cached = factory();
@@ -58,7 +62,7 @@ function createLazy<T>(factory: () => T): () => T {
     current = await orchestrator.process(current);
     await db.updateTask(current.id, current);
 
-): Promise<void> {
+  let current: Task = task;
       break;
     }
   }
@@ -94,7 +98,7 @@ export interface MCPDb {
   createTask: (
     task: Omit<Task, "id" | "createdAt" | "updatedAt">,
   ) => Promise<Task>;
-  getCoderAgent?: () => CoderAgent;
+  startBackgroundTaskRunner?: (task: Task) => void;
   getTaskEvents: (taskId: string) => Promise<TaskEvent[]>;
 }
 
@@ -103,8 +107,8 @@ export interface MCPStaticMemoryStore {
 }
 
 export interface MCPLearningStore {
-
-export interface MCPDb {
+  getTaskByIssue: (repo: string, issueNumber: number) => Promise<Task | null>;
+  createTask: (
   listFixPatterns: (repo: string, limit?: number) => Promise<unknown[]>;
   listFailures: (repo: string, limit?: number) => Promise<unknown[]>;
 }
@@ -128,7 +132,7 @@ export interface MCPStaticMemoryStore {
       void runTaskToStableState(task, orchestrator).catch((error) => {
         console.error(`[MCP] Error processing task ${task.id}:`, error);
       });
-    }>
+export interface MCPStaticMemoryStore {
 
   const toolHandlers: Record<string, (args: unknown) => Promise<unknown>> = {
     [analyzeTool.name]: createAnalyzeHandler({ getGitHubClient, getPlannerAgent }),
@@ -145,6 +149,7 @@ export interface MCPStaticMemoryStore {
       getLearningStore,
       getDb,
         console.error(`[MCP] Error processing task ${task.id}:`, error);
+  };
 
   const tools = [analyzeTool, executeTool, statusTool, memoryTool];
 
@@ -152,19 +157,43 @@ export interface MCPStaticMemoryStore {
     tools,
     async callTool(name: string, args: unknown): Promise<unknown> {
       const handler = toolHandlers[name];
-      if (!handler) {
-        throw new McpError(
-          ErrorCode.MethodNotFound,
-          `Unknown tool: ${name}`,
-        );
+      getGitHubClient,
+        throw new Error(`Unknown tool: ${name}`);
       }
       return handler(args);
     },
   };
 }
 
-/**
+  };
+}
+
+      getStaticMemoryStore: getStaticStore,
  * Create and configure the MCP server
+ */
+export function createMCPServer(deps: MCPServerDeps = {}): Server {
+  const server = new Server(
+    {
+      name: SERVER_CONFIG.name,
+  return {
+    tools,
+    async callTool(name: string, args: unknown): Promise<unknown> {
+      const handler = toolHandlers[name];
+      if (!handler) {
+        throw new McpError(
+    }
+  );
+
+  const router = createMCPToolRouter(deps);
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: router.tools,
+  }));
+
+  // Register tool call handler
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const result = await router.callTool(
+      request.params.name,
+      request.params.arguments ?? {},
  */
 export function createMCPServer(deps: MCPServerDeps = {}): Server {
   const server = new Server(
@@ -173,12 +202,13 @@ export function createMCPServer(deps: MCPServerDeps = {}): Server {
       version: SERVER_CONFIG.version,
     },
     {
-      capabilities: {
-        tools: {},
-      },
-    }
-  );
+  });
 
+  return server;
+}
+
+/**
+ * Start the MCP server with stdio transport
   const router = createMCPToolRouter(deps);
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: router.tools,
