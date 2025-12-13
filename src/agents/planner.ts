@@ -4,6 +4,7 @@ import { RagService } from "../services/rag";
 
 // Default planner model - can be overridden via env var
 // Planner uses Kimi K2 Thinking for agentic planning with 262K context
+// Planner uses Kimi K2 Thinking for agentic planning with 262K context
 // Cost: ~$0.15/task vs ~$0.50 with gpt-5.1-codex-max (70% savings)
 const DEFAULT_PLANNER_MODEL =
   process.env.PLANNER_MODEL || "moonshotai/kimi-k2-thinking";
@@ -40,31 +41,48 @@ When the change involves 3+ files, include a "multiFilePlan" with:
 4. Rollback strategy
 
 ### Dependency Layers (execute in this order):
-1. **types**: Type definitions, interfaces, schemas (no deps)
-2. **utils**: Utility functions (depend on types)
+
 export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
+  private ragService: RagService;
+
   constructor() {
     // Kimi K2 Thinking - agentic reasoning model optimized for planning
+    // No reasoningEffort param needed - Kimi handles reasoning internally
     this.ragService = new RagService();
     super({
       model: DEFAULT_PLANNER_MODEL,
       temperature: 0.3,
-If the task requires running shell commands (installing packages, migrations, etc.), include:
-- "commands": Array of commands to execute
+      maxTokens: 4096,
+    });
+    this.ragService = new RagService();
   }
 
   async run(input: PlannerInput): Promise<PlannerOutput> {
+    // Check if RAG is initialized and perform search
     let ragContext = "";
+    if (this.ragService.isInitialized()) {
+      const ragResults = await this.ragService.search(input.issueBody);
+      if (ragResults.snippets) {
+        ragContext += `\n\n## Relevant Code Snippets from RAG Search\n${ragResults.snippets}\n`;
+      }
+      if (ragResults.suggestedFiles) {
+        ragContext += `\n\n## Suggested Files from RAG\n${ragResults.suggestedFiles.map(f => `- ${f}`).join('\n')}\n`;
+      }
+    }
+
+    const enrichedIssueBody = (input.issueBody || "No description provided") + ragContext;
+
     const userPrompt = `
 ## Issue Title
 ${input.issueTitle}
+${input.issueTitle}
 ---
 
-Analyze this issue and provide your implementation plan as JSON.
-`.trim();
+## Issue Description
+${enrichedIssueBody}
 
-    // Check if RAG is initialized and perform search
-    if (this.ragService.isInitialized()) {
+## Repository Context
+${input.repoContext}
       const ragResults = await this.ragService.search(input.issueBody);
       if (ragResults.snippets) {
         ragContext += `\n\n## Relevant Code Snippets from RAG Search\n${ragResults.snippets}\n`;
