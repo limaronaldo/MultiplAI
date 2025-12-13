@@ -104,11 +104,47 @@ export const DEEPSEEK_CONFIGS = {
 export type DeepSeekConfigName = keyof typeof DEEPSEEK_CONFIGS;
 
 /**
+ * Z.AI GLM 4.6V Configuration
+ *
+ * Large multimodal reasoning model for high-fidelity visual understanding and
+ * long-context reasoning across images, documents, and mixed media.
+ *
+ * Specs:
+ * - Context: 131K tokens
+ * - Input: $0.30/M tokens
+ * - Output: $0.90/M tokens
+ * - Provider: Parasail (US, zero data retention)
+ * - Quantization: fp8
+ * - Latency: 0.47s, Throughput: 125tps
+ *
+ * Note: This is a reasoning model. Output is wrapped in <|begin_of_box|>...<|end_of_box|>
+ * markers. Reasoning is returned in message.reasoning field.
+ * Requires max_tokens >= 500 to complete reasoning and produce output.
+ *
+ * Use cases: Document analysis, image understanding, chart processing
+ */
+export const GLM_CONFIGS = {
+  "glm-4.6v": {
+    model: "z-ai/glm-4.6v",
+  },
+} as const;
+
+export type GLMConfigName = keyof typeof GLM_CONFIGS;
+
+/**
  * All reasoning model configurations (GPT-5.2 + DeepSeek)
  */
 export const REASONING_MODEL_CONFIGS = {
   ...GPT52_CONFIGS,
   ...DEEPSEEK_CONFIGS,
+} as const;
+
+/**
+ * All model configurations (reasoning + multimodal)
+ */
+export const ALL_MODEL_CONFIGS = {
+  ...REASONING_MODEL_CONFIGS,
+  ...GLM_CONFIGS,
 } as const;
 
 export type ReasoningModelConfigName = keyof typeof REASONING_MODEL_CONFIGS;
