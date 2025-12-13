@@ -12,6 +12,29 @@ import {
 } from "./types";
 
 /**
+ * Event types emitted by the agentic loop
+ */
+export type AgenticLoopEventType =
+  | "REFLECTION_COMPLETE"
+  | "REPLAN_TRIGGERED"
+  | "FIX_ATTEMPTED"
+  | "ITERATION_COMPLETE";
+
+/**
+ * Event data for agentic loop events
+ */
+export interface AgenticLoopEvent {
+  type: AgenticLoopEventType;
+  iteration: number;
+  data: Record<string, unknown>;
+}
+
+/**
+ * Callback for agentic loop events
+ */
+export type AgenticLoopEventCallback = (event: AgenticLoopEvent) => void;
+
+/**
  * Default configuration for the agentic loop
  */
 export const DEFAULT_LOOP_CONFIG: LoopConfig = {
@@ -40,6 +63,10 @@ export class AgenticLoopController {
   private attemptHistory: AttemptRecord[] = [];
   private replanCount: number = 0;
   private currentIteration: number = 0;
+  private lastConfidence: number = 0;
+
+  // Event callback for metrics tracking (Issue #220)
+  private eventCallback?: AgenticLoopEventCallback;
 
   // Metrics tracking
   private metrics: {
@@ -56,12 +83,29 @@ export class AgenticLoopController {
     totalDurationMs: 0,
   };
 
-  constructor() {
+  constructor(eventCallback?: AgenticLoopEventCallback) {
     this.reflectionAgent = new ReflectionAgent();
     this.fixerAgent = new FixerAgent();
     this.plannerAgent = new PlannerAgent();
     this.github = new GitHubClient();
     this.logger = createTaskLogger("agentic-loop", "loop-controller");
+    this.eventCallback = eventCallback;
+  }
+
+  /**
+   * Emit an event to the callback if registered
+   */
+  private emitEvent(
+    type: AgenticLoopEventType,
+    data: Record<string, unknown>,
+  ): void {
+    if (this.eventCallback) {
+      this.eventCallback({
+        type,
+        iteration: this.currentIteration,
+        data,
+      });
+    }
   }
 
   /**
@@ -97,10 +141,20 @@ export class AgenticLoopController {
       // Step 1: Reflect on the failure
       const reflection = await this.reflect(task, testOutput);
       this.metrics.reflectionCalls++;
+      this.lastConfidence = reflection.confidence;
 
       this.logger.info(
         `Reflection: ${reflection.rootCause} → ${reflection.recommendation} (confidence: ${reflection.confidence})`,
       );
+
+      // Emit REFLECTION_COMPLETE event (Issue #220)
+      this.emitEvent("REFLECTION_COMPLETE", {
+        rootCause: reflection.rootCause,
+        recommendation: reflection.recommendation,
+        confidence: reflection.confidence,
+        diagnosis: reflection.diagnosis,
+        feedback: reflection.feedback,
+      });
 
       // Step 2: Check if we should abort
       if (reflection.recommendation === "abort") {
@@ -124,6 +178,13 @@ export class AgenticLoopController {
           );
           // Fall through to fix instead of replan
         } else {
+          // Emit REPLAN_TRIGGERED event (Issue #220)
+          this.emitEvent("REPLAN_TRIGGERED", {
+            previousPlanSteps: task.plan?.length || 0,
+            rootCause: reflection.rootCause,
+            diagnosis: reflection.diagnosis,
+          });
+
           const replanResult = await this.executeReplan(task, reflection);
           this.replanCount++;
           this.metrics.replanAttempts++;
@@ -148,6 +209,13 @@ export class AgenticLoopController {
       // Execute fix
       const fixResult = await this.executeFix(task, testOutput, reflection);
       this.metrics.fixAttempts++;
+
+      // Emit FIX_ATTEMPTED event (Issue #220)
+      this.emitEvent("FIX_ATTEMPTED", {
+        success: fixResult.success,
+        rootCause: reflection.rootCause,
+        error: fixResult.error,
+      });
 
       if (fixResult.success) {
         this.recordAttempt("fix", "success");
@@ -348,5 +416,12 @@ The previous plan failed. Please create a revised plan that addresses the issues
    */
   getAttemptHistory(): AttemptRecord[] {
     return [...this.attemptHistory];
+  }
+
+  /**
+   * Get the last confidence score from reflection
+   */
+  getLastConfidence(): number {
+    return this.lastConfidence;
   }
 }

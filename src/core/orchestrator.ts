@@ -925,21 +925,47 @@ export class Orchestrator {
       confidenceThreshold: this.config.agenticLoopConfidenceThreshold,
     };
 
+    // Create event callback to log individual events (Issue #220)
+    const eventCallback = async (event: {
+      type: string;
+      iteration: number;
+      data: Record<string, unknown>;
+    }) => {
+      if (event.type === "REFLECTION_COMPLETE") {
+        await this.logEvent(task, "REFLECTION_COMPLETE", "reflection-agent", {
+          iteration: event.iteration,
+          ...event.data,
+        });
+      } else if (event.type === "REPLAN_TRIGGERED") {
+        await this.logEvent(task, "REPLAN_TRIGGERED", "agentic-loop", {
+          iteration: event.iteration,
+          ...event.data,
+        });
+      }
+    };
+
     // Create and run the agentic loop controller
-    const loopController = new AgenticLoopController();
+    const loopController = new AgenticLoopController(eventCallback);
     const result = await loopController.run(
       task,
       task.lastError || "",
       loopConfig,
     );
 
-    // Log agentic loop metrics (Issue #220)
+    // Store agentic loop metrics on task (Issue #220)
     const metrics = loopController.getMetrics();
+    task.agenticLoopIterations = result.iterations;
+    task.agenticLoopReplans = result.replans;
+    task.agenticLoopConfidence = loopController.getLastConfidence();
+    task.agenticLoopDurationMs = metrics.totalDurationMs;
+
+    // Log agentic loop completion event
     await this.logEvent(task, "AGENTIC_LOOP_COMPLETE", "agentic-loop", {
       success: result.success,
       iterations: result.iterations,
       replans: result.replans,
       reason: result.reason,
+      confidence: task.agenticLoopConfidence,
       reflectionCalls: metrics.reflectionCalls,
       fixAttempts: metrics.fixAttempts,
       replanAttempts: metrics.replanAttempts,

@@ -4,6 +4,9 @@
 export {
   AgenticLoopController,
   DEFAULT_LOOP_CONFIG,
+  type AgenticLoopEventType,
+  type AgenticLoopEvent,
+  type AgenticLoopEventCallback,
 } from "./loop-controller";
 
 export { ReflectionAgent } from "./reflection-agent";

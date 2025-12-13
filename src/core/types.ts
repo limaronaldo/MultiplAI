@@ -96,6 +96,12 @@ export interface Task {
   lastError?: string;
   rootCause?: ReflectionRootCause | null;
 
+  // Agentic loop metrics (Issue #220)
+  agenticLoopIterations?: number;
+  agenticLoopReplans?: number;
+  agenticLoopConfidence?: number;
+  agenticLoopDurationMs?: number;
+
   // Parent-child relationship (for orchestrated tasks)
   parentTaskId?: string | null;
   subtaskIndex?: number | null;
@@ -491,7 +497,9 @@ export interface TaskEvent {
     | "FAILED"
     | "COMPLETED"
     | "CONSENSUS_DECISION" // Multi-agent selection decision
-    | "AGENTIC_LOOP_COMPLETE"; // Agentic loop finished (Issue #193)
+    | "AGENTIC_LOOP_COMPLETE" // Agentic loop finished (Issue #193)
+    | "REFLECTION_COMPLETE" // Reflection analysis done (Issue #220)
+    | "REPLAN_TRIGGERED"; // Replanning triggered by reflection (Issue #220)
   agent?: string;
   inputSummary?: string;
   outputSummary?: string;
