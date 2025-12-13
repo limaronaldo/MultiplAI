@@ -98,6 +98,23 @@ describe("State Machine", () => {
     expect(getNextAction("CODING")).toBe("WAIT");
   });
 });
+    expect(getNextAction("REFLECTING")).toBe("WAIT");
+  });
+
+  test("returns correct next action for REPLANNING state", () => {
+    expect(getNextAction("REPLANNING")).toBe("CODE");
+  });
+
+  test("identifies REFLECTING and REPLANNING as waiting states", () => {
+    expect(isTerminal("REFLECTING")).toBe(false);
+    expect(isTerminal("REPLANNING")).toBe(false);
+  });
+
+  test("returns WAIT for intermediate states", () => {
+    expect(getNextAction("PLANNING")).toBe("WAIT");
+    expect(getNextAction("CODING")).toBe("WAIT");
+  });
+});
     expect(getNextAction("REFLECTING")).toBe("REFLECT");
   });
 
