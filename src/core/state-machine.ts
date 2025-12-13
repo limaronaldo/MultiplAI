@@ -10,10 +10,6 @@ export const validTransitions: StatusTransitions = {
   PLANNING_DONE: ["CODING", "BREAKING_DOWN", "FAILED"],
   BREAKING_DOWN: ["BREAKDOWN_DONE", "FAILED"],
   BREAKDOWN_DONE: ["ORCHESTRATING", "FAILED"],
-  ORCHESTRATING: ["CODING_DONE", "FAILED"],
-  CODING: ["CODING_DONE", "FAILED"],
-  CODING_DONE: ["TESTING", "FAILED"],
-  TESTING: ["TESTS_PASSED", "TESTS_FAILED", "FAILED"],
   TESTS_PASSED: ["REVIEWING", "FAILED"],
   TESTS_FAILED: ["FIXING", "REFLECTING", "FAILED"],
   FIXING: ["CODING_DONE", "FAILED"],
@@ -22,12 +18,20 @@ export const validTransitions: StatusTransitions = {
   REVIEWING: ["REVIEW_APPROVED", "REVIEW_REJECTED", "FAILED"],
   REVIEW_APPROVED: ["PR_CREATED", "FAILED"],
   REVIEW_REJECTED: ["CODING", "FAILED"],
-  PR_CREATED: ["WAITING_HUMAN", "COMPLETED", "FAILED"],
-  WAITING_HUMAN: ["CODING", "COMPLETED", "FAILED"],
-  COMPLETED: [],
-  FAILED: [],
-} as const;
-
+  FIXING: ["CODING_DONE", "FAILED"],
+  REFLECTING: ["REPLANNING", "FIXING", "FAILED"],
+  REPLANNING: ["CODING", "FAILED"],
+  REVIEWING: ["REVIEW_APPROVED", "REVIEW_REJECTED", "FAILED"],
+  REVIEW_APPROVED: ["PR_CREATED", "FAILED"],
+  REVIEW_REJECTED: ["CODING", "FAILED"],
+  | "TEST"
+  | "FIX"
+  | "REVIEW"
+  | "REFLECT"
+  | "REPLAN"
+  | "OPEN_PR"
+  | "WAIT"
+  | "DONE"
 export type TaskAction =
   | "PLAN"
   | "CODE"
@@ -44,13 +48,16 @@ export type TaskAction =
 
 export function getNextAction(status: TaskStatus): TaskAction {
   switch (status) {
-    case "NEW":
-      return "PLAN";
-    case "PLANNING_DONE":
-      // Decision between CODE and BREAKDOWN happens in orchestrator based on complexity
-      return "CODE";
-    case "BREAKING_DOWN":
+    case "TESTS_FAILED":
+      return "FIX";
+    case "REFLECTING":
+      return "REFLECT";
+    case "REPLANNING":
+      return "REPLAN";
+    case "REVIEWING":
       return "WAIT";
+    case "REVIEW_APPROVED":
+      return "OPEN_PR";
     case "ORCHESTRATING":
       return "ORCHESTRATE";
     case "CODING_DONE":
@@ -62,12 +69,13 @@ export function getNextAction(status: TaskStatus): TaskAction {
     case "REFLECTING":
       return "REFLECT";
     case "REPLANNING":
-      return "REPLAN";
-    case "REVIEWING":
-      return "WAIT";
-    case "REVIEW_APPROVED":
-      return "OPEN_PR";
-    case "REVIEW_REJECTED":
+    status === "FIXING" ||
+    status === "REVIEWING" ||
+    status === "REFLECTING" ||
+    status === "REPLANNING" ||
+    status === "BREAKING_DOWN" ||
+    status === "ORCHESTRATING"
+  );
       return "CODE";
     case "PR_CREATED":
     case "WAITING_HUMAN":
