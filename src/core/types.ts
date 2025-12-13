@@ -445,22 +445,24 @@ export interface GitHubCheckRunEvent {
   };
 }
 
-export interface GitHubPullRequestReviewEvent {
-  action: "submitted" | "edited" | "dismissed";
-  review: {
-    state: "approved" | "changes_requested" | "commented" | "dismissed";
-    body: string | null;
-    user: {
+  maxAttempts: number;
+  maxDiffLines: number;
+  allowedRepos: string[];
+  useAgenticLoop?: boolean;
+  allowedPaths: string[];
+  blockedPaths: string[];
+  autoDevLabel: string;
       login: string;
     };
   };
   pull_request: {
-    number: number;
-    title: string;
-    head: {
-      ref: string; // branch name
-    };
-    base: {
+  maxAttempts: 3,
+  maxDiffLines: 400,
+  allowedRepos: [],
+  useAgenticLoop: false,
+  allowedPaths: ["src/", "lib/", "tests/", "test/"],
+  blockedPaths: [".env", "secrets/", ".github/workflows/"],
+  autoDevLabel: "auto-dev",
       ref: string;
     };
   };
@@ -495,10 +497,13 @@ export interface TaskEvent {
   metadata?: Record<string, unknown>; // For structured data like consensus decisions
   createdAt: Date;
 }
+  // Timestamps
+  createdAt: Date;
+  updatedAt: Date;
 
-// ============================================
-// Consensus Decision (Issue #17)
-// ============================================
+  // Agentic loop memory
+  agenticMemory?: Record<string, unknown>;
+}
 
 export interface CandidateEvaluation {
   model: string;
