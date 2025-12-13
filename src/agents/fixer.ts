@@ -7,6 +7,7 @@ interface FixerInput {
   currentDiff: string;
   errorLogs: string;
   fileContents: Record<string, string>;
+  knowledgeGraphContext?: string;
 }
 
 // Default fixer model - Kimi K2 Thinking for tool-oriented debugging
@@ -103,6 +104,8 @@ ${input.currentDiff}
 \`\`\`
 ${input.errorLogs}
 \`\`\`
+
+${input.knowledgeGraphContext ? `\n## Knowledge Graph Context (best-effort)\n${input.knowledgeGraphContext}\n` : ""}
 
 ## Current File Contents
 Note: depending on execution mode, these contents may reflect the base branch *before* the diff above is applied. Use \`currentDiff\` as the source of truth for the intended changes, and output a single complete diff that reaches the fixed final state.

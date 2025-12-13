@@ -11,6 +11,7 @@ interface CoderInput {
   plan: string[];
   targetFiles: string[];
   fileContents: Record<string, string>;
+  knowledgeGraphContext?: string;
   previousDiff?: string;
   lastError?: string;
   // Multi-file coordination (optional)
@@ -182,6 +183,8 @@ ${input.plan.map((p, i) => `${i + 1}. ${p}`).join("\n")}
 
 ## Target Files
 ${input.targetFiles.join(", ")}
+
+${input.knowledgeGraphContext ? `\n## Knowledge Graph Context (best-effort)\n${input.knowledgeGraphContext}\n` : ""}
 
 ## Current File Contents
 ${fileContentsStr}

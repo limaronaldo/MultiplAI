@@ -57,7 +57,16 @@ export class EntityExtractorAgent extends BaseAgent<
 
   constructor(config: EntityExtractorConfig = {}) {
     super(config);
-    this.supported = new Set(config.supportedLanguages ?? ["unknown"]);
+    this.supported = new Set(
+      config.supportedLanguages ?? [
+        "typescript",
+        "javascript",
+        "python",
+        "rust",
+        "go",
+        "unknown",
+      ],
+    );
   }
 
   async run(input: EntityExtractionInput): Promise<EntityExtractionResult> {
@@ -98,4 +107,3 @@ ${input.content}
     return { entities, language, filePath: input.filePath };
   }
 }
-
