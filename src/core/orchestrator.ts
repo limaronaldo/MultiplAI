@@ -51,6 +51,7 @@ import {
   type SelectionContext,
 } from "./model-selection";
 import { normalizePatch, detectPatchFormat } from "./patch-formats";
+import { ragRuntime } from "../services/rag/rag-runtime";
 import { KnowledgeGraphService } from "./knowledge-graph/knowledge-graph-service";
 
 const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
@@ -149,6 +150,9 @@ export class Orchestrator {
     processingTasks.add(task.id);
     logger.info(`Acquired lock for task ${task.id}`);
 
+    // Best-effort: initialize RAG index on first task for this repo (Issue #211)
+    this.ensureRagInitialized(task, logger);
+
     const action = getNextAction(task.status);
     logger.info(`${task.status} -> action: ${action}`);
 
@@ -189,6 +193,26 @@ export class Orchestrator {
       processingTasks.delete(task.id);
       logger.info(`Released lock for task ${task.id}`);
     }
+  }
+
+  private ensureRagInitialized(task: Task, logger: Logger): void {
+    const repoFullName = task.githubRepo;
+    void ragRuntime
+      .ensureIndexed(
+        { repoFullName },
+        async ({ repoFullName: repo, ref, maxFiles }) =>
+          this.github.getSourceFiles(
+            repo,
+            ref,
+            [".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".go"],
+            maxFiles ?? 200,
+          ),
+      )
+      .catch((error) => {
+        logger.warn(
+          `[RAG] initialization failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
   }
 
   /**
