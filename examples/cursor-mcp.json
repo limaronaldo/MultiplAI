@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "multiplai": {
+      "command": "bun",
+      "args": ["run", "src/mcp-server.ts"],
+      "env": {
+        "OPENAI_API_KEY": "your-openai-api-key",
+        "ANTHROPIC_API_KEY": "your-anthropic-api-key",
+        "GITHUB_TOKEN": "your-github-token",
+        "DATABASE_URL": "your-database-url"
+      }
+    }
+  }
+}
