@@ -60,13 +60,12 @@ export function createStatusHandler(deps: StatusDeps) {
 
     const task = await db.getTask(taskId);
     if (!task) {
-      return { ok: false, error: "Task not found", taskId };
+      throw new Error("Task not found");
     }
 
     const events = await db.getTaskEvents(taskId);
 
     return {
-      ok: true,
       taskId,
       status: task.status,
       phase: phaseFromStatus(task.status),
