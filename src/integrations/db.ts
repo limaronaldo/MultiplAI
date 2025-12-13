@@ -228,7 +228,10 @@ export const db = {
     return results.map(this.mapTask);
   },
 
-  async getRecentTasksByRepo(repo: string, limit: number = 10): Promise<Task[]> {
+  async getRecentTasksByRepo(
+    repo: string,
+    limit: number = 10,
+  ): Promise<Task[]> {
     const sql = getDb();
     const results = await sql`
       SELECT * FROM tasks
@@ -670,5 +673,88 @@ export const db = {
         diff: s.diff!,
         order: index,
       }));
+  },
+
+  // ============================================
+  // MCP Support Functions
+  // ============================================
+
+  /**
+   * Get tasks for a specific repository
+   */
+  async getTasksForRepo(
+    owner: string,
+    repo: string,
+    limit: number = 10,
+  ): Promise<Task[]> {
+    const sql = getDb();
+    const fullRepo = `${owner}/${repo}`;
+    const results = await sql`
+      SELECT * FROM tasks
+      WHERE github_repo = ${fullRepo}
+      ORDER BY created_at DESC
+      LIMIT ${limit}
+    `;
+    return results.map(this.mapTask);
+  },
+
+  /**
+   * Get repository configuration (placeholder - returns null if not configured)
+   */
+  async getRepoConfig(
+    owner: string,
+    repo: string,
+  ): Promise<Record<string, unknown> | null> {
+    // For now, repo configs are not stored in DB
+    // This is a placeholder for future implementation
+    return null;
+  },
+
+  /**
+   * Get learned fix patterns for a repository
+   */
+  async getFixPatterns(
+    owner: string,
+    repo: string,
+    limit: number = 20,
+  ): Promise<unknown[]> {
+    const sql = getDb();
+    const fullRepo = `${owner}/${repo}`;
+    try {
+      const results = await sql`
+        SELECT * FROM fix_patterns
+        WHERE repo = ${fullRepo}
+        ORDER BY created_at DESC
+        LIMIT ${limit}
+      `;
+      return results;
+    } catch {
+      // Table may not exist
+      return [];
+    }
+  },
+
+  /**
+   * Get architectural decisions for a repository
+   */
+  async getDecisions(
+    owner: string,
+    repo: string,
+    limit: number = 20,
+  ): Promise<unknown[]> {
+    const sql = getDb();
+    const fullRepo = `${owner}/${repo}`;
+    try {
+      const results = await sql`
+        SELECT * FROM decisions
+        WHERE repo = ${fullRepo}
+        ORDER BY created_at DESC
+        LIMIT ${limit}
+      `;
+      return results;
+    } catch {
+      // Table may not exist
+      return [];
+    }
   },
 };
