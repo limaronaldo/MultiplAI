@@ -21,13 +21,13 @@ export function createOrchestratorError(
 ): OrchestratorError {
   const error = new Error(message) as OrchestratorError;
   error.code = code;
-  error.code = code;
-  error.taskId = taskId;
-  error.recoverable = recoverable;
-  return error;
-}
-// ============================================
-// Task Status
+  TESTS_PASSED: "TESTS_PASSED",
+  TESTS_FAILED: "TESTS_FAILED",
+  REFLECTING: "REFLECTING",
+  REPLANNING: "REPLANNING",
+  FIXING: "FIXING",
+  REVIEWING: "REVIEWING",
+  REVIEW_APPROVED: "REVIEW_APPROVED",
 // ============================================
 
 export const TaskStatus = {
