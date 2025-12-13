@@ -51,6 +51,7 @@ import {
   type SelectionContext,
 } from "./model-selection";
 import { normalizePatch, detectPatchFormat } from "./patch-formats";
+import { KnowledgeGraphService } from "./knowledge-graph/knowledge-graph-service";
 
 const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
 const ENABLE_LEARNING = process.env.ENABLE_LEARNING !== "false"; // Default to true
@@ -82,6 +83,7 @@ export class Orchestrator {
   private foreman: ForemanService;
   private commandExecutor: CommandExecutor;
   private systemLogger: Logger;
+  private knowledgeGraph: KnowledgeGraphService;
 
   // Multi-agent metadata for PR comments
   private lastCoderConsensus?: string;
@@ -106,6 +108,7 @@ export class Orchestrator {
     this.foreman = new ForemanService();
     this.commandExecutor = new CommandExecutor();
     this.systemLogger = createSystemLogger("orchestrator");
+    this.knowledgeGraph = new KnowledgeGraphService();
 
     if (this.multiAgentConfig.enabled) {
       this.systemLogger.info("Multi-agent mode ENABLED");
@@ -682,11 +685,17 @@ export class Orchestrator {
       task.targetFiles || [],
     );
 
+    const knowledgeContext = await this.knowledgeGraph.enhanceContext(
+      task,
+      fileContents,
+    );
+
     const coderInput = {
       definitionOfDone: task.definitionOfDone || [],
       plan: task.plan || [],
       targetFiles: task.targetFiles || [],
       fileContents,
+      knowledgeGraphContext: knowledgeContext?.summary,
       previousDiff: task.currentDiff,
       lastError: task.lastError,
       // Multi-file coordination
@@ -795,6 +804,15 @@ export class Orchestrator {
 
     task.currentDiff = coderOutput.diff;
     task.commitMessage = coderOutput.commitMessage;
+
+    const impact = await this.knowledgeGraph.analyzeImpact(
+      task,
+      coderOutput.diff,
+      fileContents,
+    );
+    if (impact?.warnings?.length) {
+      for (const w of impact.warnings) logger.warn(`[KnowledgeGraph] ${w}`);
+    }
 
     // Execute pre-diff commands (e.g., npm install)
     if (task.commands && task.commandOrder === "before_diff") {
@@ -1066,6 +1084,11 @@ export class Orchestrator {
       task.branchName,
     );
 
+    const knowledgeContext = await this.knowledgeGraph.enhanceContext(
+      task,
+      fileContents,
+    );
+
     // Query for known fix patterns (Issue #195)
     let enrichedErrorLogs = task.lastError || "";
     if (ENABLE_LEARNING) {
@@ -1098,6 +1121,7 @@ export class Orchestrator {
       currentDiff: task.currentDiff || "",
       errorLogs: enrichedErrorLogs,
       fileContents,
+      knowledgeGraphContext: knowledgeContext?.summary,
     };
 
     let fixerOutput;
@@ -1189,6 +1213,15 @@ export class Orchestrator {
 
     task.currentDiff = fixerOutput.diff;
     task.commitMessage = fixerOutput.commitMessage;
+
+    const impact = await this.knowledgeGraph.analyzeImpact(
+      task,
+      fixerOutput.diff,
+      fileContents,
+    );
+    if (impact?.warnings?.length) {
+      for (const w of impact.warnings) logger.warn(`[KnowledgeGraph] ${w}`);
+    }
 
     // Validate diff before applying
     if (VALIDATE_DIFF) {
@@ -1555,12 +1588,13 @@ export class Orchestrator {
 
     if (options.applyToGitHub) {
       // Apply the validated diff
-      await this.github.applyDiff(
+      const commitSha = await this.github.applyDiff(
         task.githubRepo,
         task.branchName!,
         diff,
         commitMessage,
       );
+      await this.knowledgeGraph.onCommitApplied(task, diff, commitSha);
     } else {
       logger.info("Diff validated (not pushed yet)");
     }
