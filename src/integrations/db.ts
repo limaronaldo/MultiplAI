@@ -228,6 +228,17 @@ export const db = {
     return results.map(this.mapTask);
   },
 
+  async getRecentTasksByRepo(repo: string, limit: number = 10): Promise<Task[]> {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM tasks
+      WHERE github_repo = ${repo}
+      ORDER BY created_at DESC
+      LIMIT ${limit}
+    `;
+    return results.map(this.mapTask);
+  },
+
   // ============================================
   // Task Events
   // ============================================
@@ -269,6 +280,50 @@ export const db = {
       ORDER BY created_at ASC
     `;
     return results.map(this.mapTaskEvent);
+  },
+
+  async getRecentConsensusDecisions(
+    repo: string,
+    limit: number = 10,
+  ): Promise<
+    Array<{
+      taskId: string;
+      createdAt: Date;
+      agent: string | null;
+      metadata: Record<string, unknown> | null;
+      githubIssueNumber: number;
+      githubIssueTitle: string;
+    }>
+  > {
+    const sql = getDb();
+    const results = await sql`
+      SELECT
+        e.task_id,
+        e.created_at,
+        e.agent,
+        e.metadata,
+        t.github_issue_number,
+        t.github_issue_title
+      FROM task_events e
+      INNER JOIN tasks t ON t.id = e.task_id
+      WHERE t.github_repo = ${repo}
+        AND e.event_type = 'CONSENSUS_DECISION'
+      ORDER BY e.created_at DESC
+      LIMIT ${limit}
+    `;
+
+    return results.map((row: any) => ({
+      taskId: row.task_id,
+      createdAt: new Date(row.created_at),
+      agent: row.agent || null,
+      metadata: row.metadata
+        ? typeof row.metadata === "string"
+          ? JSON.parse(row.metadata)
+          : row.metadata
+        : null,
+      githubIssueNumber: row.github_issue_number,
+      githubIssueTitle: row.github_issue_title,
+    }));
   },
 
   async getTaskEventsForAnalytics(sinceDate: Date): Promise<

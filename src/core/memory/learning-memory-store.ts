@@ -148,6 +148,21 @@ export class LearningMemoryStore {
     return scored.map((s) => s.pattern);
   }
 
+  /**
+   * List fix patterns for a repo (best-effort ranking)
+   */
+  async listFixPatterns(repo: string, limit: number = 20): Promise<FixPattern[]> {
+    const patterns = await this.getFixPatternsForRepo(repo);
+    return patterns
+      .sort(
+        (a, b) =>
+          b.successRate - a.successRate ||
+          b.successCount - a.successCount ||
+          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      )
+      .slice(0, limit);
+  }
+
   // =========================================================================
   // CODEBASE CONVENTIONS
   // =========================================================================
@@ -299,6 +314,19 @@ export class LearningMemoryStore {
 
       return true;
     });
+  }
+
+  /**
+   * List recent failure modes for a repo
+   */
+  async listFailures(repo: string, limit: number = 20): Promise<FailureMode[]> {
+    const failures = await this.getFailuresForRepo(repo);
+    return failures
+      .sort(
+        (a, b) =>
+          new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime(),
+      )
+      .slice(0, limit);
   }
 
   // =========================================================================
