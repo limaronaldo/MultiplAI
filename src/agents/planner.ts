@@ -1,9 +1,9 @@
 import { BaseAgent } from "./base";
 import { PlannerOutput, PlannerOutputSchema } from "../core/types";
-import { RagService } from "../services/rag";
+import { ragService } from "../services/rag";
+import type { CodeChunk } from "../services/rag";
 
 // Default planner model - can be overridden via env var
-// Planner uses Kimi K2 Thinking for agentic planning with 262K context
 // Planner uses Kimi K2 Thinking for agentic planning with 262K context
 // Cost: ~$0.15/task vs ~$0.50 with gpt-5.1-codex-max (70% savings)
 const DEFAULT_PLANNER_MODEL =
@@ -13,6 +13,54 @@ interface PlannerInput {
   issueTitle: string;
   issueBody: string;
   repoContext: string;
+}
+
+function uniq<T>(values: T[]): T[] {
+  const out: T[] = [];
+  const seen = new Set<T>();
+  for (const v of values) {
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
+}
+
+function asCodeChunk(value: unknown): CodeChunk | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as any;
+  if (v.chunk && typeof v.chunk === "object") return asCodeChunk(v.chunk);
+  if (typeof v.filePath !== "string") return null;
+  if (typeof v.content !== "string") return null;
+  if (typeof v.startLine !== "number") return null;
+  if (typeof v.endLine !== "number") return null;
+  return v as CodeChunk;
+}
+
+function buildRagContext(results: unknown[]): { suggestedFiles: string[]; snippets: string } {
+  const chunks: CodeChunk[] = [];
+  for (const r of results) {
+    const c = asCodeChunk(r);
+    if (c) chunks.push(c);
+  }
+
+  const suggestedFiles = uniq(chunks.map((c) => c.filePath)).slice(0, 8);
+  const snippetChunks = chunks.slice(0, 3);
+
+  const snippets = snippetChunks
+    .map((c) => {
+      const body =
+        c.content.length > 800 ? `${c.content.slice(0, 800)}\n…` : c.content;
+      return [
+        `### ${c.filePath}:${c.startLine}`,
+        "```",
+        body,
+        "```",
+      ].join("\n");
+    })
+    .join("\n\n");
+
+  return { suggestedFiles, snippets };
 }
 
 const SYSTEM_PROMPT = `You are a senior tech lead planning the implementation of a GitHub issue.
@@ -41,83 +89,49 @@ When the change involves 3+ files, include a "multiFilePlan" with:
 4. Rollback strategy
 
 ### Dependency Layers (execute in this order):
+1. **types**: Type definitions, interfaces, schemas (no deps)
+2. **utils**: Utility functions (depend on types)
+3. **services**: Business logic (depend on types, utils)
+4. **components**: UI/handlers (depend on services)
+5. **tests**: Test files (depend on all above)
 
-export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
-  private ragService: RagService;
+## Command Execution (optional)
 
-  constructor() {
-    // Kimi K2 Thinking - agentic reasoning model optimized for planning
-    // No reasoningEffort param needed - Kimi handles reasoning internally
-    this.ragService = new RagService();
-    super({
-      model: DEFAULT_PLANNER_MODEL,
-      temperature: 0.3,
-      maxTokens: 4096,
-    });
-    this.ragService = new RagService();
-  }
+If the task requires running shell commands (installing packages, migrations, etc.), include:
+- "commands": Array of commands to execute
+- "commandOrder": "before_diff" or "after_diff"
 
-  async run(input: PlannerInput): Promise<PlannerOutput> {
-    // Check if RAG is initialized and perform search
-    let ragContext = "";
-    if (this.ragService.isInitialized()) {
-      const ragResults = await this.ragService.search(input.issueBody);
-      if (ragResults.snippets) {
-        ragContext += `\n\n## Relevant Code Snippets from RAG Search\n${ragResults.snippets}\n`;
-      }
-      if (ragResults.suggestedFiles) {
-        ragContext += `\n\n## Suggested Files from RAG\n${ragResults.suggestedFiles.map(f => `- ${f}`).join('\n')}\n`;
-      }
-    }
+### Available Command Types (prefer bun_add for this project):
+- bun_add: { type: "bun_add", packages: ["zod"], dev?: true }  // PREFERRED for package installation
+- npm_install: { type: "npm_install", packages: ["lodash", "@types/lodash"], dev?: true }
+- pnpm_add: { type: "pnpm_add", packages: ["axios"], dev?: true }
+- yarn_add: { type: "yarn_add", packages: ["react"], dev?: true }
+- prisma_migrate: { type: "prisma_migrate", name: "add_users_table" }
+- prisma_generate: { type: "prisma_generate" }
+- prisma_db_push: { type: "prisma_db_push" }
+- drizzle_generate: { type: "drizzle_generate" }
+- drizzle_migrate: { type: "drizzle_migrate" }
+- create_directory: { type: "create_directory", path: "src/new-feature" }
+- typecheck: { type: "typecheck" }
+- lint_fix: { type: "lint_fix" }
+- format: { type: "format" }
 
-    const enrichedIssueBody = (input.issueBody || "No description provided") + ragContext;
+### When to use commands:
+- Package installation: Include BEFORE diff (so code can import them)
+- Prisma/Drizzle generate: Include AFTER diff (after schema changes)
+- Directory creation: Include BEFORE diff
+- Formatting/linting: Include AFTER diff
 
-    const userPrompt = `
-## Issue Title
-${input.issueTitle}
-${input.issueTitle}
----
-
-## Issue Description
-${enrichedIssueBody}
-
-## Repository Context
-${input.repoContext}
-      const ragResults = await this.ragService.search(input.issueBody);
-      if (ragResults.snippets) {
-        ragContext += `\n\n## Relevant Code Snippets from RAG Search\n${ragResults.snippets}\n`;
-      }
-      if (ragResults.suggestedFiles) {
-        ragContext += `\n## Suggested Files from RAG\n${ragResults.suggestedFiles.map(f => `- ${f}`).join('\n')}\n`;
-      }
-    }
-
-    const enrichedIssueBody = (input.issueBody || "No description provided") + ragContext;
-
-    const response = await this.complete(SYSTEM_PROMPT, userPrompt);
-
-      `[Planner] Response preview: ${String(response).slice(0, 500)}...`,
-    );
-
-    // Handle case where response is already an object (some API responses)
-    if (typeof response === "object" && response !== null) {
-      console.log(
-        `[Planner] Response is already an object, validating directly`,
-      );
-
-    const parsed = this.parseJSON<PlannerOutput>(response);
-
-    // Debug: Log parsed result
-    console.log(
-      `[Planner] Parsed result keys: ${Object.keys(parsed || {}).join(", ")}`,
-    );
-
-    // Validate with Zod
-    return PlannerOutputSchema.parse(parsed);
-  }
-}
-
-  private ragService: RagService;
+Respond ONLY with valid JSON matching this schema:
+{
+  "definitionOfDone": ["string array of acceptance criteria"],
+  "plan": ["string array of implementation steps"],
+  "targetFiles": ["string array of file paths"],
+  "estimatedComplexity": "XS" | "S" | "M" | "L" | "XL",
+  "risks": ["optional array of potential issues"],
+  "commands": [  // Optional: commands to run
+    { "type": "bun_add", "packages": ["zod"], "dev": false },
+    { "type": "prisma_generate" }
   ],
   "commandOrder": "before_diff" | "after_diff",  // When to run commands
   "multiFilePlan": {  // Include for M+ complexity with 3+ files
@@ -157,12 +171,43 @@ export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
   }
 
   async run(input: PlannerInput): Promise<PlannerOutput> {
+    let ragSuggestedFiles: string[] = [];
+    let ragSnippets = "";
+
+    if (ragService.isInitialized()) {
+      try {
+        const results = await ragService.search(
+          `${input.issueTitle}\n\n${input.issueBody}`,
+        );
+        const ctx = buildRagContext(results);
+        ragSuggestedFiles = ctx.suggestedFiles;
+        ragSnippets = ctx.snippets;
+      } catch (e) {
+        console.warn("[Planner] RAG search failed, continuing without it:", e);
+      }
+    }
+
+    const ragContext =
+      ragSuggestedFiles.length || ragSnippets
+        ? [
+            "## RAG Suggestions",
+            ragSuggestedFiles.length
+              ? `### Suggested Files\n${ragSuggestedFiles.map((f) => `- ${f}`).join("\n")}`
+              : "",
+            ragSnippets ? `### Relevant Snippets\n${ragSnippets}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n\n")
+        : "";
+
     const userPrompt = `
 ## Issue Title
 ${input.issueTitle}
 
 ## Issue Description
 ${input.issueBody || "No description provided"}
+
+${ragContext}
 
 ## Repository Context
 ${input.repoContext}
@@ -174,28 +219,25 @@ Analyze this issue and provide your implementation plan as JSON.
 
     const response = await this.complete(SYSTEM_PROMPT, userPrompt);
 
-    // Debug: Log raw response type and preview
     console.log(`[Planner] Response type: ${typeof response}`);
-    console.log(
-      `[Planner] Response preview: ${String(response).slice(0, 500)}...`,
-    );
+    console.log(`[Planner] Response preview: ${String(response).slice(0, 500)}...`);
 
-    // Handle case where response is already an object (some API responses)
     if (typeof response === "object" && response !== null) {
-      console.log(
-        `[Planner] Response is already an object, validating directly`,
-      );
-      return PlannerOutputSchema.parse(response);
+      const validated = PlannerOutputSchema.parse(response);
+      return {
+        ...validated,
+        targetFiles: uniq([...(validated.targetFiles ?? []), ...ragSuggestedFiles]),
+      };
     }
 
     const parsed = this.parseJSON<PlannerOutput>(response);
+    console.log(`[Planner] Parsed result keys: ${Object.keys(parsed || {}).join(", ")}`);
 
-    // Debug: Log parsed result
-    console.log(
-      `[Planner] Parsed result keys: ${Object.keys(parsed || {}).join(", ")}`,
-    );
-
-    // Validate with Zod
-    return PlannerOutputSchema.parse(parsed);
+    const validated = PlannerOutputSchema.parse(parsed);
+    return {
+      ...validated,
+      targetFiles: uniq([...(validated.targetFiles ?? []), ...ragSuggestedFiles]),
+    };
   }
 }
+
