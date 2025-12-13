@@ -33,6 +33,8 @@ export function createOrchestratorError(
   REVIEW_APPROVED: "REVIEW_APPROVED",
   REVIEW_REJECTED: "REVIEW_REJECTED",
   PR_CREATED: "PR_CREATED",
+  REVIEW_REJECTED: "REVIEW_REJECTED",
+  PR_CREATED: "PR_CREATED",
   WAITING_HUMAN: "WAITING_HUMAN",
   PLANNING: "PLANNING",
   PLANNING_DONE: "PLANNING_DONE",
@@ -91,10 +93,11 @@ export interface Task {
 
   // Tracking
   attemptCount: number;
-  // Tracking
-  attemptCount: number;
   maxAttempts: number;
   rootCause?: ReflectionRootCause;
+  lastError?: string;
+
+  // Parent-child relationship (for orchestrated tasks)
   lastError?: string;
 
   // Parent-child relationship (for orchestrated tasks)
