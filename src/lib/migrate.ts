@@ -443,6 +443,26 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_kgs_repo ON knowledge_graph_sync(repo_full_name)`;
   console.log("✅ Created knowledge graph tables");
 
+  // Add repo scoping for multi-repo deployments (v0.9)
+  await sql`
+    ALTER TABLE knowledge_entities
+    ADD COLUMN IF NOT EXISTS repo_full_name VARCHAR(255)
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ke_repo ON knowledge_entities(repo_full_name)`;
+
+  await sql`
+    ALTER TABLE entity_relationships
+    ADD COLUMN IF NOT EXISTS repo_full_name VARCHAR(255)
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_er_repo ON entity_relationships(repo_full_name)`;
+
+  await sql`
+    ALTER TABLE invalidation_events
+    ADD COLUMN IF NOT EXISTS repo_full_name VARCHAR(255)
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ie_repo ON invalidation_events(repo_full_name)`;
+  console.log("✅ Added knowledge graph repo scoping");
+
   console.log("\n✨ Migrations complete!");
 
   await sql.end();

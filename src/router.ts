@@ -12,6 +12,7 @@ import { db } from "./integrations/db";
 import { dbJobs } from "./integrations/db-jobs";
 import { JobRunner } from "./core/job-runner";
 import { LinearService } from "./integrations/linear";
+import { knowledgeGraphSync } from "./core/knowledge-graph/sync-service";
 import { createHmac, timingSafeEqual } from "crypto";
 import { Octokit } from "octokit";
 
@@ -162,6 +163,10 @@ route("POST", "/webhooks/github", async (req) => {
     return handleIssueEvent(payload as GitHubIssueEvent);
   }
 
+  if (event === "push") {
+    return handlePushEvent(payload as any);
+  }
+
   if (event === "check_run") {
     return handleCheckRunEvent(payload as GitHubCheckRunEvent);
   }
@@ -174,6 +179,36 @@ route("POST", "/webhooks/github", async (req) => {
 
   return Response.json({ ok: true, message: "Event ignored" });
 });
+
+async function handlePushEvent(payload: any): Promise<Response> {
+  const repo = payload?.repository?.full_name;
+  const commitSha = payload?.after;
+  const commits = Array.isArray(payload?.commits) ? payload.commits : [];
+
+  if (!repo || typeof repo !== "string") {
+    return Response.json({ ok: false, error: "Missing repository.full_name" }, { status: 400 });
+  }
+
+  if (!knowledgeGraphSync.enabled()) {
+    return Response.json({ ok: true, message: "Knowledge graph sync disabled" });
+  }
+
+  const changedFiles = new Set<string>();
+  for (const c of commits) {
+    for (const p of [...(c.added ?? []), ...(c.modified ?? []), ...(c.removed ?? [])]) {
+      if (typeof p === "string") changedFiles.add(p);
+    }
+  }
+
+  // Fire-and-forget incremental sync.
+  void knowledgeGraphSync.triggerIncrementalSync({
+    repoFullName: repo,
+    commitSha: typeof commitSha === "string" ? commitSha : "",
+    changedFiles: [...changedFiles],
+  });
+
+  return Response.json({ ok: true, message: "Incremental sync scheduled" });
+}
 
 async function handleIssueEvent(payload: GitHubIssueEvent): Promise<Response> {
   const { action, issue, repository } = payload;
@@ -208,6 +243,14 @@ async function handleIssueEvent(payload: GitHubIssueEvent): Promise<Response> {
 
     if (!hasAutoDevLabel) {
       return Response.json({ ok: true, message: "Not an auto-dev issue" });
+    }
+
+    // Best-effort initial sync on first processing
+    if (knowledgeGraphSync.enabled()) {
+      void knowledgeGraphSync.triggerFullSync({
+        repoFullName: repository.full_name,
+        commitSha: null,
+      });
     }
 
     // Verifica se já existe task para esta issue
@@ -444,6 +487,40 @@ async function handlePullRequestReviewEvent(
 
 route("GET", "/api/health", async () => {
   return Response.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// Knowledge Graph API (best-effort; requires ENABLE_KNOWLEDGE_GRAPH_SYNC=true)
+route("POST", "/api/knowledge-graph/sync/:repo", async (req) => {
+  const url = new URL(req.url);
+  const repo = decodeURIComponent(url.pathname.split("/").pop() || "");
+  if (!isValidRepo(repo)) {
+    return Response.json({ error: "Invalid repo" }, { status: 400 });
+  }
+  if (!knowledgeGraphSync.enabled()) {
+    return Response.json({ error: "Knowledge graph sync disabled" }, { status: 400 });
+  }
+  void knowledgeGraphSync.triggerFullSync({ repoFullName: repo });
+  return Response.json({ ok: true, message: "Full sync scheduled" }, { status: 202 });
+});
+
+route("GET", "/api/knowledge-graph/status/:repo", async (req) => {
+  const url = new URL(req.url);
+  const repo = decodeURIComponent(url.pathname.split("/").pop() || "");
+  if (!isValidRepo(repo)) {
+    return Response.json({ error: "Invalid repo" }, { status: 400 });
+  }
+  const status = await knowledgeGraphSync.getStatus(repo);
+  return Response.json({ status });
+});
+
+route("GET", "/api/knowledge-graph/entities/:repo", async (req) => {
+  const url = new URL(req.url);
+  const repo = decodeURIComponent(url.pathname.split("/").pop() || "");
+  if (!isValidRepo(repo)) {
+    return Response.json({ error: "Invalid repo" }, { status: 400 });
+  }
+  const entities = await knowledgeGraphSync.listEntities(repo);
+  return Response.json({ entities });
 });
 
 route("GET", "/api/tasks", async () => {
