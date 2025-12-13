@@ -44,25 +44,45 @@ fly logs                 # View logs
 
 ---
 
-## Current Model Configuration (2025-12-12)
+## Current Model Configuration (2025-12-13)
 
 ⚠️ **CRITICAL: DO NOT CHANGE MODELS WITHOUT EXPRESS USER APPROVAL**
 
-| Agent | Model | Reasoning | Purpose |
-|-------|-------|-----------|---------|
-| **Planner** | `gpt-5.1-codex-max` | high | Deep reasoning for thorough analysis |
-| **Fixer** | `gpt-5.1-codex-max` | medium | Debugging with reasoning |
-| **Reviewer** | `gpt-5.1-codex-max` | medium | Pragmatic code review |
-| **Base/Fallback** | `claude-sonnet-4-5-20250929` | - | Default for other agents |
+### Core Agents
 
-### XS Task Model Selection (Effort-Based)
+| Agent | Model | Provider | Purpose |
+|-------|-------|----------|---------|
+| **Planner** | `moonshotai/kimi-k2-thinking` | OpenRouter (ZDR) | Agentic reasoning for planning |
+| **Fixer** | `moonshotai/kimi-k2-thinking` | OpenRouter (ZDR) | Agentic debugging |
+| **Reviewer** | `deepseek-speciale-high` | OpenRouter (ZDR) | Cheap reasoning for review |
+| **Escalation 1** | `kimi-k2-thinking` | OpenRouter (ZDR) | First retry with agentic model |
+| **Escalation 2** | `claude-opus-4-5-20251101` | Anthropic | Final fallback |
 
-| Effort Level | Model | Cost | Use Case |
-|--------------|-------|------|----------|
-| **low** | `x-ai/grok-code-fast-1` | ~$0.01/task | Typos, comments, simple renames |
-| **medium** | `gpt-5.1-codex-mini` | ~$0.05/task | Helper functions, simple bugs |
-| **high** | `claude-opus-4-5-20251101` | ~$0.15/task | New features, refactors |
-| **escalation** | `gpt-5.1-codex-max` | ~$2.00/task | After failure, deep reasoning |
+### Coder Model Selection (Effort-Based by Complexity)
+
+#### XS Tasks (Extra Small)
+| Effort | Model | Cost | Use Case |
+|--------|-------|------|----------|
+| **low** | `deepseek-speciale-low` | ~$0.005 | Typos, comments |
+| **medium** | `gpt-5.2-medium` | ~$0.08 | Simple bugs |
+| **high** | `gpt-5.2-high` | ~$0.15 | Complex single-file |
+| **default** | `x-ai/grok-code-fast-1` | ~$0.01 | Quick code changes |
+
+#### S Tasks (Small)
+| Effort | Model | Cost | Use Case |
+|--------|-------|------|----------|
+| **low** | `x-ai/grok-code-fast-1` | ~$0.01 | Simple changes |
+| **medium** | `gpt-5.2-low` | ~$0.03 | Multi-file simple |
+| **high** | `gpt-5.2-medium` | ~$0.08 | Multi-file complex |
+| **default** | `x-ai/grok-code-fast-1` | ~$0.01 | Quick code changes |
+
+#### M Tasks (Medium)
+| Effort | Model | Cost | Use Case |
+|--------|-------|------|----------|
+| **low** | `gpt-5.2-medium` | ~$0.08 | Simple features |
+| **medium** | `gpt-5.2-high` | ~$0.15 | Standard features |
+| **high** | `claude-opus-4-5-20251101` | ~$0.75 | Complex features |
+| **default** | `gpt-5.2-medium` | ~$0.08 | Balanced |
 
 ### Provider Routing
 
@@ -70,19 +90,22 @@ fly logs                 # View logs
 // Anthropic Direct API
 claude-opus-4-5-*, claude-sonnet-4-5-* → AnthropicClient
 
-// OpenAI Responses API (for Codex models)
-gpt-5.1-codex-max, gpt-5.1-codex-mini → OpenAIDirectClient
+// OpenAI Responses API (GPT-5.2 with reasoning effort)
+gpt-5.2-*, gpt-5.1-codex-* → OpenAIDirectClient
 
-// OpenRouter (for Grok, Gemini, etc.)
-x-ai/grok-code-fast-1 → OpenRouterClient
-google/gemini-* → OpenRouterClient
+// OpenRouter (Zero Data Retention providers)
+moonshotai/kimi-k2-thinking → Nebius/Baseten (ZDR)
+deepseek/deepseek-v3.2-speciale → OpenRouter
+x-ai/grok-code-fast-1 → OpenRouter
 ```
 
-### Model Version Notes
+### Model Notes
 
-- **Claude Sonnet 4.5**: Use `claude-sonnet-4-5-20250929` (NOT `20250514` - returns 404)
-- **Claude Opus 4.5**: Use `claude-opus-4-5-20251101`
-- **GPT-5.1 Codex**: Uses OpenAI Responses API (`/v1/responses`) with `reasoning.effort`
+- **Kimi K2 Thinking**: Trillion-param MoE, 262K context, optimized for agentic multi-step reasoning
+- **DeepSeek Speciale**: Ultra-cheap reasoning model with configurable effort levels
+- **GPT-5.2**: OpenAI's latest with reasoning effort ("none", "low", "medium", "high", "xhigh")
+- **Grok Code Fast**: xAI's fast code model, excellent for simple tasks
+- **ZDR**: Zero Data Retention - providers that don't log/train on requests
 
 ---
 
@@ -423,9 +446,9 @@ GITHUB_WEBHOOK_SECRET=xxx      # Webhook validation
 ### Model Selection (override defaults)
 
 ```bash
-PLANNER_MODEL=gpt-5.1-codex-max
-FIXER_MODEL=gpt-5.1-codex-max
-REVIEWER_MODEL=gpt-5.1-codex-max
+PLANNER_MODEL=moonshotai/kimi-k2-thinking
+FIXER_MODEL=moonshotai/kimi-k2-thinking
+REVIEWER_MODEL=deepseek-speciale-high
 DEFAULT_LLM_MODEL=claude-sonnet-4-5-20250929
 ```
 
@@ -707,4 +730,4 @@ Currently in NEW status, ready for processing:
 
 ---
 
-_Last updated: 2025-12-12_
+_Last updated: 2025-12-13_

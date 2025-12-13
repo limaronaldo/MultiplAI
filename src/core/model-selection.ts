@@ -14,19 +14,32 @@
  * 2. Model naming conventions vary (OpenRouter uses "anthropic/...", direct API uses "claude-...")
  * 3. User has specific preferences for cost/quality tradeoffs
  *
- * HYBRID STRATEGY (Option C) - Approved 2025-12-12:
+ * HYBRID STRATEGY - Updated 2025-12-13:
  * ─────────────────────────────────────────────────
  * Agent                │ Model                    │ Cost/Task │ Provider
  * ─────────────────────┼──────────────────────────┼───────────┼──────────────
  * Planner              │ kimi-k2-thinking         │ ~$0.15    │ OpenRouter (ZDR)
- * Coder XS low         │ deepseek-speciale-low    │ ~$0.005   │ OpenRouter (ZDR)
- * Coder XS medium      │ deepseek-speciale-medium │ ~$0.01    │ OpenRouter (ZDR)
- * Coder XS high        │ gpt-5.2-high             │ ~$0.15    │ OpenAI Direct
- * Coder S/M            │ gpt-5.2-high             │ ~$0.15    │ OpenAI Direct
- * Escalation 1         │ kimi-k2-thinking         │ ~$0.20    │ OpenRouter (ZDR)
- * Escalation 2         │ claude-opus-4-5          │ ~$0.75    │ Anthropic
  * Fixer                │ kimi-k2-thinking         │ ~$0.10    │ OpenRouter (ZDR)
  * Reviewer             │ deepseek-speciale-high   │ ~$0.02    │ OpenRouter (ZDR)
+ * Escalation 1         │ kimi-k2-thinking         │ ~$0.20    │ OpenRouter (ZDR)
+ * Escalation 2         │ claude-opus-4-5          │ ~$0.75    │ Anthropic
+ *
+ * CODER BY COMPLEXITY + EFFORT:
+ * ─────────────────────────────────────────────────
+ * XS low               │ deepseek-speciale-low    │ ~$0.005   │ OpenRouter (ZDR)
+ * XS medium            │ gpt-5.2-medium           │ ~$0.08    │ OpenAI Direct
+ * XS high              │ gpt-5.2-high             │ ~$0.15    │ OpenAI Direct
+ * XS default           │ grok-code-fast-1         │ ~$0.01    │ OpenRouter (ZDR)
+ * ─────────────────────────────────────────────────
+ * S low                │ grok-code-fast-1         │ ~$0.01    │ OpenRouter (ZDR)
+ * S medium             │ gpt-5.2-low              │ ~$0.03    │ OpenAI Direct
+ * S high               │ gpt-5.2-medium           │ ~$0.08    │ OpenAI Direct
+ * S default            │ grok-code-fast-1         │ ~$0.01    │ OpenRouter (ZDR)
+ * ─────────────────────────────────────────────────
+ * M low                │ gpt-5.2-medium           │ ~$0.08    │ OpenAI Direct
+ * M medium             │ gpt-5.2-high             │ ~$0.15    │ OpenAI Direct
+ * M high               │ claude-opus-4-5          │ ~$0.75    │ Anthropic
+ * M default            │ gpt-5.2-medium           │ ~$0.08    │ OpenAI Direct
  *
  * ZDR = Zero Data Retention (Parasail, Nebius, Baseten providers)
  *
@@ -273,7 +286,7 @@ export function selectModels(context: SelectionContext): ModelSelection {
     };
   }
 
-  // M tasks: gpt-5.2 (high) → Kimi K2 → Claude Opus
+  // M tasks: effort-based → Kimi K2 → Claude Opus
   if (complexity === "M") {
     if (attemptCount >= 2) {
       return {
@@ -291,15 +304,10 @@ export function selectModels(context: SelectionContext): ModelSelection {
         reason: "M complexity with 1 failure → Kimi K2 (agentic recovery)",
       };
     }
-    return {
-      tier: "standard",
-      models: ["gpt-5.2-high"],
-      useMultiAgent: false,
-      reason: "M complexity → gpt-5.2 (high reasoning)",
-    };
+    return selectForM(effort);
   }
 
-  // S tasks: gpt-5.2 (high) → Kimi K2 → Claude Opus
+  // S tasks: effort-based → Kimi K2 → Claude Opus
   if (complexity === "S") {
     if (attemptCount >= 2) {
       return {
@@ -317,12 +325,7 @@ export function selectModels(context: SelectionContext): ModelSelection {
         reason: "S complexity with 1 failure → Kimi K2 (agentic recovery)",
       };
     }
-    return {
-      tier: "standard",
-      models: ["gpt-5.2-high"],
-      useMultiAgent: false,
-      reason: "S complexity → gpt-5.2 (high reasoning)",
-    };
+    return selectForS(effort);
   }
 
   // XS tasks: effort-based selection with escalation
@@ -380,9 +383,9 @@ function selectForXS(
   if (effort === "medium") {
     return {
       tier: "medium",
-      models: ["deepseek-speciale-medium"],
+      models: ["gpt-5.2-medium"],
       useMultiAgent: false,
-      reason: "XS medium effort → DeepSeek Speciale (medium) ~$0.01",
+      reason: "XS medium effort → GPT-5.2 (medium) ~$0.08",
     };
   }
 
@@ -396,12 +399,103 @@ function selectForXS(
     };
   }
 
-  // undefined effort → default to DeepSeek medium
+  // undefined effort → default to Grok Code Fast (ultra-cheap, fast)
+  return {
+    tier: "fast",
+    models: ["x-ai/grok-code-fast-1"],
+    useMultiAgent: false,
+    reason: "XS (no effort specified) → Grok Code Fast ~$0.01",
+  };
+}
+
+/**
+ * Select models for S tasks based on effort level
+ *
+ * Option A (Cheap):
+ * - low: Grok Code Fast (~$0.01)
+ * - medium: GPT-5.2 low (~$0.03)
+ * - high: GPT-5.2 medium (~$0.08)
+ * - default: Grok Code Fast (~$0.01)
+ */
+function selectForS(effort: EffortLevel | undefined): ModelSelection {
+  if (effort === "low") {
+    return {
+      tier: "fast",
+      models: ["x-ai/grok-code-fast-1"],
+      useMultiAgent: false,
+      reason: "S low effort → Grok Code Fast ~$0.01",
+    };
+  }
+
+  if (effort === "medium") {
+    return {
+      tier: "medium",
+      models: ["gpt-5.2-low"],
+      useMultiAgent: false,
+      reason: "S medium effort → GPT-5.2 (low) ~$0.03",
+    };
+  }
+
+  if (effort === "high") {
+    return {
+      tier: "standard",
+      models: ["gpt-5.2-medium"],
+      useMultiAgent: false,
+      reason: "S high effort → GPT-5.2 (medium) ~$0.08",
+    };
+  }
+
+  // default
+  return {
+    tier: "fast",
+    models: ["x-ai/grok-code-fast-1"],
+    useMultiAgent: false,
+    reason: "S (no effort specified) → Grok Code Fast ~$0.01",
+  };
+}
+
+/**
+ * Select models for M tasks based on effort level
+ *
+ * - low: GPT-5.2 medium (~$0.08)
+ * - medium: GPT-5.2 high (~$0.15)
+ * - high: Claude Opus 4.5 (~$0.75)
+ * - default: GPT-5.2 medium (~$0.08)
+ */
+function selectForM(effort: EffortLevel | undefined): ModelSelection {
+  if (effort === "low") {
+    return {
+      tier: "medium",
+      models: ["gpt-5.2-medium"],
+      useMultiAgent: false,
+      reason: "M low effort → GPT-5.2 (medium) ~$0.08",
+    };
+  }
+
+  if (effort === "medium") {
+    return {
+      tier: "standard",
+      models: ["gpt-5.2-high"],
+      useMultiAgent: false,
+      reason: "M medium effort → GPT-5.2 (high) ~$0.15",
+    };
+  }
+
+  if (effort === "high") {
+    return {
+      tier: "fallback",
+      models: ["claude-opus-4-5-20251101"],
+      useMultiAgent: false,
+      reason: "M high effort → Claude Opus 4.5 ~$0.75",
+    };
+  }
+
+  // default
   return {
     tier: "medium",
-    models: ["deepseek-speciale-medium"],
+    models: ["gpt-5.2-medium"],
     useMultiAgent: false,
-    reason: "XS (no effort specified) → DeepSeek Speciale (medium) ~$0.01",
+    reason: "M (no effort specified) → GPT-5.2 (medium) ~$0.08",
   };
 }
 

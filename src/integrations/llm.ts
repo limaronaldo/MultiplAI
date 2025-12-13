@@ -2,7 +2,7 @@ import { AnthropicClient } from "./anthropic";
 import { OpenAIClient } from "./openai";
 import { OpenRouterClient } from "./openrouter";
 import { OpenAIDirectClient } from "./openai-direct";
-import { REASONING_MODEL_CONFIGS } from "../core/model-selection";
+import { ALL_MODEL_CONFIGS } from "../core/model-selection";
 
 /**
  * Resolve reasoning model config name to actual model + reasoningEffort
@@ -16,7 +16,7 @@ function resolveReasoningModelConfig(configName: string): {
   reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
 } {
   const config =
-    REASONING_MODEL_CONFIGS[configName as keyof typeof REASONING_MODEL_CONFIGS];
+    ALL_MODEL_CONFIGS[configName as keyof typeof ALL_MODEL_CONFIGS];
   if (config) {
     return config;
   }
