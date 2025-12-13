@@ -6,19 +6,18 @@ export type LoopAction = "plan" | "code" | "fix";
 export type LoopResultStatus = "success" | "failure";
 
 export interface AttemptRecord {
-  iteration: number;
-  action: LoopAction;
-  result: LoopResultStatus;
-  error?: string;
+  approach: string;
+  success: boolean;
+  error: string;
   timestamp: Date;
 }
 
 export interface ReflectionInput {
   originalIssue: string;
-  plan: string[];
-  diff: string;
-  testOutput: string;
-  attemptNumber: number;
+  previousAttempts: AttemptRecord[];
+}
+
+export interface ReflectionOutput {
   previousAttempts: AttemptRecord[];
 }
 
@@ -40,14 +39,13 @@ export interface LoopResult {
   success: boolean;
   iterations: number;
   replans: number;
-  finalDiff?: string;
-  reason?: string;
-}
-
 export const AttemptRecordSchema = z.object({
-  iteration: z.number().int().nonnegative(),
-  action: z.enum(["plan", "code", "fix"]),
-  result: z.enum(["success", "failure"]),
+  approach: z.string(),
+  success: z.boolean(),
+  error: z.string(),
+  timestamp: z.coerce.date(),
+});
+
   error: z.string().optional(),
   timestamp: z.coerce.date(),
 });
