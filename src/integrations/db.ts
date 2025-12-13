@@ -7,6 +7,12 @@ import {
   OrchestrationStateSchema,
 } from "../core/types";
 
+type AgenticMetrics = {
+  successDistribution: Record<number, number>;
+  averageIterations: number;
+  replanRate: number;
+};
+
 const connectionString = process.env.DATABASE_URL;
 
 // Conexão lazy - só conecta quando necessário
@@ -22,22 +28,28 @@ export function getDb() {
       max: 10,
       idle_timeout: 20,
     });
-  }
-  return sql;
-}
-
-export const db = {
-  // ============================================
+        parent_task_id,
+        subtask_index,
+        is_orchestrated
+        total_iterations,
+        replan_count,
+        final_confidence_score
+      ) VALUES (
+        ${task.githubRepo},
+        ${task.githubIssueNumber},
   // Tasks
   // ============================================
 
   async createTask(
-    task: Omit<Task, "id" | "createdAt" | "updatedAt">,
-  ): Promise<Task> {
-    const sql = getDb();
-    const [result] = await sql`
-      INSERT INTO tasks (
-        github_repo,
+        ${task.maxAttempts},
+        ${task.parentTaskId || null},
+        ${task.subtaskIndex ?? null},
+        ${task.totalIterations ?? 0},
+        ${task.replanCount ?? 0},
+        ${task.finalConfidenceScore ?? null}
+        ${task.isOrchestrated ?? false}
+      )
+      RETURNING *
         github_issue_number,
         github_issue_title,
         github_issue_body,
@@ -122,12 +134,24 @@ export const db = {
     if (updates.status !== undefined) {
       setClauses.push("status = $" + (values.length + 1));
       values.push(updates.status);
+    if (updates.estimatedEffort !== undefined) {
+      setClauses.push("estimated_effort = $" + (values.length + 1));
+      values.push(updates.estimatedEffort);
     }
-    if (updates.definitionOfDone !== undefined) {
-      setClauses.push("definition_of_done = $" + (values.length + 1));
-      values.push(JSON.stringify(updates.definitionOfDone));
+    if (updates.totalIterations !== undefined) {
+      setClauses.push("total_iterations = $" + (values.length + 1));
+      values.push(updates.totalIterations);
     }
-    if (updates.plan !== undefined) {
+    if (updates.replanCount !== undefined) {
+      setClauses.push("replan_count = $" + (values.length + 1));
+      values.push(updates.replanCount);
+    }
+    if (updates.finalConfidenceScore !== undefined) {
+      setClauses.push("final_confidence_score = $" + (values.length + 1));
+      values.push(updates.finalConfidenceScore);
+    }
+
+    setClauses.push("updated_at = NOW()");
       setClauses.push("plan = $" + (values.length + 1));
       values.push(JSON.stringify(updates.plan));
     }
@@ -204,11 +228,46 @@ export const db = {
   },
 
   async getPendingTasks(): Promise<Task[]> {
+    return this.mapTask(result);
+  },
+
+  async incrementIterationCount(id: string): Promise<Task> {
+    const sql = getDb();
+    const [result] = await sql`
+      UPDATE tasks
+      SET iteration_count = iteration_count + 1, updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING *
+    `;
+    return this.mapTask(result);
+  },
+
+  async incrementReplanCount(id: string): Promise<Task> {
+    const sql = getDb();
+    const [result] = await sql`
+      UPDATE tasks
+      SET replan_count = replan_count + 1, updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING *
+    `;
+    return this.mapTask(result);
+  },
+
+  async updateFinalConfidenceScore(id: string, score: number): Promise<Task> {
+    const sql = getDb();
+    const [result] = await sql`
+      UPDATE tasks
+      SET final_confidence_score = ${score}, updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING *
+    `;
+    return this.mapTask(result);
+  },
+
+  async getPendingTasks(): Promise<Task[]> {
     const sql = getDb();
     const results = await sql`
       SELECT * FROM tasks
-      WHERE status NOT IN ('COMPLETED', 'FAILED', 'WAITING_HUMAN')
-      ORDER BY created_at ASC
       LIMIT 10
     `;
     return results.map(this.mapTask);
@@ -217,9 +276,7 @@ export const db = {
   async getTasksByRepoAndStatus(
     repo: string,
     status: TaskStatus,
-  ): Promise<Task[]> {
-    const sql = getDb();
-    const results = await sql`
+++ b/src/integrations/db.ts
       SELECT * FROM tasks
       WHERE github_repo = ${repo}
       AND status = ${status}
@@ -242,46 +299,96 @@ export const db = {
   // ============================================
   // Task Events
   // ============================================
-
-  async createTaskEvent(
-    event: Omit<TaskEvent, "id" | "createdAt">,
-  ): Promise<TaskEvent> {
+  async getRecentTaskEvents(
+    since: { createdAt: Date; id: string } = {
+      createdAt: new Date(0),
+      id: "00000000-0000-0000-0000-000000000000",
+    },
+    taskId?: string,
+    limit: number = 50,
+  ): Promise<TaskEvent[]> {
     const sql = getDb();
-    const [result] = await sql`
-      INSERT INTO task_events (
-        task_id,
-        event_type,
-        agent,
-        input_summary,
-        output_summary,
-        tokens_used,
-        duration_ms,
-        metadata
-      ) VALUES (
-        ${event.taskId},
-        ${event.eventType},
-        ${event.agent || null},
-        ${event.inputSummary || null},
-        ${event.outputSummary || null},
-        ${event.tokensUsed || null},
-        ${event.durationMs || null},
-        ${event.metadata ? JSON.stringify(event.metadata) : null}
-      )
-      RETURNING *
-    `;
-    return this.mapTaskEvent(result);
-  },
+    let results;
 
-  async getTaskEvents(taskId: string): Promise<TaskEvent[]> {
-    const sql = getDb();
-    const results = await sql`
-      SELECT * FROM task_events
-      WHERE task_id = ${taskId}
-      ORDER BY created_at ASC
-    `;
+    if (taskId) {
+      results = await sql`
+        SELECT * FROM task_events
+        WHERE (
+          created_at > ${since.createdAt}
+          OR (created_at = ${since.createdAt} AND id > ${since.id})
+        )
+        AND task_id = ${taskId}
+        ORDER BY created_at ASC, id ASC
+        LIMIT ${limit}
+      `;
+    } else {
+      results = await sql`
+        SELECT * FROM task_events
+        WHERE (
+          created_at > ${since.createdAt}
+          OR (created_at = ${since.createdAt} AND id > ${since.id})
+        )
+        ORDER BY created_at ASC, id ASC
+        LIMIT ${limit}
+      `;
+    }
+
     return results.map(this.mapTaskEvent);
   },
 
+  async storeReflectionOutput(
+    taskId: string,
+    agent: string,
+    output: Record<string, unknown>,
+    tokensUsed?: number,
+    durationMs?: number,
+  ): Promise<TaskEvent> {
+    try {
+      return await this.createTaskEvent({
+        taskId,
+        eventType: "REFLECTION_OUTPUT",
+        agent,
+        outputSummary: JSON.stringify(output),
+        tokensUsed,
+        durationMs,
+        metadata: output,
+      });
+    } catch (error) {
+      console.error("Error storing reflection output:", error);
+      throw error;
+    }
+  },
+
+  async storeReplanTrigger(
+    taskId: string,
+    agent: string,
+    triggerReason: string,
+    metadata?: Record<string, unknown>,
+    tokensUsed?: number,
+    durationMs?: number,
+  ): Promise<TaskEvent> {
+    try {
+      return await this.createTaskEvent({
+        taskId,
+        eventType: "REPLAN_TRIGGER",
+        agent,
+        inputSummary: triggerReason,
+        tokensUsed,
+        durationMs,
+        metadata,
+      });
+    } catch (error) {
+      console.error("Error storing replan trigger:", error);
+      throw error;
+    }
+  },
+
+  // ============================================
+  // Helpers
+  // ============================================
+++ b/src/integrations/db.ts
+      updatedAt: new Date(row.updated_at),
+    };
   async getRecentConsensusDecisions(
     repo: string,
     limit: number = 10,
@@ -317,23 +424,29 @@ export const db = {
       createdAt: new Date(row.created_at),
       agent: row.agent || null,
       metadata: row.metadata
-        ? typeof row.metadata === "string"
-          ? JSON.parse(row.metadata)
-          : row.metadata
-        : null,
-      githubIssueNumber: row.github_issue_number,
-      githubIssueTitle: row.github_issue_title,
+        parent_task_id,
+        subtask_index,
+        is_orchestrated
+        total_iterations,
+        replan_count,
+        final_confidence_score
+      ) VALUES (
+        ${childData.githubRepo},
+        ${childData.githubIssueNumber},
     }));
   },
 
   async getTaskEventsForAnalytics(sinceDate: Date): Promise<
-    Array<{
-      agent?: string;
-      model?: string;
-      tokensUsed?: number;
-      inputTokens?: number;
-      outputTokens?: number;
-      createdAt: Date;
+        ${childData.maxAttempts},
+        ${parentId},
+        ${subtaskIndex},
+        ${childData.totalIterations ?? 0},
+        ${childData.replanCount ?? 0},
+        ${childData.finalConfidenceScore ?? null}
+        false
+      )
+      RETURNING *
+++ b/src/integrations/db.ts
     }>
   > {
     const sql = getDb();
@@ -577,15 +690,77 @@ export const db = {
           updated_at = NOW()
     `;
   },
+      .filter((s) => s.status === "completed" && s.diff)
+      .map((s, index) => ({
+        subtaskId: s.id,
+        diff: s.diff!,
+        order: index,
+      }));
+  },
 
-  /**
-   * Update a specific subtask's status in orchestration
-   */
-  async updateSubtaskStatus(
-    parentTaskId: string,
-    subtaskId: string,
-    update: {
-      status?: string;
+  // ============================================
+  // Agentic Metrics
+  // ============================================
+
+  async getAgenticMetrics(taskId: string): Promise<AgenticMetrics> {
+    const task = await this.getTask(taskId);
+    if (!task) throw new Error('Task not found');
+    const repo = task.githubRepo;
+    const [successDistribution, averageIterations, replanRate] = await Promise.all([
+      this.getSuccessDistribution(repo),
+      this.getAverageIterationsPerTask(repo),
+      this.getReplanRate(repo)
+    ]);
+    return {
+      successDistribution,
+      averageIterations,
+      replanRate
+    };
+  },
+
+  async getSuccessDistribution(repo: string): Promise<Record<number, number>> {
+    const sql = getDb();
+    const results = await sql`
+      SELECT attempt_count, COUNT(*) as count
+      FROM tasks
+      WHERE github_repo = ${repo} AND status = 'COMPLETED'
+      GROUP BY attempt_count
+      ORDER BY attempt_count
+    `;
+    const histogram: Record<number, number> = {};
+    for (const row of results) {
+      histogram[row.attempt_count] = row.count;
+    }
+    return histogram;
+  },
+
+  async getAverageIterationsPerTask(repo: string): Promise<number> {
+    const sql = getDb();
+    const [result] = await sql`
+      SELECT AVG(attempt_count) as avg
+      FROM tasks
+      WHERE github_repo = ${repo} AND status = 'COMPLETED'
+    `;
+    return result?.avg || 0;
+  },
+
+  async getReplanRate(repo: string): Promise<number> {
+    const sql = getDb();
+    const [totalTasks] = await sql`
+      SELECT COUNT(*) as total
+      FROM tasks
+      WHERE github_repo = ${repo}
+    `;
+    const [replanTasks] = await sql`
+      SELECT COUNT(DISTINCT task_id) as replan_count
+      FROM task_events
+      WHERE event_type = 'REPLAN' AND task_id IN (SELECT id FROM tasks WHERE github_repo = ${repo})
+    `;
+    if (totalTasks.total === 0) return 0;
+    return (replanTasks.replan_count / totalTasks.total) * 100;
+  },
+};
+++ b/tests/agentic-metrics.test.ts
       diff?: string | null;
       childTaskId?: string;
       attempts?: number;
@@ -672,3 +847,33 @@ export const db = {
       }));
   },
 };
+ it('should return correct metrics for valid input', () => {
+   const input = { actions: 10, decisions: 5 };
+   const result = calculateAgenticMetrics(input);
+   expect(result).toEqual({
+     efficiency: 2,
+     autonomy: 0.5
+   });
+ });
+ it('should handle edge case with zero actions', () => {
+   const input = { actions: 0, decisions: 5 };
+   const result = calculateAgenticMetrics(input);
+   expect(result).toEqual({
+     efficiency: 0,
+     autonomy: 1
+   });
+ });
+ it('should throw error for invalid input', () => {
+   const input = { actions: -1, decisions: 5 };
+   expect(() => calculateAgenticMetrics(input)).toThrow('Invalid input');
+ });
+ it('should handle large numbers', () => {
+   const input = { actions: 1000000, decisions: 500000 };
+   const result = calculateAgenticMetrics(input);
+   expect(result.efficiency).toBe(2);
+ });
+ it('should return zero autonomy for no decisions', () => {
+   const input = { actions: 10, decisions: 0 };
+   const result = calculateAgenticMetrics(input);
+   expect(result.autonomy).toBe(0);
+ });
