@@ -14,12 +14,10 @@ import type { StaticMemory } from "../core/memory/index.js";
 import type { Task, TaskEvent } from "../core/types.js";
 import { isTerminal, getNextAction } from "../core/state-machine.js";
 import { tools, getHandler } from "./tools/registry.js";
-import { analyzeTool, createAnalyzeHandler } from "./tools/analyze.js";
-import { executeTool, createExecuteHandler } from "./tools/execute.js";
-import { statusTool, createStatusHandler } from "./tools/status.js";
-import { memoryTool, createMemoryHandler } from "./tools/memory.js";
-import { statusTool, createStatusHandler } from "./tools/status.js";
-import { memoryTool, createMemoryHandler } from "./tools/memory.js";
+import { analyzeTool } from "./tools/analyze.js";
+
+const SERVER_CONFIG: MCPServerConfig = {
+  name: "autodev-mcp",
 
 const SERVER_CONFIG: MCPServerConfig = {
   name: "autodev-mcp",
@@ -106,26 +104,20 @@ export interface MCPDb {
 export interface MCPStaticMemoryStore {
   load: (repo: { owner: string; repo: string }) => Promise<StaticMemory>;
 }
-
-export interface MCPLearningStore {
-  getSummary: (repo: string) => Promise<unknown>;
-  getConventions: (repo: string, minConfidence?: number) => Promise<unknown[]>;
-  listFixPatterns: (repo: string, limit?: number) => Promise<unknown[]>;
   listFailures: (repo: string, limit?: number) => Promise<unknown[]>;
 }
 
-export function createMCPToolRouter(deps: MCPServerDeps = {}): {
-  tools: typeof analyzeTool[];
-  callTool: (name: string, args: unknown) => Promise<unknown>;
-} {
-  const getGitHubClient = deps.getGitHubClient ?? createLazy(() => new GitHubClient());
-  const getPlannerAgent = deps.getPlannerAgent ?? createLazy(() => new PlannerAgent());
+/**
+ * Create and configure the MCP server
+ */
+    deps.getPlannerAgent ?? createLazy(() => new PlannerAgent());
   const getCoderAgent = deps.getCoderAgent ?? createLazy(() => new CoderAgent());
   const getOrchestrator =
     deps.getOrchestrator ?? createLazy(() => new Orchestrator());
   const getDb = deps.getDb ?? (() => db);
   const getStaticStore = deps.getStaticMemoryStore ?? getStaticMemoryStore;
-  const getLearningStore = deps.getLearningStore ?? (() => getLearningMemoryStore());
+  const getLearningStore =
+    deps.getLearningStore ?? (() => getLearningMemoryStore());
   const startBackgroundTaskRunner =
     deps.startBackgroundTaskRunner ??
     ((task: Task) => {
@@ -135,46 +127,27 @@ export function createMCPToolRouter(deps: MCPServerDeps = {}): {
       });
     });
 
-  const toolHandlers: Record<string, (args: unknown) => Promise<unknown>> = {
-    [analyzeTool.name]: createAnalyzeHandler({ getGitHubClient, getPlannerAgent }),
-    [executeTool.name]: createExecuteHandler({
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools,
+  }));
+
+  // Register tool call handler
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const handlerCreator = getHandler(request.params.name);
+    const handler = handlerCreator({
       getGitHubClient,
       getPlannerAgent,
       getCoderAgent,
       getDb,
-      startBackgroundTaskRunner,
-    }),
-    [statusTool.name]: createStatusHandler({ getDb }),
-    [memoryTool.name]: createMemoryHandler({
       getStaticMemoryStore: getStaticStore,
       getLearningStore,
-      getDb,
-    }),
-  };
+      startBackgroundTaskRunner,
+    });
 
-  const tools = [analyzeTool, executeTool, statusTool, memoryTool];
-
-  return {
-    tools,
-    async callTool(name: string, args: unknown): Promise<unknown> {
-      const handler = toolHandlers[name];
-      if (!handler) {
-        throw new Error(`Unknown tool: ${name}`);
-      }
-      return handler(args);
-    },
-  };
-}
-
-/**
- * Create and configure the MCP server
- */
-export function createMCPServer(deps: MCPServerDeps = {}): Server {
-  const server = new Server(
-    {
-      name: SERVER_CONFIG.name,
-      version: SERVER_CONFIG.version,
-    },
+    const result = await handler(request.params.arguments ?? {});
+    return {
+      content: [
+        {
     {
       capabilities: {
  * Create and configure the MCP server
