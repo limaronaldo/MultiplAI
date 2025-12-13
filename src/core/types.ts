@@ -19,12 +19,14 @@ export function createOrchestratorError(
   taskId: string,
   recoverable: boolean = false,
 ): OrchestratorError {
-  const error = new Error(message) as OrchestratorError;
-  error.code = code;
-  TESTS_PASSED: "TESTS_PASSED",
   TESTS_FAILED: "TESTS_FAILED",
+  FIXING: "FIXING",
+  REVIEWING: "REVIEWING",
   REFLECTING: "REFLECTING",
   REPLANNING: "REPLANNING",
+  REVIEW_APPROVED: "REVIEW_APPROVED",
+  REVIEW_REJECTED: "REVIEW_REJECTED",
+  PR_CREATED: "PR_CREATED",
   FIXING: "FIXING",
   REVIEWING: "REVIEWING",
   REVIEW_APPROVED: "REVIEW_APPROVED",
