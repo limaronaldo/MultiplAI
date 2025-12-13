@@ -21,26 +21,22 @@ export function createOrchestratorError(
 ): OrchestratorError {
   const error = new Error(message) as OrchestratorError;
   error.code = code;
+  error.code = code;
   error.taskId = taskId;
   error.recoverable = recoverable;
   return error;
 }
-  TESTS_FAILED: "TESTS_FAILED",
-  FIXING: "FIXING",
-  REVIEWING: "REVIEWING",
-  REFLECTING: "REFLECTING",
-  REPLANNING: "REPLANNING",
-  REVIEW_APPROVED: "REVIEW_APPROVED",
-  REVIEW_REJECTED: "REVIEW_REJECTED",
-  PR_CREATED: "PR_CREATED",
-  REVIEW_REJECTED: "REVIEW_REJECTED",
-  PR_CREATED: "PR_CREATED",
-  WAITING_HUMAN: "WAITING_HUMAN",
+// ============================================
+// Task Status
+// ============================================
+
+export const TaskStatus = {
+  NEW: "NEW",
   PLANNING: "PLANNING",
   PLANNING_DONE: "PLANNING_DONE",
-  BREAKING_DOWN: "BREAKING_DOWN", // Decomposing M/L issues into subtasks
-  BREAKDOWN_DONE: "BREAKDOWN_DONE", // Subtasks created, ready for orchestration
-  ORCHESTRATING: "ORCHESTRATING", // Processing child tasks
+  BREAKING_DOWN: "BREAKING_DOWN",
+  BREAKDOWN_DONE: "BREAKDOWN_DONE",
+  ORCHESTRATING: "ORCHESTRATING",
   CODING: "CODING",
   CODING_DONE: "CODING_DONE",
   TESTING: "TESTING",
@@ -48,6 +44,8 @@ export function createOrchestratorError(
   TESTS_FAILED: "TESTS_FAILED",
   FIXING: "FIXING",
   REVIEWING: "REVIEWING",
+  REFLECTING: "REFLECTING",
+  REPLANNING: "REPLANNING",
   REVIEW_APPROVED: "REVIEW_APPROVED",
   REVIEW_REJECTED: "REVIEW_REJECTED",
   PR_CREATED: "PR_CREATED",
@@ -98,9 +96,6 @@ export interface Task {
   lastError?: string;
 
   // Parent-child relationship (for orchestrated tasks)
-  lastError?: string;
-
-  // Parent-child relationship (for orchestrated tasks)
   isOrchestrated: boolean;
 
   // Orchestration state (for parent tasks managing subtasks)
@@ -112,8 +107,6 @@ export interface Task {
   createdAt: Date;
   updatedAt: Date;
 }
-
-// ============================================
 // Task Hierarchy Types
 // ============================================
 
