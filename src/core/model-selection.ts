@@ -18,34 +18,33 @@
  * ─────────────────────────────────────────────────
  * Agent                │ Model                    │ Cost/Task │ Provider
  * ─────────────────────┼──────────────────────────┼───────────┼──────────────
- * Planner              │ deepseek-speciale-high   │ ~$0.02    │ OpenRouter (ZDR)
- * Fixer                │ deepseek-speciale-high   │ ~$0.02    │ OpenRouter (ZDR)
- * Reviewer             │ deepseek-speciale-high   │ ~$0.02    │ OpenRouter (ZDR)
- * Escalation 1         │ deepseek-speciale-high   │ ~$0.02    │ OpenRouter (ZDR)
+ * Planner              │ deepseek-speciale-high   │ ~$0.02    │ OpenRouter
+ * Fixer (even)         │ deepseek-speciale-high   │ ~$0.02    │ OpenRouter
+ * Fixer (odd)          │ glm-4.6-exacto           │ ~$0.02    │ OpenRouter
+ * Reviewer             │ deepseek-speciale-high   │ ~$0.02    │ OpenRouter
+ * Escalation 1         │ deepseek-speciale-high   │ ~$0.02    │ OpenRouter
  * Escalation 2         │ claude-opus-4-5          │ ~$0.75    │ Anthropic
  *
  * CODER BY COMPLEXITY + EFFORT:
  * ─────────────────────────────────────────────────
- * XS low               │ deepseek-speciale-low    │ ~$0.005   │ OpenRouter (ZDR)
- * XS medium            │ gpt-5.2-medium           │ ~$0.08    │ OpenAI Direct
+ * XS low               │ deepseek-speciale-low    │ ~$0.005   │ OpenRouter
+ * XS medium            │ glm-4.6-exacto           │ ~$0.02    │ OpenRouter
  * XS high              │ gpt-5.2-high             │ ~$0.15    │ OpenAI Direct
- * XS default           │ grok-code-fast-1         │ ~$0.01    │ OpenRouter (ZDR)
+ * XS default           │ glm-4.6-exacto           │ ~$0.02    │ OpenRouter
  * ─────────────────────────────────────────────────
- * S low                │ grok-code-fast-1         │ ~$0.01    │ OpenRouter (ZDR)
+ * S low                │ grok-code-fast-1         │ ~$0.01    │ OpenRouter
  * S medium             │ gpt-5.2-low              │ ~$0.03    │ OpenAI Direct
  * S high               │ gpt-5.2-medium           │ ~$0.08    │ OpenAI Direct
- * S default            │ grok-code-fast-1         │ ~$0.01    │ OpenRouter (ZDR)
+ * S default            │ grok-code-fast-1         │ ~$0.01    │ OpenRouter
  * ─────────────────────────────────────────────────
  * M low                │ gpt-5.2-medium           │ ~$0.08    │ OpenAI Direct
  * M medium             │ gpt-5.2-high             │ ~$0.15    │ OpenAI Direct
  * M high               │ claude-opus-4-5          │ ~$0.75    │ Anthropic
  * M default            │ gpt-5.2-medium           │ ~$0.08    │ OpenAI Direct
  *
- * ZDR = Zero Data Retention (Parasail, Nebius, Baseten providers)
- *
  * Escalation Path:
- * - Attempt 0: Effort-based (DeepSeek for low/med, GPT-5.2 for high)
- * - Attempt 1: Kimi K2 Thinking (agentic recovery)
+ * - Attempt 0: Effort-based (DeepSeek/GLM for low/med, GPT-5.2 for high)
+ * - Attempt 1: DeepSeek or GLM (alternating for rate limit avoidance)
  * - Attempt 2+: Claude Opus 4.5 (final fallback)
  *
  * Cost Savings vs Previous Config:
@@ -125,28 +124,31 @@ export const DEEPSEEK_CONFIGS = {
 export type DeepSeekConfigName = keyof typeof DEEPSEEK_CONFIGS;
 
 /**
- * Z.AI GLM 4.6V Configuration
+ * Z.AI GLM 4.6 Configurations
  *
- * Large multimodal reasoning model for high-fidelity visual understanding and
- * long-context reasoning across images, documents, and mixed media.
+ * GLM 4.6V - Large multimodal reasoning model for visual understanding.
+ * GLM 4.6 Exacto - Cheap code generation model, DeepSeek alternative.
  *
- * Specs:
+ * GLM 4.6V Specs:
  * - Context: 131K tokens
- * - Input: $0.30/M tokens
- * - Output: $0.90/M tokens
+ * - Input: $0.30/M tokens, Output: $0.90/M tokens
  * - Provider: Parasail (US, zero data retention)
- * - Quantization: fp8
- * - Latency: 0.47s, Throughput: 125tps
+ * - Use cases: Document analysis, image understanding
  *
- * Note: This is a reasoning model. Output is wrapped in <|begin_of_box|>...<|end_of_box|>
- * markers. Reasoning is returned in message.reasoning field.
- * Requires max_tokens >= 500 to complete reasoning and produce output.
- *
- * Use cases: Document analysis, image understanding, chart processing
+ * GLM 4.6 Exacto Specs:
+ * - Context: 204.8K tokens
+ * - Max Output: 131.1K tokens
+ * - Input: $0.44/M tokens, Output: $1.76/M tokens
+ * - Provider: NovitaAI (US, bf16)
+ * - Latency: 1.33s, Throughput: 66tps
+ * - Use cases: Cheap code generation, medium complexity tasks
  */
 export const GLM_CONFIGS = {
   "glm-4.6v": {
     model: "z-ai/glm-4.6v",
+  },
+  "glm-4.6-exacto": {
+    model: "z-ai/glm-4.6:exacto",
   },
 } as const;
 
@@ -227,6 +229,12 @@ export const MODEL_TIERS: ModelTier[] = [
     avgCostPerTask: 0.005,
   },
   {
+    name: "glm",
+    models: ["z-ai/glm-4.6:exacto"],
+    description: "GLM 4.6 Exacto. Cheap coding, large context (204K).",
+    avgCostPerTask: 0.02,
+  },
+  {
     name: "medium",
     models: ["deepseek-speciale-medium"],
     description: "DeepSeek Speciale (medium). Balanced speed/quality.",
@@ -243,6 +251,12 @@ export const MODEL_TIERS: ModelTier[] = [
     models: ["deepseek-speciale-high"],
     description:
       "DeepSeek V3.2 Speciale (high). Cheap reasoning for failed task recovery.",
+    avgCostPerTask: 0.02,
+  },
+  {
+    name: "glm-recovery",
+    models: ["z-ai/glm-4.6:exacto"],
+    description: "GLM 4.6 Exacto. Alternative recovery model to DeepSeek.",
     avgCostPerTask: 0.02,
   },
   {
@@ -382,10 +396,10 @@ function selectForXS(
 
   if (effort === "medium") {
     return {
-      tier: "medium",
-      models: ["gpt-5.2-medium"],
+      tier: "glm",
+      models: ["z-ai/glm-4.6:exacto"],
       useMultiAgent: false,
-      reason: "XS medium effort → GPT-5.2 (medium) ~$0.08",
+      reason: "XS medium effort → GLM 4.6 Exacto ~$0.02",
     };
   }
 
@@ -399,12 +413,12 @@ function selectForXS(
     };
   }
 
-  // undefined effort → default to Grok Code Fast (ultra-cheap, fast)
+  // undefined effort → default to GLM 4.6 Exacto (cheap, large context)
   return {
-    tier: "fast",
-    models: ["x-ai/grok-code-fast-1"],
+    tier: "glm",
+    models: ["z-ai/glm-4.6:exacto"],
     useMultiAgent: false,
-    reason: "XS (no effort specified) → Grok Code Fast ~$0.01",
+    reason: "XS (no effort specified) → GLM 4.6 Exacto ~$0.02",
   };
 }
 
@@ -502,19 +516,29 @@ function selectForM(effort: EffortLevel | undefined): ModelSelection {
 /**
  * Select models for Fixer agent
  *
- * Uses Kimi K2 Thinking for agentic debugging.
- * Fixer model is configured in fixer.ts, this is for escalation tracking.
+ * Alternates between DeepSeek and GLM to avoid rate limits.
+ * Odd attempts → DeepSeek Speciale (high)
+ * Even attempts → GLM 4.6 Exacto
  */
 export function selectFixerModels(context: SelectionContext): ModelSelection {
   const { attemptCount } = context;
 
-  // All fix attempts use DeepSeek Speciale (high) for recovery
-  return {
-    tier: "thinking",
-    models: ["deepseek-speciale-high"],
-    useMultiAgent: false,
-    reason: `Fixer attempt ${attemptCount + 1} → DeepSeek Speciale (debugging)`,
-  };
+  // Alternate between DeepSeek and GLM to spread load
+  if (attemptCount % 2 === 0) {
+    return {
+      tier: "thinking",
+      models: ["deepseek-speciale-high"],
+      useMultiAgent: false,
+      reason: `Fixer attempt ${attemptCount + 1} → DeepSeek Speciale (debugging)`,
+    };
+  } else {
+    return {
+      tier: "glm-recovery",
+      models: ["z-ai/glm-4.6:exacto"],
+      useMultiAgent: false,
+      reason: `Fixer attempt ${attemptCount + 1} → GLM 4.6 Exacto (alt recovery)`,
+    };
+  }
 }
 
 /**
