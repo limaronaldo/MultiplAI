@@ -218,7 +218,41 @@ Please fix the issues while maintaining the original intent.`;
       "\n\n---\n\nGenerate the implementation as a unified diff in JSON format.";
 
     const response = await this.complete(SYSTEM_PROMPT, userPrompt);
+
+    // Debug: Log response type and preview
+    console.log(`[Coder] Response type: ${typeof response}`);
+    console.log(
+      `[Coder] Response preview: ${String(response).slice(0, 500)}...`,
+    );
+
+    // Handle case where response is already an object (some API responses)
+    if (typeof response === "object" && response !== null) {
+      console.log(
+        `[Coder] Response is already an object, keys: ${Object.keys(response).join(", ")}`,
+      );
+      // Check if it has expected fields before parsing
+      const obj = response as Record<string, unknown>;
+      if (!obj.diff || !obj.commitMessage || !obj.filesModified) {
+        console.error(
+          `[Coder] Object missing required fields: diff=${!!obj.diff}, commitMessage=${!!obj.commitMessage}, filesModified=${!!obj.filesModified}`,
+        );
+        console.error(
+          `[Coder] Full response object: ${JSON.stringify(response).slice(0, 1000)}`,
+        );
+      }
+      return CoderOutputSchema.parse(response);
+    }
+
     const parsed = this.parseJSON<CoderOutput>(response);
+
+    // Debug: Log parsed keys
+    console.log(`[Coder] Parsed keys: ${Object.keys(parsed || {}).join(", ")}`);
+    if (!parsed?.diff || !parsed?.commitMessage || !parsed?.filesModified) {
+      console.error(
+        `[Coder] Parsed result missing required fields: diff=${!!parsed?.diff}, commitMessage=${!!parsed?.commitMessage}, filesModified=${!!parsed?.filesModified}`,
+      );
+      console.error(`[Coder] Raw response length: ${String(response).length}`);
+    }
 
     return CoderOutputSchema.parse(parsed);
   }
