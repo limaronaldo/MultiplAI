@@ -15,12 +15,14 @@ export const validTransitions: StatusTransitions = {
   PLANNING_DONE: ["CODING", "BREAKING_DOWN", "FAILED"],
   // Decomposition flow for M/L complexity issues
   BREAKING_DOWN: ["BREAKDOWN_DONE", "FAILED"],
-  BREAKDOWN_DONE: ["ORCHESTRATING", "FAILED"],
-  // Orchestration produces an aggregated diff; we still run tests at the parent level.
-  ORCHESTRATING: ["CODING_DONE", "FAILED"],
-  CODING: ["CODING_DONE", "FAILED"],
-  CODING_DONE: ["TESTING", "FAILED"],
   TESTING: ["TESTS_PASSED", "TESTS_FAILED", "FAILED"],
+  TESTS_PASSED: ["REVIEWING", "FAILED"],
+  TESTS_FAILED: ["FIXING", "REFLECTING", "FAILED"],
+  REFLECTING: ["REPLANNING", "FIXING", "FAILED"],
+  REPLANNING: ["CODING", "FAILED"],
+  FIXING: ["CODING_DONE", "FAILED"], // Volta pro fluxo de teste
+  REVIEWING: ["REVIEW_APPROVED", "REVIEW_REJECTED", "FAILED"],
+  REVIEW_APPROVED: ["PR_CREATED", "FAILED"],
   TESTS_PASSED: ["REVIEWING", "FAILED"],
   TESTS_FAILED: ["FIXING", "FAILED"],
   FIXING: ["CODING_DONE", "FAILED"], // Volta pro fluxo de teste
@@ -37,13 +39,15 @@ export const validTransitions: StatusTransitions = {
  * Verifica se uma transição é válida
  */
 export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
-  return validTransitions[from].includes(to);
-}
-
-/**
- * Executa transição com validação
- */
-export function transition(from: TaskStatus, to: TaskStatus): TaskStatus {
+  | "TEST"
+  | "FIX"
+  | "REVIEW"
+  | "REFLECT"
+  | "REPLAN"
+  | "OPEN_PR"
+  | "WAIT"
+  | "DONE"
+  | "FAILED";
   if (!canTransition(from, to)) {
     throw new Error(
       `Invalid transition: ${from} -> ${to}. Valid transitions from ${from}: ${validTransitions[from].join(", ")}`,
@@ -55,12 +59,16 @@ export function transition(from: TaskStatus, to: TaskStatus): TaskStatus {
 /**
  * Action types for the state machine
  */
-export type TaskAction =
-  | "PLAN"
-  | "BREAKDOWN" // Decompose M/L issue into subtasks
-  | "ORCHESTRATE" // Process subtasks
-  | "CODE"
-  | "TEST"
+    case "TESTS_FAILED":
+      return "FIX";
+    case "REVIEW_APPROVED":
+    case "REFLECTING":
+      return "REFLECT";
+    case "REPLANNING":
+      return "REPLAN";
+    case "PR_CREATED":
+    case "WAITING_HUMAN":
+      return "WAIT";
   | "FIX"
   | "REVIEW"
   | "OPEN_PR"
@@ -80,13 +88,15 @@ export function getNextAction(status: TaskStatus): TaskAction {
       return "CODE";
     case "BREAKING_DOWN":
       return "WAIT"; // Waiting for breakdown to complete
-    case "BREAKDOWN_DONE":
-      return "ORCHESTRATE";
-    case "ORCHESTRATING":
-      return "ORCHESTRATE"; // Continue processing subtasks until complete
-    case "CODING_DONE":
-      return "TEST";
-    case "TESTS_PASSED":
+    status === "CODING" ||
+    status === "FIXING" ||
+    status === "REVIEWING" ||
+    status === "REFLECTING" ||
+    status === "REPLANNING" ||
+    status === "BREAKING_DOWN" ||
+    status === "ORCHESTRATING"
+  );
+}
       return "REVIEW";
     case "TESTS_FAILED":
       return "FIX";
