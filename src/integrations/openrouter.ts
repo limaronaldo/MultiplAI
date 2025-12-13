@@ -162,6 +162,11 @@ export class OpenRouterClient {
     };
     const effort = effortMap[params.reasoningEffort || "medium"] || "medium";
 
+    // Triple max_tokens for DeepSeek Speciale (reasoning uses ~80% of tokens)
+    const effectiveMaxTokens = params.model.includes("deepseek")
+      ? params.maxTokens * 3
+      : params.maxTokens;
+
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
         const response = await fetch(
@@ -178,7 +183,7 @@ export class OpenRouterClient {
                 { role: "system", content: params.systemPrompt },
                 { role: "user", content: params.userPrompt },
               ],
-              max_tokens: params.maxTokens,
+              max_tokens: effectiveMaxTokens,
               temperature: params.temperature,
               reasoning: { effort },
               // Provider preferences based on model
