@@ -279,4 +279,274 @@ export function CreateJobForm({
   );
 }
 
+import React, { useMemo, useState } from "react";
+
+export type Job = {
+  id: string;
+  repository: string;
+  issueNumbers: number[];
+  status?: string;
+  createdAt?: string;
+};
+
+export class ApiClientError extends Error {
+  public readonly status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "ApiClientError";
+    this.status = status;
+  }
+}
+
+const apiClient = {
+  async createJob(repository: string, issueNumbers: number[]): Promise<Job> {
+    const res = await fetch("/api/jobs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ repository, issueNumbers }),
+    });
+
+    if (!res.ok) {
+      let message = `Request failed (${res.status})`;
+
+      try {
+        const data: unknown = await res.json();
+        if (
+          data &&
+          typeof data === "object" &&
+          "message" in data &&
+          typeof (data as { message?: unknown }).message === "string"
+        ) {
+          message = (data as { message: string }).message;
+        }
+      } catch {
+        // Ignore parsing errors and fall back to default message.
+      }
+
+      throw new ApiClientError(message, res.status);
+    }
+
+    return (await res.json()) as Job;
+  },
+};
+
+function parseIssueNumbers(input: string): number[] {
+  const tokens = input
+    .split(/[\s,]+/g)
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  const seen = new Set<number>();
+  const parsed: number[] = [];
+
+  for (const token of tokens) {
+    if (!/^\d+$/.test(token)) {
+      continue;
+    }
+
+    const n = Number.parseInt(token, 10);
+    if (!Number.isFinite(n) || n <= 0) {
+      continue;
+    }
+
+    if (!seen.has(n)) {
+      seen.add(n);
+      parsed.push(n);
+    }
+  }
+
+  return parsed;
+}
+
+export type CreateJobFormProps = {
+  repositories: string[];
+  onSuccess: (job: Job) => void;
+  onCancel?: () => void;
+  initialRepository?: string;
+  initialIssueNumbers?: string;
+};
+
+export function CreateJobForm({
+  repositories,
+  onSuccess,
+  onCancel,
+  initialRepository,
+  initialIssueNumbers,
+}: CreateJobFormProps) {
+  const [selectedRepo, setSelectedRepo] = useState<string>(
+    initialRepository ?? repositories[0] ?? ""
+  );
+  const [issueNumbersInput, setIssueNumbersInput] = useState<string>(
+    initialIssueNumbers ?? ""
+  );
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const issueNumbers = useMemo(
+    () => parseIssueNumbers(issueNumbersInput),
+    [issueNumbersInput]
+  );
+
+  const canSubmit =
+    !isSubmitting && selectedRepo.trim().length > 0 && issueNumbers.length > 0;
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setErrorMessage(null);
+
+    const repo = selectedRepo.trim();
+    if (!repo) {
+      setErrorMessage("Please select a repository.");
+      return;
+    }
+
+    if (issueNumbers.length === 0) {
+      setErrorMessage("Please enter at least one valid issue number.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const job = await apiClient.createJob(repo, issueNumbers);
+      onSuccess(job);
+    } catch (err: unknown) {
+      if (err instanceof ApiClientError) {
+        setErrorMessage(err.message);
+      } else if (err instanceof Error) {
+        setErrorMessage(err.message);
+      } else {
+        setErrorMessage("An unknown error occurred.");
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
+      <div style={{ display: "grid", gap: 6 }}>
+        <label htmlFor="create-job-repo" style={{ fontWeight: 600 }}>
+          Repository
+        </label>
+        <select
+          id="create-job-repo"
+          value={selectedRepo}
+          onChange={(e) => setSelectedRepo(e.target.value)}
+          disabled={isSubmitting}
+          style={{ padding: "8px 10px" }}
+        >
+          <option value="" disabled>
+            Select a repository
+          </option>
+          {repositories.map((repo) => (
+            <option key={repo} value={repo}>
+              {repo}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div style={{ display: "grid", gap: 6 }}>
+        <label htmlFor="create-job-issues" style={{ fontWeight: 600 }}>
+          Issue numbers
+        </label>
+        <textarea
+          id="create-job-issues"
+          value={issueNumbersInput}
+          onChange={(e) => setIssueNumbersInput(e.target.value)}
+          disabled={isSubmitting}
+          rows={4}
+          placeholder="e.g. 12, 34 56\n78"
+          style={{ padding: "8px 10px", resize: "vertical" }}
+        />
+        <div style={{ fontSize: 12, opacity: 0.8 }}>
+          Separate values with commas, spaces, or newlines. Non-numeric values
+          are ignored.
+        </div>
+      </div>
+
+      {issueNumbers.length > 0 ? (
+        <div
+          style={{
+            border: "1px solid rgba(0,0,0,0.12)",
+            borderRadius: 6,
+            padding: 12,
+            display: "grid",
+            gap: 8,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
+            <div style={{ fontWeight: 600 }}>Preview</div>
+            <div style={{ fontSize: 12, opacity: 0.8 }}>
+              {issueNumbers.length} issue{issueNumbers.length === 1 ? "" : "s"}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {issueNumbers.map((n) => (
+              <span
+                key={n}
+                style={{
+                  padding: "2px 8px",
+                  borderRadius: 999,
+                  background: "rgba(0,0,0,0.06)",
+                  fontSize: 12,
+                }}
+              >
+                #{n}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {errorMessage ? (
+        <div
+          role="alert"
+          style={{
+            border: "1px solid rgba(176, 0, 32, 0.35)",
+            background: "rgba(176, 0, 32, 0.06)",
+            color: "#b00020",
+            borderRadius: 6,
+            padding: 10,
+          }}
+        >
+          {errorMessage}
+        </div>
+      ) : null}
+
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        {onCancel ? (
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isSubmitting}
+            style={{ padding: "8px 12px" }}
+          >
+            Cancel
+          </button>
+        ) : null}
+        <button
+          type="submit"
+          disabled={!canSubmit}
+          style={{ padding: "8px 12px" }}
+        >
+          {isSubmitting ? "Creating…" : "Create job"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+export default CreateJobForm;
 export default CreateJobForm;
