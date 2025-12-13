@@ -1,14 +1,41 @@
 /**
  * RAG Service - Public API
+ *
+ * This module provides the public interface for RAG (Retrieval-Augmented Generation)
+ * functionality including:
+ * - CodebaseIndex: Orchestrates chunking, embedding, and storage
+ * - CodebaseSearch: Query interface for searching indexed code
+ * - VectorStore: HNSW-based vector storage with persistence
+ * - OpenAIEmbedder: Semantic embeddings via OpenAI API
  */
 
 import { CodebaseIndex } from "./codebase-index.js";
 import { CodebaseSearch } from "./codebase-search.js";
 
-// Export all types
-export type { CodeChunk, SearchResult, SearchOptions, IndexStats } from "./types.js";
-export type { CodebaseIndex } from "./codebase-index.js";
-export type { CodebaseSearch } from "./codebase-search.js";
+// Export all types from types.ts
+export type {
+  CodeChunk,
+  SearchResult,
+  SearchOptions,
+  IndexStats,
+} from "./types.js";
+
+// Export types from codebase-index.ts
+export type {
+  IndexStats as CodebaseIndexStats,
+  Chunker,
+  Embedder,
+  AsyncEmbedder,
+  VectorStore as VectorStoreInterface,
+  CodebaseIndexConfig,
+} from "./codebase-index.js";
+
+// Export types from codebase-search.ts
+export type {
+  SearchResultWithContext,
+  SymbolSearchResult,
+  ExtendedSearchOptions,
+} from "./codebase-search.js";
 
 // Export chunker helpers
 export {
@@ -17,6 +44,33 @@ export {
   extractImports,
   generateChunkId,
 } from "./chunker.js";
+
+// Export codebase index utilities
+export {
+  shouldSkipFile,
+  computeFileHash,
+  detectLanguage,
+} from "./codebase-index.js";
+
+// Export embedder (Issue #202)
+export {
+  OpenAIEmbedder,
+  OpenAIEmbedderAdapter,
+  getDefaultEmbedder,
+  type EmbedderConfig,
+} from "./embedder.js";
+
+// Export vector store (Issue #203)
+export {
+  VectorStore,
+  VectorStoreAdapter,
+  type VectorMetadata,
+  type SearchResult as VectorSearchResult,
+} from "./vector-store.js";
+
+// Re-export classes for instantiation
+export { CodebaseIndex } from "./codebase-index.js";
+export { CodebaseSearch } from "./codebase-search.js";
 
 class RAGService {
   private index: CodebaseIndex<any> | null = null;
@@ -51,7 +105,7 @@ class RAGService {
   }
 
   getIndex(): CodebaseIndex<any> {
-    if (!this.index) throw new Error('RAG service not initialized');
+    if (!this.index) throw new Error("RAG service not initialized");
     return this.index;
   }
 
@@ -63,6 +117,14 @@ class RAGService {
   async search(query: string): Promise<any[]> {
     if (!this.initialized) throw new Error("RAG service not initialized");
     return this.searcher!.search(query);
+  }
+
+  /**
+   * Async search for use with OpenAI embeddings
+   */
+  async searchAsync(query: string): Promise<any[]> {
+    if (!this.initialized) throw new Error("RAG service not initialized");
+    return this.searcher!.searchAsync(query);
   }
 }
 

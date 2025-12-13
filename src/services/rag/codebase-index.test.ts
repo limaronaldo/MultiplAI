@@ -61,11 +61,10 @@ describe("CodebaseIndex", () => {
       new MockVectorStore(),
     );
 
-    expect(index.getStats()).toEqual({
-      filesIndexed: 0,
-      totalChunks: 0,
-      lastUpdated: null,
-    });
+    const initialStats = index.getStats();
+    expect(initialStats.filesIndexed).toBe(0);
+    expect(initialStats.totalChunks).toBe(0);
+    expect(initialStats.lastUpdated).toBeNull();
 
     await index.indexText("hello world", (chunk) => ({ chunk }));
     const statsAfter = index.getStats();
@@ -74,11 +73,10 @@ describe("CodebaseIndex", () => {
     expect(statsAfter.lastUpdated).not.toBeNull();
 
     index.clear();
-    expect(index.getStats()).toEqual({
-      filesIndexed: 0,
-      totalChunks: 0,
-      lastUpdated: null,
-    });
+    const clearedStats = index.getStats();
+    expect(clearedStats.filesIndexed).toBe(0);
+    expect(clearedStats.totalChunks).toBe(0);
+    expect(clearedStats.lastUpdated).toBeNull();
   });
 
   it("searches via underlying store", async () => {
@@ -89,7 +87,9 @@ describe("CodebaseIndex", () => {
     );
 
     await index.indexText("alpha beta", (chunk) => ({ chunk }));
-    expect(index.search("alpha")).toEqual([{ chunk: "alpha" }, { chunk: "beta" }]);
+    expect(index.search("alpha")).toEqual([
+      { chunk: "alpha" },
+      { chunk: "beta" },
+    ]);
   });
 });
-

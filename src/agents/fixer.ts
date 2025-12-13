@@ -1,5 +1,6 @@
 import { BaseAgent } from "./base";
 import { FixerOutput, FixerOutputSchema } from "../core/types";
+import { ragRuntime, type RagSearchResult } from "../services/rag/rag-runtime";
 
 interface FixerInput {
   definitionOfDone: string[];
@@ -8,6 +9,8 @@ interface FixerInput {
   errorLogs: string;
   fileContents: Record<string, string>;
   knowledgeGraphContext?: string;
+  // RAG context (optional)
+  repoFullName?: string;
 }
 
 // Default fixer model - Kimi K2 Thinking for tool-oriented debugging
@@ -82,6 +85,9 @@ export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
       this.config.model = modelOverride;
     }
 
+    // Gather RAG context for error resolution
+    const ragContext = await this.gatherRagContext(input);
+
     const fileContentsStr = Object.entries(input.fileContents)
       .map(([path, content]) => `### ${path}\n\`\`\`\n${content}\n\`\`\``)
       .join("\n\n");
@@ -106,6 +112,7 @@ ${input.errorLogs}
 \`\`\`
 
 ${input.knowledgeGraphContext ? `\n## Knowledge Graph Context (best-effort)\n${input.knowledgeGraphContext}\n` : ""}
+${ragContext ? `\n## Related Code (RAG)\n${ragContext}\n` : ""}
 
 ## Current File Contents
 Note: depending on execution mode, these contents may reflect the base branch *before* the diff above is applied. Use \`currentDiff\` as the source of truth for the intended changes, and output a single complete diff that reaches the fixed final state.
@@ -120,5 +127,146 @@ Analyze the error and generate a fixed diff in JSON format.
     const parsed = this.parseJSON<FixerOutput>(response);
 
     return FixerOutputSchema.parse(parsed);
+  }
+
+  /**
+   * Gather RAG context by searching for symbol definitions and similar error fixes
+   * Issue #209 - Integrate RAG search into FixerAgent
+   */
+  private async gatherRagContext(input: FixerInput): Promise<string | null> {
+    // Skip if RAG is not available or repo not specified
+    if (!input.repoFullName) {
+      return null;
+    }
+
+    const stats = ragRuntime.getStats();
+    if (stats.status !== "ready" || stats.repoFullName !== input.repoFullName) {
+      console.log(
+        `[Fixer] RAG not ready for ${input.repoFullName}, skipping context gathering`,
+      );
+      return null;
+    }
+
+    try {
+      const searchQueries: string[] = [];
+      const allResults: RagSearchResult[] = [];
+      const seenChunks = new Set<string>();
+
+      // Extract undefined symbols from error logs
+      const undefinedSymbols = this.extractUndefinedSymbols(input.errorLogs);
+      for (const symbol of undefinedSymbols.slice(0, 3)) {
+        searchQueries.push(`function ${symbol}`);
+        searchQueries.push(`class ${symbol}`);
+        searchQueries.push(`const ${symbol}`);
+      }
+
+      // Extract type errors
+      const typeErrors = this.extractTypeErrors(input.errorLogs);
+      for (const typeError of typeErrors.slice(0, 2)) {
+        searchQueries.push(typeError);
+      }
+
+      // Search for each query
+      for (const query of searchQueries) {
+        try {
+          const results = ragRuntime.search({
+            repoFullName: input.repoFullName,
+            query,
+            limit: 3,
+          });
+
+          for (const result of results) {
+            const chunkKey = `${result.filePath}:${result.chunk.slice(0, 100)}`;
+            if (!seenChunks.has(chunkKey) && result.score > 0.25) {
+              seenChunks.add(chunkKey);
+              allResults.push(result);
+            }
+          }
+        } catch (searchError) {
+          console.warn(
+            `[Fixer] RAG search failed for query "${query.slice(0, 50)}...":`,
+            searchError,
+          );
+        }
+      }
+
+      if (allResults.length === 0) {
+        return null;
+      }
+
+      // Sort by score and take top results
+      const topResults = allResults
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5);
+
+      // Format results for context
+      const contextParts = topResults.map((result) => {
+        return `### ${result.filePath} (score: ${result.score.toFixed(2)})\n\`\`\`\n${result.chunk.slice(0, 500)}${result.chunk.length > 500 ? "..." : ""}\n\`\`\``;
+      });
+
+      console.log(
+        `[Fixer] Found ${topResults.length} relevant code patterns from RAG`,
+      );
+      return contextParts.join("\n\n");
+    } catch (error) {
+      console.warn("[Fixer] Failed to gather RAG context:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Extract undefined symbol names from error logs
+   */
+  private extractUndefinedSymbols(errorLogs: string): string[] {
+    const symbols: string[] = [];
+
+    // Common patterns for undefined symbols
+    const patterns = [
+      /Cannot find name '(\w+)'/g,
+      /is not defined/g,
+      /'(\w+)' is not defined/g,
+      /Property '(\w+)' does not exist/g,
+      /Cannot find module '([^']+)'/g,
+      /has no exported member '(\w+)'/g,
+      /ReferenceError: (\w+) is not defined/g,
+    ];
+
+    for (const pattern of patterns) {
+      const matches = errorLogs.matchAll(pattern);
+      for (const match of matches) {
+        if (match[1] && !symbols.includes(match[1])) {
+          symbols.push(match[1]);
+        }
+      }
+    }
+
+    return symbols;
+  }
+
+  /**
+   * Extract type error descriptions from error logs
+   */
+  private extractTypeErrors(errorLogs: string): string[] {
+    const errors: string[] = [];
+
+    // Common type error patterns
+    const patterns = [
+      /Type '([^']+)' is not assignable to type '([^']+)'/g,
+      /Argument of type '([^']+)' is not assignable/g,
+      /Property '(\w+)' is missing in type/g,
+      /Expected \d+ arguments, but got \d+/g,
+    ];
+
+    for (const pattern of patterns) {
+      const matches = errorLogs.matchAll(pattern);
+      for (const match of matches) {
+        const errorDesc = match[0].slice(0, 100);
+        if (!errors.includes(errorDesc)) {
+          errors.push(errorDesc);
+        }
+      }
+    }
+
+    return errors;
   }
 }
