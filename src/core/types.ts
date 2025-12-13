@@ -405,24 +405,47 @@ export interface TestResult {
   failedTests?: string[];
   errorSummary?: string;
 }
-
-// ============================================
-// GitHub Webhook Payloads
-// ============================================
-
-export interface GitHubIssueEvent {
-  action: "opened" | "edited" | "labeled" | "unlabeled" | "closed";
-  issue: {
+export interface TaskEvent {
+  id: string;
+  taskId: string;
+  eventType:
+    | "CREATED"
+    | "PLANNED"
+    | "CODED"
+    | "TESTED"
+    | "FIXED"
+    | "REVIEWED"
+    | "PR_OPENED"
+    | "FAILED"
+    | "COMPLETED"
+    | "CONSENSUS_DECISION"
+    | "REFLECTION_COMPLETE"
+    | "REPLAN_TRIGGERED"; // Added for reflection and replan events
+  agent?: string;
+  inputSummary?: string;
+  outputSummary?: string;
+  tokensUsed?: number;
     number: number;
     title: string;
-    body: string | null;
-    labels: Array<{ name: string }>;
-    state: "open" | "closed";
-  };
-  repository: {
-    full_name: string;
-    default_branch: string;
-  };
+
+// ============================================
+// Consensus Decision (Issue #17)
+// ============================================
+
+export interface TaskMetrics {
+  totalIterations: number;
+  replanCount: number;
+  finalConfidence?: number;
+  lastReflectionOutput?: any;
+}
+
+// ============================================
+// Consensus Decision (Issue #17)
+// ============================================
+
+export interface CandidateEvaluation {
+  model: string;
+  score: number;
   sender: {
     login: string;
   };
@@ -467,14 +490,17 @@ export interface GitHubPullRequestReviewEvent {
   repository: {
     full_name: string;
   };
-}
+  // Orchestration state (for parent tasks managing subtasks)
+  orchestrationState?: OrchestrationState;
+  estimatedComplexity?: "XS" | "S" | "M" | "L" | "XL";
+  estimatedEffort?: "low" | "medium" | "high";
 
-// ============================================
-// Task Events (for audit log)
-// ============================================
+  // Metrics for tracking iterations and performance
+  metrics?: TaskMetrics;
 
-export interface TaskEvent {
-  id: string;
+  // Timestamps
+  createdAt: Date;
+  updatedAt: Date;
   taskId: string;
   eventType:
     | "CREATED"
