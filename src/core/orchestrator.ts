@@ -58,6 +58,7 @@ import {
   type LoopConfig,
   type LoopResult,
 } from "./agentic";
+import { validateSyntaxBatch } from "./syntax-validator";
 
 const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
 const ENABLE_LEARNING = process.env.ENABLE_LEARNING !== "false"; // Default to true
@@ -1703,6 +1704,50 @@ export class Orchestrator {
           logger.warn(`  ${logEntry}`);
         }
         files = sanitizeResult.files;
+      }
+
+      // Run syntax validation before expensive typecheck (Issue #309)
+      // This catches truncated code, unbalanced braces, and other LLM output errors
+      const syntaxResult = validateSyntaxBatch(
+        files
+          .filter((f) => !f.deleted)
+          .map((f) => ({ path: f.path, content: f.content })),
+      );
+
+      if (!syntaxResult.valid) {
+        logger.error(
+          `Syntax validation failed: ${syntaxResult.errors.join(", ")}`,
+        );
+
+        // Store errors for fixer to use
+        task.lastError = `Syntax errors (code may be truncated or malformed):\n${syntaxResult.errors.join("\n")}`;
+        task.attemptCount = (task.attemptCount || 0) + 1;
+
+        // Check if we've exhausted retries
+        if (task.attemptCount >= task.maxAttempts) {
+          const failedTask = await this.failTask(
+            task,
+            createOrchestratorError(
+              "SYNTAX_ERROR",
+              `Code has syntax errors after ${task.maxAttempts} attempts: ${syntaxResult.errors.slice(0, 3).join("; ")}`,
+              task.id,
+              false, // No more retries
+            ),
+          );
+          return { success: false, task: failedTask };
+        }
+
+        // Set status to trigger fixer on next process() call
+        task.status = "TESTS_FAILED";
+        logger.info(
+          `Syntax validation failed, will retry with fixer (attempt ${task.attemptCount}/${task.maxAttempts})`,
+        );
+        return { success: false, task };
+      }
+
+      // Log syntax warnings
+      for (const warning of syntaxResult.warnings) {
+        logger.warn(`Syntax warning: ${warning}`);
       }
 
       const fullResult = await validateDiff(
