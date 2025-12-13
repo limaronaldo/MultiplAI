@@ -13,6 +13,8 @@ import { dbJobs } from "./integrations/db-jobs";
 import { JobRunner } from "./core/job-runner";
 import { LinearService } from "./integrations/linear";
 import { knowledgeGraphSync } from "./core/knowledge-graph/sync-service";
+import { ragRuntime } from "./services/rag/rag-runtime";
+import { GitHubClient } from "./integrations/github";
 import { createHmac, timingSafeEqual } from "crypto";
 import { Octokit } from "octokit";
 
@@ -487,6 +489,104 @@ async function handlePullRequestReviewEvent(
 
 route("GET", "/api/health", async () => {
   return Response.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// RAG API (Issue #211)
+route("POST", "/api/rag/index", async (req) => {
+  const body = await req.json().catch(() => ({}));
+  const repo =
+    typeof (body as any).repo === "string"
+      ? (body as any).repo
+      : typeof (body as any).repoFullName === "string"
+        ? (body as any).repoFullName
+        : "";
+
+  if (!isValidRepo(repo)) {
+    return Response.json({ error: "Invalid repo" }, { status: 400 });
+  }
+
+  const ref = typeof (body as any).ref === "string" ? (body as any).ref : undefined;
+  const maxFilesRaw = (body as any).maxFiles;
+  const maxFiles =
+    typeof maxFilesRaw === "number"
+      ? Math.min(Math.max(Math.floor(maxFilesRaw), 1), 500)
+      : undefined;
+
+  let github: GitHubClient;
+  try {
+    github = new GitHubClient();
+  } catch (error) {
+    return Response.json(
+      { error: "GitHub client not configured", details: String(error) },
+      { status: 500 },
+    );
+  }
+
+  void ragRuntime.reindex(
+    { repoFullName: repo, ref, maxFiles },
+    async ({ repoFullName, ref, maxFiles }) =>
+      github.getSourceFiles(
+        repoFullName,
+        ref,
+        [".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".go"],
+        maxFiles ?? 200,
+      ),
+  );
+
+  return Response.json(
+    { ok: true, message: "Re-index scheduled", stats: ragRuntime.getStats() },
+    { status: 202 },
+  );
+});
+
+route("GET", "/api/rag/stats", async (req) => {
+  const url = new URL(req.url);
+  const repo = url.searchParams.get("repo");
+  if (repo && !isValidRepo(repo)) {
+    return Response.json({ error: "Invalid repo" }, { status: 400 });
+  }
+
+  const stats = ragRuntime.getStats();
+  if (repo && stats.repoFullName && stats.repoFullName !== repo) {
+    return Response.json(
+      { error: "RAG index not initialized for this repo", stats },
+      { status: 404 },
+    );
+  }
+
+  return Response.json({ stats });
+});
+
+route("POST", "/api/rag/search", async (req) => {
+  const body = await req.json().catch(() => ({}));
+  const repo =
+    typeof (body as any).repo === "string"
+      ? (body as any).repo
+      : typeof (body as any).repoFullName === "string"
+        ? (body as any).repoFullName
+        : "";
+  const query = typeof (body as any).query === "string" ? (body as any).query : "";
+  const limitRaw = (body as any).limit;
+  const limit =
+    typeof limitRaw === "number" ? Math.min(Math.max(Math.floor(limitRaw), 1), 50) : 10;
+
+  if (!isValidRepo(repo)) {
+    return Response.json({ error: "Invalid repo" }, { status: 400 });
+  }
+  if (!query.trim()) {
+    return Response.json({ error: "Missing query" }, { status: 400 });
+  }
+
+  try {
+    const results = ragRuntime.search({ repoFullName: repo, query, limit });
+    return Response.json({ results });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const stats = ragRuntime.getStats();
+    const status =
+      message.includes("not ready") || message.includes("not initialized") ? 409 : 400;
+    return Response.json({ error: message, stats }, { status });
+  }
 });
 
 // Knowledge Graph API (best-effort; requires ENABLE_KNOWLEDGE_GRAPH_SYNC=true)
