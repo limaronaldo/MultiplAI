@@ -1,5 +1,7 @@
 import { BaseAgent } from "./base";
 import { PlannerOutput, PlannerOutputSchema } from "../core/types";
+import { ragService } from "../services/rag";
+import type { CodeChunk } from "../services/rag";
 
 // Default planner model - can be overridden via env var
 // Planner uses Kimi K2 Thinking for agentic planning with 262K context
@@ -11,6 +13,54 @@ interface PlannerInput {
   issueTitle: string;
   issueBody: string;
   repoContext: string;
+}
+
+function uniq<T>(values: T[]): T[] {
+  const out: T[] = [];
+  const seen = new Set<T>();
+  for (const v of values) {
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
+}
+
+function asCodeChunk(value: unknown): CodeChunk | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as any;
+  if (v.chunk && typeof v.chunk === "object") return asCodeChunk(v.chunk);
+  if (typeof v.filePath !== "string") return null;
+  if (typeof v.content !== "string") return null;
+  if (typeof v.startLine !== "number") return null;
+  if (typeof v.endLine !== "number") return null;
+  return v as CodeChunk;
+}
+
+function buildRagContext(results: unknown[]): { suggestedFiles: string[]; snippets: string } {
+  const chunks: CodeChunk[] = [];
+  for (const r of results) {
+    const c = asCodeChunk(r);
+    if (c) chunks.push(c);
+  }
+
+  const suggestedFiles = uniq(chunks.map((c) => c.filePath)).slice(0, 8);
+  const snippetChunks = chunks.slice(0, 3);
+
+  const snippets = snippetChunks
+    .map((c) => {
+      const body =
+        c.content.length > 800 ? `${c.content.slice(0, 800)}\n…` : c.content;
+      return [
+        `### ${c.filePath}:${c.startLine}`,
+        "```",
+        body,
+        "```",
+      ].join("\n");
+    })
+    .join("\n\n");
+
+  return { suggestedFiles, snippets };
 }
 
 const SYSTEM_PROMPT = `You are a senior tech lead planning the implementation of a GitHub issue.
@@ -121,12 +171,43 @@ export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
   }
 
   async run(input: PlannerInput): Promise<PlannerOutput> {
+    let ragSuggestedFiles: string[] = [];
+    let ragSnippets = "";
+
+    if (ragService.isInitialized()) {
+      try {
+        const results = await ragService.search(
+          `${input.issueTitle}\n\n${input.issueBody}`,
+        );
+        const ctx = buildRagContext(results);
+        ragSuggestedFiles = ctx.suggestedFiles;
+        ragSnippets = ctx.snippets;
+      } catch (e) {
+        console.warn("[Planner] RAG search failed, continuing without it:", e);
+      }
+    }
+
+    const ragContext =
+      ragSuggestedFiles.length || ragSnippets
+        ? [
+            "## RAG Suggestions",
+            ragSuggestedFiles.length
+              ? `### Suggested Files\n${ragSuggestedFiles.map((f) => `- ${f}`).join("\n")}`
+              : "",
+            ragSnippets ? `### Relevant Snippets\n${ragSnippets}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n\n")
+        : "";
+
     const userPrompt = `
 ## Issue Title
 ${input.issueTitle}
 
 ## Issue Description
 ${input.issueBody || "No description provided"}
+
+${ragContext}
 
 ## Repository Context
 ${input.repoContext}
@@ -138,28 +219,25 @@ Analyze this issue and provide your implementation plan as JSON.
 
     const response = await this.complete(SYSTEM_PROMPT, userPrompt);
 
-    // Debug: Log raw response type and preview
     console.log(`[Planner] Response type: ${typeof response}`);
-    console.log(
-      `[Planner] Response preview: ${String(response).slice(0, 500)}...`,
-    );
+    console.log(`[Planner] Response preview: ${String(response).slice(0, 500)}...`);
 
-    // Handle case where response is already an object (some API responses)
     if (typeof response === "object" && response !== null) {
-      console.log(
-        `[Planner] Response is already an object, validating directly`,
-      );
-      return PlannerOutputSchema.parse(response);
+      const validated = PlannerOutputSchema.parse(response);
+      return {
+        ...validated,
+        targetFiles: uniq([...(validated.targetFiles ?? []), ...ragSuggestedFiles]),
+      };
     }
 
     const parsed = this.parseJSON<PlannerOutput>(response);
+    console.log(`[Planner] Parsed result keys: ${Object.keys(parsed || {}).join(", ")}`);
 
-    // Debug: Log parsed result
-    console.log(
-      `[Planner] Parsed result keys: ${Object.keys(parsed || {}).join(", ")}`,
-    );
-
-    // Validate with Zod
-    return PlannerOutputSchema.parse(parsed);
+    const validated = PlannerOutputSchema.parse(parsed);
+    return {
+      ...validated,
+      targetFiles: uniq([...(validated.targetFiles ?? []), ...ragSuggestedFiles]),
+    };
   }
 }
+
