@@ -1,5 +1,11 @@
 import { Octokit } from "octokit";
 import parseDiff from "parse-diff";
+import {
+  getPromptCache,
+  getPromptCacheTtlMs,
+  sha256,
+  type CacheKey,
+} from "../core/prompt-cache/prompt-cache";
 
 interface CreatePRParams {
   title: string;
@@ -20,6 +26,7 @@ interface CheckResult {
 
 export class GitHubClient {
   public octokit: Octokit;
+  private promptCache = getPromptCache();
 
   constructor() {
     const token = process.env.GITHUB_TOKEN;
@@ -67,34 +74,42 @@ export class GitHubClient {
   ): Promise<string> {
     const { owner, repo } = this.parseRepo(fullName);
 
-    let context = "";
+    const identifier = `${fullName}:HEAD`;
+    const contentHash = sha256(
+      `v1|${identifier}|targets:${[...targetFiles].sort().join(",")}`,
+    );
+    const cacheKey: CacheKey = { type: "repo", identifier, contentHash };
 
-    // Tenta pegar README
-    try {
-      const readme = await this.octokit.rest.repos.getReadme({ owner, repo });
-      const content = Buffer.from(readme.data.content, "base64").toString(
-        "utf-8",
-      );
-      context += `## README\n${content.slice(0, 2000)}\n\n`;
-    } catch {
-      // README não existe, ok
-    }
+    return this.promptCache.getOrSet(cacheKey, getPromptCacheTtlMs("repo"), async () => {
+      let context = "";
 
-    // Estrutura de diretórios (raiz)
-    try {
-      const tree = await this.octokit.rest.git.getTree({
-        owner,
-        repo,
-        tree_sha: "HEAD",
-        recursive: "false",
-      });
-      const paths = tree.data.tree.map((t) => t.path).filter(Boolean);
-      context += `## Repository Structure\n${paths.join("\n")}\n\n`;
-    } catch (e) {
-      console.warn("Could not fetch repo tree:", e);
-    }
+      // Tenta pegar README
+      try {
+        const readme = await this.octokit.rest.repos.getReadme({ owner, repo });
+        const content = Buffer.from(readme.data.content, "base64").toString(
+          "utf-8",
+        );
+        context += `## README\n${content.slice(0, 2000)}\n\n`;
+      } catch {
+        // README não existe, ok
+      }
 
-    return context;
+      // Estrutura de diretórios (raiz)
+      try {
+        const tree = await this.octokit.rest.git.getTree({
+          owner,
+          repo,
+          tree_sha: "HEAD",
+          recursive: "false",
+        });
+        const paths = tree.data.tree.map((t) => t.path).filter(Boolean);
+        context += `## Repository Structure\n${paths.join("\n")}\n\n`;
+      } catch (e) {
+        console.warn("Could not fetch repo tree:", e);
+      }
+
+      return context;
+    });
   }
 
   /**
@@ -185,20 +200,36 @@ export class GitHubClient {
     const { owner, repo } = this.parseRepo(fullName);
     const contents: Record<string, string> = {};
 
+    const refId = ref || "HEAD";
     for (const path of filePaths) {
+      const identifier = `${fullName}:${refId}:${path}`;
+      const cacheKey: CacheKey = {
+        type: "file",
+        identifier,
+        contentHash: sha256(`v1|${identifier}`),
+      };
+
+      const cached = this.promptCache.get(cacheKey);
+      if (cached !== null) {
+        contents[path] = cached;
+        continue;
+      }
+
       try {
         const response = await this.octokit.rest.repos.getContent({
           owner,
           repo,
           path,
-          ref,
+          ref: refId,
         });
 
         if ("content" in response.data && response.data.type === "file") {
-          contents[path] = Buffer.from(
+          const value = Buffer.from(
             response.data.content,
             "base64",
           ).toString("utf-8");
+          contents[path] = value;
+          this.promptCache.set(cacheKey, value, getPromptCacheTtlMs("file"));
         }
       } catch (e: any) {
         if (e.status === 404) {
