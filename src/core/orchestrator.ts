@@ -1,4 +1,5 @@
 import {
+  AgenticLoopController,
   Task,
   TaskStatus,
   TaskEvent,
@@ -9,8 +10,6 @@ import {
   areAllSubtasksComplete,
   getNextPendingSubtask,
   type AutoDevConfig,
-  type ConsensusDecision,
-  type CandidateEvaluation,
   type OrchestrationState,
   type SubtaskDefinition,
 } from "./types";
@@ -18,19 +17,23 @@ import { transition, getNextAction, isTerminal } from "./state-machine";
 import { PlannerAgent } from "../agents/planner";
 import { CoderAgent } from "../agents/coder";
 import { FixerAgent } from "../agents/fixer";
-import { ReviewerAgent } from "../agents/reviewer";
-import { BreakdownAgent } from "../agents/breakdown";
+import { CoderAgent } from "../agents/coder";
+import { FixerAgent } from "../agents/fixer";
 import { GitHubClient } from "../integrations/github";
 import { db } from "../integrations/db";
 import {
+  LoopConfig,
   MultiAgentConfig,
   MultiAgentMetadata,
   loadMultiAgentConfig,
-} from "./multi-agent-types";
+  MultiAgentMetadata,
 import { MultiCoderRunner, MultiFixerRunner } from "./multi-runner";
 import { ConsensusEngine, formatConsensusForComment } from "./consensus";
 import { createTaskLogger, createSystemLogger, Logger } from "./logger";
+import { LoopResult } from "./agentic/types";
 import {
+  validateDiff,
+  quickValidateDiff,
   validateDiff,
   quickValidateDiff,
   sanitizeDiffFiles,
@@ -41,12 +44,14 @@ import { ForemanService, ForemanResult } from "../services/foreman";
 import {
   CommandExecutor,
   type AllowedCommand,
-  type CommandResult,
-} from "../services/command-executor";
-import { getLearningMemoryStore } from "./memory/learning-memory-store";
-import {
-  selectModels,
-  selectFixerModels,
+import { ragRuntime } from "../services/rag/rag-runtime";
+import { KnowledgeGraphService } from "./knowledge-graph/knowledge-graph-service";
+
+import { AgenticLoopController } from "./agentic/agentic-loop-controller";
+
+const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
+const ENABLE_LEARNING = process.env.ENABLE_LEARNING !== "false"; // Default to true
+const VALIDATE_DIFF = process.env.VALIDATE_DIFF !== "false"; // Default to true
   logSelection,
   type SelectionContext,
 } from "./model-selection";
@@ -1095,14 +1100,66 @@ export class Orchestrator {
       "TESTS_FAILED",
       ["branchName", "lastError"],
       "Cannot run fix",
-    );
-
-    // Store error before fix for learning (Issue #195)
-    this.errorBeforeFix = task.lastError;
-
+    const logger = this.getLogger(task);
     task = this.updateStatus(task, "FIXING");
 
+    // Check if using agentic loop
+    if (this.config.useAgenticLoop) {
+      logger.info("Using AgenticLoopController for fix");
+
+      const controller = new AgenticLoopController();
+      const loopConfig: LoopConfig = {
+        maxIterations: 5,
+        maxReplans: 2,
+        confidenceThreshold: 0.8,
+      };
+
+      const result: LoopResult = await controller.run(task, loopConfig);
+
+      // Log agentic metrics
+      await this.logEvent(task, "FIXED", "agentic-loop", {
+        iterations: result.iterations,
+        replans: result.replans,
+        success: result.success,
+      });
+
+      if (result.success && result.finalDiff) {
+        task.currentDiff = result.finalDiff;
+        task.commitMessage = "fix: agentic loop resolution";
+
+        // Apply the diff
+        if (VALIDATE_DIFF) {
+          const validationResult = await this.validateAndApplyDiff(
+            task,
+            result.finalDiff,
+            task.commitMessage,
+            logger,
+            { applyToGitHub: !USE_FOREMAN },
+          );
+          if (!validationResult.success) {
+            return validationResult.task;
+          }
+        }
+
+        return this.updateStatus(task, "CODING_DONE");
+      } else {
+        return this.failTask(
+          task,
+          createOrchestratorError(
+            "AGENTIC_LOOP_FAILED",
+            `Agentic loop failed after ${result.iterations} iterations: ${result.reason || "Unknown reason"}`,
+            task.id,
+            false,
+          ),
+        );
+      }
+    }
+
     const fileContents = await this.github.getFilesContent(
+      task.githubRepo,
+      task.targetFiles || [],
+      task.branchName,
+    );
       task.githubRepo,
       task.targetFiles || [],
       task.branchName,
