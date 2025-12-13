@@ -252,13 +252,22 @@ async function handleIssueEvent(payload: GitHubIssueEvent): Promise<Response> {
 
   // Só processa se for labeled com auto-dev
   if (action === "labeled") {
+    console.log(
+      `[Webhook] Issue #${issue.number} labels: ${issue.labels.map((l) => l.name).join(", ")}`,
+    );
+    console.log(`[Webhook] Looking for label: ${defaultConfig.autoDevLabel}`);
+
     const hasAutoDevLabel = issue.labels.some(
       (l) => l.name === defaultConfig.autoDevLabel,
     );
 
+    console.log(`[Webhook] hasAutoDevLabel: ${hasAutoDevLabel}`);
+
     if (!hasAutoDevLabel) {
       return Response.json({ ok: true, message: "Not an auto-dev issue" });
     }
+
+    console.log(`[Webhook] Processing issue #${issue.number} as auto-dev task`);
 
     // Best-effort initial sync on first processing
     if (knowledgeGraphSync.enabled()) {
