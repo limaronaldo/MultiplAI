@@ -44,3 +44,5 @@ export function getHandler(name: string): ToolHandlerCreator {
   }
   return handler;
 }
+  return handler;
+}
