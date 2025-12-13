@@ -25,13 +25,15 @@ export function createOrchestratorError(
   error.recoverable = recoverable;
   return error;
 }
-
-// ============================================
-// Task Status & State Machine
-// ============================================
-
-export const TaskStatus = {
-  NEW: "NEW",
+  TESTS_FAILED: "TESTS_FAILED",
+  FIXING: "FIXING",
+  REVIEWING: "REVIEWING",
+  REFLECTING: "REFLECTING",
+  REPLANNING: "REPLANNING",
+  REVIEW_APPROVED: "REVIEW_APPROVED",
+  REVIEW_REJECTED: "REVIEW_REJECTED",
+  PR_CREATED: "PR_CREATED",
+  WAITING_HUMAN: "WAITING_HUMAN",
   PLANNING: "PLANNING",
   PLANNING_DONE: "PLANNING_DONE",
   BREAKING_DOWN: "BREAKING_DOWN", // Decomposing M/L issues into subtasks
@@ -89,12 +91,13 @@ export interface Task {
 
   // Tracking
   attemptCount: number;
+  // Tracking
+  attemptCount: number;
   maxAttempts: number;
+  rootCause?: ReflectionRootCause;
   lastError?: string;
 
   // Parent-child relationship (for orchestrated tasks)
-  parentTaskId?: string | null;
-  subtaskIndex?: number | null;
   isOrchestrated: boolean;
 
   // Orchestration state (for parent tasks managing subtasks)
