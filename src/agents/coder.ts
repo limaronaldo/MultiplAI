@@ -5,6 +5,7 @@ import {
   type MultiFilePlan,
   type SharedType,
 } from "../core/types";
+import { ragRuntime, type RagSearchResult } from "../services/rag/rag-runtime";
 
 interface CoderInput {
   definitionOfDone: string[];
@@ -17,6 +18,8 @@ interface CoderInput {
   // Multi-file coordination (optional)
   multiFilePlan?: MultiFilePlan;
   sharedTypes?: SharedType[];
+  // RAG context (optional)
+  repoFullName?: string;
 }
 
 const SYSTEM_PROMPT = `You are an expert software engineer implementing a planned change.
@@ -170,6 +173,9 @@ export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
       this.config.model = modelOverride;
     }
 
+    // Gather RAG context if available
+    const ragContext = await this.gatherRagContext(input);
+
     const fileContentsStr = Object.entries(input.fileContents)
       .map(([path, content]) => `### ${path}\n\`\`\`\n${content}\n\`\`\``)
       .join("\n\n");
@@ -185,6 +191,7 @@ ${input.plan.map((p, i) => `${i + 1}. ${p}`).join("\n")}
 ${input.targetFiles.join(", ")}
 
 ${input.knowledgeGraphContext ? `\n## Knowledge Graph Context (best-effort)\n${input.knowledgeGraphContext}\n` : ""}
+${ragContext ? `\n## Similar Code Patterns (RAG)\n${ragContext}\n` : ""}
 
 ## Current File Contents
 ${fileContentsStr}
@@ -316,5 +323,91 @@ Please fix the issues while maintaining the original intent.`;
     }
 
     return section;
+  }
+
+  /**
+   * Gather RAG context by searching for similar code patterns
+   * Issue #208 - Integrate RAG search into CoderAgent
+   */
+  private async gatherRagContext(input: CoderInput): Promise<string | null> {
+    // Skip if RAG is not available or repo not specified
+    if (!input.repoFullName) {
+      return null;
+    }
+
+    const stats = ragRuntime.getStats();
+    if (stats.status !== "ready" || stats.repoFullName !== input.repoFullName) {
+      console.log(
+        `[Coder] RAG not ready for ${input.repoFullName}, skipping context gathering`,
+      );
+      return null;
+    }
+
+    try {
+      // Build search queries from the plan and definition of done
+      const searchQueries: string[] = [];
+
+      // Extract key terms from the plan
+      for (const step of input.plan.slice(0, 3)) {
+        // Limit to first 3 steps
+        searchQueries.push(step);
+      }
+
+      // Extract key terms from definition of done
+      for (const item of input.definitionOfDone.slice(0, 2)) {
+        // Limit to first 2 items
+        searchQueries.push(item);
+      }
+
+      // Search for similar patterns
+      const allResults: RagSearchResult[] = [];
+      const seenChunks = new Set<string>();
+
+      for (const query of searchQueries) {
+        try {
+          const results = ragRuntime.search({
+            repoFullName: input.repoFullName,
+            query,
+            limit: 3,
+          });
+
+          for (const result of results) {
+            // Deduplicate by chunk content
+            const chunkKey = `${result.filePath}:${result.chunk.slice(0, 100)}`;
+            if (!seenChunks.has(chunkKey) && result.score > 0.3) {
+              seenChunks.add(chunkKey);
+              allResults.push(result);
+            }
+          }
+        } catch (searchError) {
+          console.warn(
+            `[Coder] RAG search failed for query "${query.slice(0, 50)}...":`,
+            searchError,
+          );
+        }
+      }
+
+      if (allResults.length === 0) {
+        return null;
+      }
+
+      // Sort by score and take top results
+      const topResults = allResults
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5);
+
+      // Format results for context
+      const contextParts = topResults.map((result) => {
+        return `### ${result.filePath} (score: ${result.score.toFixed(2)})\n\`\`\`\n${result.chunk.slice(0, 500)}${result.chunk.length > 500 ? "..." : ""}\n\`\`\``;
+      });
+
+      console.log(
+        `[Coder] Found ${topResults.length} relevant code patterns from RAG`,
+      );
+      return contextParts.join("\n\n");
+    } catch (error) {
+      console.warn("[Coder] Failed to gather RAG context:", error);
+      return null;
+    }
   }
 }
