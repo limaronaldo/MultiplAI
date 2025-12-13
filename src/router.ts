@@ -269,135 +269,154 @@ async function handleIssueEvent(payload: GitHubIssueEvent): Promise<Response> {
 
     console.log(`[Webhook] Processing issue #${issue.number} as auto-dev task`);
 
-    // Best-effort initial sync on first processing
-    if (knowledgeGraphSync.enabled()) {
-      void knowledgeGraphSync.triggerFullSync({
-        repoFullName: repository.full_name,
-        commitSha: null,
-      });
-    }
-
-    // Verifica se já existe task para esta issue
-    const existingTask = await db.getTaskByIssue(
-      repository.full_name,
-      issue.number,
-    );
-
-    if (existingTask) {
-      return Response.json({
-        ok: true,
-        message: "Task already exists",
-        taskId: existingTask.id,
-      });
-    }
-
-    // Run input guardrails validation (Issue #239)
-    if (isGuardrailsEnabled()) {
-      const guardrails = getInputGuardrails();
-      const guardrailResult = await guardrails.validate({
-        title: issue.title,
-        body: issue.body || "",
-        labels: issue.labels.map((l) => l.name),
-      });
-
-      console.log(
-        `[Guardrails] Issue #${issue.number}: ${guardrailResult.action} - ${guardrailResult.reason}`,
-      );
-
-      if (guardrailResult.action === "reject") {
-        // Add label and comment explaining rejection
-        const github = new GitHubClient();
-        await github.addLabels(repository.full_name, issue.number, [
-          "autodev-rejected",
-        ]);
-        await github.addComment(
-          repository.full_name,
-          issue.number,
-          `🚫 **AutoDev cannot process this issue.**\n\n${guardrailResult.reason}`,
-        );
-        return Response.json({
-          ok: false,
-          message: "Issue rejected by guardrails",
-          reason: guardrailResult.reason,
+    try {
+      // Best-effort initial sync on first processing
+      if (knowledgeGraphSync.enabled()) {
+        void knowledgeGraphSync.triggerFullSync({
+          repoFullName: repository.full_name,
+          commitSha: null,
         });
       }
 
-      if (guardrailResult.action === "clarify") {
-        // Add needs-info label and comment asking for clarification
-        const github = new GitHubClient();
-        await github.addLabels(repository.full_name, issue.number, [
-          "needs-info",
-        ]);
-        await github.addComment(
-          repository.full_name,
-          issue.number,
-          guardrails.generateClarificationComment(guardrailResult),
-        );
-        return Response.json({
-          ok: false,
-          message: "Issue needs clarification",
-          reason: guardrailResult.reason,
-          missingInfo: guardrailResult.details.missingInfo,
-        });
-      }
-
-      if (guardrailResult.action === "warn") {
-        // Log warning but continue processing
-        console.warn(
-          `[Guardrails] Warning for issue #${issue.number}: ${guardrailResult.reason}`,
-        );
-        if (guardrailResult.details.securityConcerns) {
-          console.warn(
-            `[Guardrails] Security concerns: ${guardrailResult.details.securityConcerns.join(", ")}`,
-          );
-        }
-      }
-    }
-
-    // Tenta encontrar issue correspondente no Linear
-    let linearIssueId: string | null = null;
-    if (linear) {
-      const linearIssue = await linear.findByGitHubIssue(
+      // Verifica se já existe task para esta issue
+      console.log(`[Webhook] Checking for existing task...`);
+      const existingTask = await db.getTaskByIssue(
         repository.full_name,
         issue.number,
       );
-      if (linearIssue) {
-        linearIssueId = linearIssue.id;
-        console.log(`[Task] Found Linear issue: ${linearIssue.identifier}`);
 
-        // Move para "In Progress"
-        await linear.moveToInProgress(linearIssue.id);
-        await linear.addComment(
-          linearIssue.id,
-          "🤖 **AutoDev started processing this issue**\n\nI'm analyzing the requirements and will create a PR shortly.",
-        );
+      if (existingTask) {
+        console.log(`[Webhook] Task already exists: ${existingTask.id}`);
+        return Response.json({
+          ok: true,
+          message: "Task already exists",
+          taskId: existingTask.id,
+        });
       }
+      console.log(`[Webhook] No existing task found, creating new one...`);
+
+      // Run input guardrails validation (Issue #239)
+      if (isGuardrailsEnabled()) {
+        const guardrails = getInputGuardrails();
+        const guardrailResult = await guardrails.validate({
+          title: issue.title,
+          body: issue.body || "",
+          labels: issue.labels.map((l) => l.name),
+        });
+
+        console.log(
+          `[Guardrails] Issue #${issue.number}: ${guardrailResult.action} - ${guardrailResult.reason}`,
+        );
+
+        if (guardrailResult.action === "reject") {
+          // Add label and comment explaining rejection
+          const github = new GitHubClient();
+          await github.addLabels(repository.full_name, issue.number, [
+            "autodev-rejected",
+          ]);
+          await github.addComment(
+            repository.full_name,
+            issue.number,
+            `🚫 **AutoDev cannot process this issue.**\n\n${guardrailResult.reason}`,
+          );
+          return Response.json({
+            ok: false,
+            message: "Issue rejected by guardrails",
+            reason: guardrailResult.reason,
+          });
+        }
+
+        if (guardrailResult.action === "clarify") {
+          // Add needs-info label and comment asking for clarification
+          const github = new GitHubClient();
+          await github.addLabels(repository.full_name, issue.number, [
+            "needs-info",
+          ]);
+          await github.addComment(
+            repository.full_name,
+            issue.number,
+            guardrails.generateClarificationComment(guardrailResult),
+          );
+          return Response.json({
+            ok: false,
+            message: "Issue needs clarification",
+            reason: guardrailResult.reason,
+            missingInfo: guardrailResult.details.missingInfo,
+          });
+        }
+
+        if (guardrailResult.action === "warn") {
+          // Log warning but continue processing
+          console.warn(
+            `[Guardrails] Warning for issue #${issue.number}: ${guardrailResult.reason}`,
+          );
+          if (guardrailResult.details.securityConcerns) {
+            console.warn(
+              `[Guardrails] Security concerns: ${guardrailResult.details.securityConcerns.join(", ")}`,
+            );
+          }
+        }
+      }
+
+      // Tenta encontrar issue correspondente no Linear
+      let linearIssueId: string | null = null;
+      if (linear) {
+        const linearIssue = await linear.findByGitHubIssue(
+          repository.full_name,
+          issue.number,
+        );
+        if (linearIssue) {
+          linearIssueId = linearIssue.id;
+          console.log(`[Task] Found Linear issue: ${linearIssue.identifier}`);
+
+          // Move para "In Progress"
+          await linear.moveToInProgress(linearIssue.id);
+          await linear.addComment(
+            linearIssue.id,
+            "🤖 **AutoDev started processing this issue**\n\nI'm analyzing the requirements and will create a PR shortly.",
+          );
+        }
+      }
+
+      // Cria nova task
+      console.log(`[Webhook] Creating task in database...`);
+      const task = await db.createTask({
+        githubRepo: repository.full_name,
+        githubIssueNumber: issue.number,
+        githubIssueTitle: issue.title,
+        githubIssueBody: issue.body || "",
+        linearIssueId: linearIssueId || undefined,
+        status: "NEW",
+        attemptCount: 0,
+        maxAttempts: defaultConfig.maxAttempts,
+        isOrchestrated: false, // Will be set to true if complexity is M/L/XL
+      });
+
+      console.log(`[Task] Created task ${task.id} for issue #${issue.number}`);
+
+      // Run task in background (don't block webhook request)
+      startBackgroundTaskRunner(task);
+
+      return Response.json({
+        ok: true,
+        message: "Task created and processing started (background)",
+        taskId: task.id,
+        linearIssueId,
+      });
+    } catch (error) {
+      console.error(
+        `[Webhook] Error processing issue #${issue.number}:`,
+        error,
+      );
+      return Response.json(
+        {
+          ok: false,
+          message: "Error creating task",
+          error: error instanceof Error ? error.message : String(error),
+        },
+        { status: 500 },
+      );
     }
-
-    // Cria nova task
-    const task = await db.createTask({
-      githubRepo: repository.full_name,
-      githubIssueNumber: issue.number,
-      githubIssueTitle: issue.title,
-      githubIssueBody: issue.body || "",
-      linearIssueId: linearIssueId || undefined,
-      status: "NEW",
-      attemptCount: 0,
-      maxAttempts: defaultConfig.maxAttempts,
-      isOrchestrated: false, // Will be set to true if complexity is M/L/XL
-    });
-
-    console.log(`[Task] Created task ${task.id} for issue #${issue.number}`);
-
-    // Run task in background (don't block webhook request)
-    startBackgroundTaskRunner(task);
-
-    return Response.json({
-      ok: true,
-      message: "Task created and processing started (background)",
-      taskId: task.id,
-      linearIssueId,
-    });
   }
 
   return Response.json({ ok: true, message: "Event ignored" });
