@@ -5,11 +5,17 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act } from "../../test/test-utils";
-import { NotificationProvider, NotificationBell, NotificationPanel, useNotifications } from "./NotificationCenter";
+import {
+  NotificationProvider,
+  NotificationBell,
+  NotificationPanel,
+  useNotifications,
+} from "./NotificationCenter";
 
 // Helper component to access notification context
 function TestConsumer() {
-  const { addNotification, notifications, unreadCount, markAsRead, clearAll } = useNotifications();
+  const { addNotification, notifications, unreadCount, markAsRead, clearAll } =
+    useNotifications();
 
   return (
     <div>
@@ -50,7 +56,7 @@ describe("NotificationCenter", () => {
       render(
         <NotificationProvider>
           <TestConsumer />
-        </NotificationProvider>
+        </NotificationProvider>,
       );
 
       expect(screen.getByTestId("unread-count")).toHaveTextContent("0");
@@ -61,7 +67,7 @@ describe("NotificationCenter", () => {
       render(
         <NotificationProvider>
           <TestConsumer />
-        </NotificationProvider>
+        </NotificationProvider>,
       );
 
       await act(async () => {
@@ -76,7 +82,7 @@ describe("NotificationCenter", () => {
       render(
         <NotificationProvider>
           <TestConsumer />
-        </NotificationProvider>
+        </NotificationProvider>,
       );
 
       await act(async () => {
@@ -96,7 +102,7 @@ describe("NotificationCenter", () => {
       render(
         <NotificationProvider>
           <TestConsumer />
-        </NotificationProvider>
+        </NotificationProvider>,
       );
 
       await act(async () => {
@@ -122,7 +128,9 @@ describe("NotificationCenter", () => {
           <>
             <button
               data-testid="add"
-              onClick={() => addNotification({ type: "info", title: "Test", message: "msg" })}
+              onClick={() =>
+                addNotification({ type: "info", title: "Test", message: "msg" })
+              }
             />
             <NotificationBell onClick={() => {}} />
           </>
@@ -132,7 +140,7 @@ describe("NotificationCenter", () => {
       render(
         <NotificationProvider>
           <TestBell />
-        </NotificationProvider>
+        </NotificationProvider>,
       );
 
       // Initially no badge
@@ -151,7 +159,7 @@ describe("NotificationCenter", () => {
       render(
         <NotificationProvider>
           <NotificationBell onClick={onClick} />
-        </NotificationProvider>
+        </NotificationProvider>,
       );
 
       fireEvent.click(screen.getByRole("button"));
@@ -164,7 +172,7 @@ describe("NotificationCenter", () => {
       render(
         <NotificationProvider>
           <NotificationPanel onClose={() => {}} />
-        </NotificationProvider>
+        </NotificationProvider>,
       );
 
       expect(screen.getByText("No notifications")).toBeInTheDocument();
@@ -193,7 +201,7 @@ describe("NotificationCenter", () => {
       render(
         <NotificationProvider>
           <TestPanel />
-        </NotificationProvider>
+        </NotificationProvider>,
       );
 
       await act(async () => {
@@ -209,16 +217,15 @@ describe("NotificationCenter", () => {
       render(
         <NotificationProvider>
           <NotificationPanel onClose={onClose} />
-        </NotificationProvider>
+        </NotificationProvider>,
       );
 
-      // Find the close button (X icon)
-      const buttons = screen.getAllByRole("button");
-      const closeButton = buttons.find((btn) => btn.querySelector("svg"));
-      if (closeButton) {
-        fireEvent.click(closeButton);
-        expect(onClose).toHaveBeenCalled();
-      }
+      // Find the close button by aria-label
+      const closeButton = screen.getByRole("button", {
+        name: /close notifications/i,
+      });
+      fireEvent.click(closeButton);
+      expect(onClose).toHaveBeenCalled();
     });
   });
 });

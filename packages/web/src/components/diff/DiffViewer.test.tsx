@@ -25,8 +25,9 @@ describe("DiffViewer", () => {
     render(<DiffViewer diff={sampleDiff} />);
 
     expect(screen.getByText(/1 file.*changed/)).toBeInTheDocument();
-    expect(screen.getByText("+2")).toBeInTheDocument();
-    expect(screen.getByText("-1")).toBeInTheDocument();
+    // +2 and -1 appear in both summary and file header
+    expect(screen.getAllByText("+2").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("-1").length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders filename from diff header", () => {
