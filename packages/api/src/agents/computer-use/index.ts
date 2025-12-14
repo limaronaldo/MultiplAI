@@ -26,3 +26,14 @@ export {
   type VisualTestRunnerOptions,
   type VisualTestResults,
 } from "./visual-test-runner";
+
+// Visual regression testing (#345)
+export {
+  VisualRegressionRunner,
+  runVisualTests,
+  compareImages,
+  type VisualTestConfig,
+  type VisualTestCase,
+  type VisualTestResult,
+  type VisualRegressionReport,
+} from "./visual-regression";
