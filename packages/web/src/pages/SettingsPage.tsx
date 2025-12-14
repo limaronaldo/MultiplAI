@@ -7,6 +7,51 @@ interface ModelConfigResponse {
   availableModels: AvailableModel[];
 }
 
+// Group models by provider/family for better dropdown organization
+interface ModelGroup {
+  label: string;
+  models: AvailableModel[];
+}
+
+function groupModels(models: AvailableModel[]): ModelGroup[] {
+  const groups: ModelGroup[] = [
+    { label: "Anthropic", models: [] },
+    { label: "OpenAI Codex", models: [] },
+    { label: "OpenAI GPT-5.2", models: [] },
+    { label: "Other Providers", models: [] },
+  ];
+
+  for (const model of models) {
+    if (model.provider === "anthropic") {
+      groups[0].models.push(model);
+    } else if (model.id.includes("codex")) {
+      groups[1].models.push(model);
+    } else if (model.id.startsWith("gpt-5.2")) {
+      groups[2].models.push(model);
+    } else {
+      groups[3].models.push(model);
+    }
+  }
+
+  return groups.filter((g) => g.models.length > 0);
+}
+
+function formatModelName(model: AvailableModel): string {
+  // Shorter, cleaner names for dropdown
+  const name = model.name
+    .replace("Claude ", "")
+    .replace("GPT-5.1 Codex ", "")
+    .replace("GPT-5.2 ", "")
+    .replace(" Reasoning", "");
+
+  const cost =
+    model.costPerTask < 0.01
+      ? `$${model.costPerTask.toFixed(3)}`
+      : `$${model.costPerTask.toFixed(2)}`;
+
+  return `${name} (${cost})`;
+}
+
 const POSITION_LABELS: Record<string, { label: string; description: string }> =
   {
     planner: {
@@ -256,16 +301,19 @@ export function SettingsPage() {
                           onChange={(e) =>
                             handleModelChange(position, e.target.value)
                           }
-                          className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-blue-500 min-w-[280px]"
+                          className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-blue-500 min-w-[240px]"
                         >
-                          {availableModels.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.name} (~$
-                              {m.costPerTask < 0.01
-                                ? m.costPerTask.toFixed(3)
-                                : m.costPerTask.toFixed(2)}
-                              /task)
-                            </option>
+                          {groupModels(availableModels).map((group) => (
+                            <optgroup
+                              key={group.label}
+                              label={`── ${group.label} ──`}
+                            >
+                              {group.models.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {formatModelName(m)}
+                                </option>
+                              ))}
+                            </optgroup>
                           ))}
                         </select>
 
