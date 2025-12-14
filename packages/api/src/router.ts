@@ -1044,6 +1044,286 @@ route("POST", "/api/tasks/cleanup", async (req) => {
   }
 });
 
+/**
+ * GET /api/tasks/cleanup/stats - Get stale task statistics (preview)
+ * Query params:
+ *   - hours: hours threshold for staleness (default: 24, from STALE_TASK_HOURS env)
+ */
+route("GET", "/api/tasks/cleanup/stats", async (req) => {
+  const url = new URL(req.url);
+  const staleHours = parseInt(
+    url.searchParams.get("hours") || process.env.STALE_TASK_HOURS || "24",
+    10,
+  );
+
+  try {
+    const sql = (await import("./integrations/db")).getDb();
+    const cutoffTime = new Date(Date.now() - staleHours * 60 * 60 * 1000);
+
+    // Get stale task counts by status
+    const staleTasks = await sql`
+      SELECT
+        status,
+        COUNT(*) as count,
+        MIN(updated_at) as oldest,
+        MAX(updated_at) as newest
+      FROM tasks
+      WHERE status = ANY(${STALE_ELIGIBLE_STATUSES})
+        AND updated_at < ${cutoffTime}
+      GROUP BY status
+      ORDER BY count DESC
+    `;
+
+    // Calculate summary
+    let total = 0;
+    let wouldRetry = 0;
+    let wouldFail = 0;
+    const byStatus: Record<string, number> = {};
+
+    for (const row of staleTasks) {
+      const count = parseInt(row.count);
+      total += count;
+      byStatus[row.status] = count;
+
+      if (RETRYABLE_STATUSES.includes(row.status)) {
+        wouldRetry += count;
+      } else {
+        wouldFail += count;
+      }
+    }
+
+    // Get oldest stale task
+    const [oldest] = await sql`
+      SELECT updated_at FROM tasks
+      WHERE status = ANY(${STALE_ELIGIBLE_STATUSES})
+        AND updated_at < ${cutoffTime}
+      ORDER BY updated_at ASC
+      LIMIT 1
+    `;
+
+    return Response.json({
+      threshold: { hours: staleHours, cutoff: cutoffTime.toISOString() },
+      staleTasks: total,
+      byStatus,
+      wouldRetry,
+      wouldFail,
+      oldestStaleTask: oldest?.updated_at?.toISOString() || null,
+    });
+  } catch (error) {
+    console.error("[Cleanup Stats] Error:", error);
+    return Response.json(
+      { error: "Failed to get cleanup stats", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+// ============================================
+// Cost Tracking API (#341)
+// ============================================
+
+import * as costTracking from "./services/cost-tracking";
+
+/**
+ * GET /api/costs - Get cost summary for date range
+ * Query params:
+ *   - start: ISO date string (default: 30 days ago)
+ *   - end: ISO date string (default: now)
+ *   - range: 7d, 30d, 90d (alternative to start/end)
+ */
+route("GET", "/api/costs", async (req) => {
+  const url = new URL(req.url);
+
+  let startDate: Date;
+  let endDate = new Date();
+
+  const range = url.searchParams.get("range");
+  if (range) {
+    const days = parseInt(range.replace("d", "")) || 30;
+    startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  } else {
+    const startStr = url.searchParams.get("start");
+    const endStr = url.searchParams.get("end");
+    startDate = startStr
+      ? new Date(startStr)
+      : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    if (endStr) endDate = new Date(endStr);
+  }
+
+  try {
+    const summary = await costTracking.getCostSummary(startDate, endDate);
+    return Response.json(summary);
+  } catch (error) {
+    console.error("[Costs] Error:", error);
+    return Response.json(
+      { error: "Failed to get cost summary", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/costs/by-model - Get cost breakdown by model
+ */
+route("GET", "/api/costs/by-model", async (req) => {
+  const url = new URL(req.url);
+  const range = url.searchParams.get("range") || "30d";
+  const days = parseInt(range.replace("d", "")) || 30;
+  const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  try {
+    const byModel = await costTracking.getCostByModel(startDate);
+    return Response.json({
+      byModel,
+      period: { days, start: startDate.toISOString() },
+    });
+  } catch (error) {
+    console.error("[Costs] Error:", error);
+    return Response.json(
+      { error: "Failed to get cost by model", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/costs/by-agent - Get cost breakdown by agent
+ */
+route("GET", "/api/costs/by-agent", async (req) => {
+  const url = new URL(req.url);
+  const range = url.searchParams.get("range") || "30d";
+  const days = parseInt(range.replace("d", "")) || 30;
+  const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  try {
+    const byAgent = await costTracking.getCostByAgent(startDate);
+    return Response.json({
+      byAgent,
+      period: { days, start: startDate.toISOString() },
+    });
+  } catch (error) {
+    console.error("[Costs] Error:", error);
+    return Response.json(
+      { error: "Failed to get cost by agent", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/costs/daily - Get daily cost breakdown
+ */
+route("GET", "/api/costs/daily", async (req) => {
+  const url = new URL(req.url);
+  const range = url.searchParams.get("range") || "30d";
+  const days = parseInt(range.replace("d", "")) || 30;
+  const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  try {
+    const daily = await costTracking.getDailyCosts(startDate);
+    return Response.json({
+      daily,
+      period: { days, start: startDate.toISOString() },
+    });
+  } catch (error) {
+    console.error("[Costs] Error:", error);
+    return Response.json(
+      { error: "Failed to get daily costs", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/costs/task/:id - Get cost for specific task
+ */
+route("GET", "/api/costs/task/:id", async (req) => {
+  const match = req.url.match(/\/api\/costs\/task\/([^/]+)/);
+  const taskId = match?.[1];
+
+  if (!taskId || !isValidUUID(taskId)) {
+    return Response.json({ error: "Invalid task ID" }, { status: 400 });
+  }
+
+  try {
+    const cost = await costTracking.getTaskCost(taskId);
+    return Response.json(cost);
+  } catch (error) {
+    console.error("[Costs] Error:", error);
+    return Response.json(
+      { error: "Failed to get task cost", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/costs/alerts - Get budget alerts
+ */
+route("GET", "/api/costs/alerts", async () => {
+  try {
+    const alerts = await costTracking.checkBudgetAlerts();
+    return Response.json({ alerts });
+  } catch (error) {
+    console.error("[Costs] Error:", error);
+    return Response.json(
+      { error: "Failed to check budget alerts", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/costs/optimizations - Get cost optimization suggestions
+ */
+route("GET", "/api/costs/optimizations", async () => {
+  try {
+    const suggestions = await costTracking.getCostOptimizations();
+    return Response.json({ suggestions });
+  } catch (error) {
+    console.error("[Costs] Error:", error);
+    return Response.json(
+      { error: "Failed to get optimizations", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/costs/export - Export cost data
+ * Query params:
+ *   - format: csv, json (default: json)
+ *   - range: 7d, 30d, 90d (default: 30d)
+ */
+route("GET", "/api/costs/export", async (req) => {
+  const url = new URL(req.url);
+  const format = url.searchParams.get("format") || "json";
+  const range = url.searchParams.get("range") || "30d";
+  const days = parseInt(range.replace("d", "")) || 30;
+  const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  try {
+    if (format === "csv") {
+      const csv = await costTracking.exportCostsCSV(startDate);
+      return new Response(csv, {
+        headers: {
+          "Content-Type": "text/csv",
+          "Content-Disposition": `attachment; filename="costs-${range}.csv"`,
+        },
+      });
+    } else {
+      const data = await costTracking.exportCostsJSON(startDate);
+      return Response.json(data);
+    }
+  } catch (error) {
+    console.error("[Costs] Error:", error);
+    return Response.json(
+      { error: "Failed to export costs", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
 // ============================================
 // Model Configuration API
 // ============================================
