@@ -1,31 +1,43 @@
-# Build stage
-FROM oven/bun:1 AS builder
+# Build stage - use node for pnpm install
+FROM node:20-slim AS builder
+
+# Install pnpm
+RUN npm install -g pnpm@9.14.2
 
 WORKDIR /app
 
-# Copy package files
-COPY package.json bun.lockb* ./
+# Copy workspace config files
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 
-# Install dependencies
-RUN bun install --frozen-lockfile --production
+# Copy shared package
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/shared/src ./packages/shared/src
 
-# Copy source
-COPY . .
+# Copy api package
+COPY packages/api/package.json ./packages/api/
 
-# Production stage
+# Install dependencies with pnpm (handles workspaces correctly)
+RUN pnpm install --frozen-lockfile
+
+# Copy api source
+COPY packages/api/src ./packages/api/src
+COPY packages/api/prompts ./packages/api/prompts
+
+# Production stage - use bun for runtime
 FROM oven/bun:1-slim
 
 WORKDIR /app
 
-# Create npm -> bun compatibility wrapper
-# This allows commands like "npm install X" to work via "bun add X"
-RUN echo '#!/bin/sh\nif [ "$1" = "install" ]; then shift; exec bun add "$@"; fi\nexec bun "$@"' > /usr/local/bin/npm && \
-    chmod +x /usr/local/bin/npm
-
 # Copy from builder
 COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/src ./src
+COPY --from=builder /app/packages/shared ./packages/shared
+COPY --from=builder /app/packages/api/node_modules ./packages/api/node_modules
+COPY --from=builder /app/packages/api/src ./packages/api/src
+COPY --from=builder /app/packages/api/prompts ./packages/api/prompts
+COPY --from=builder /app/packages/api/package.json ./packages/api/
 COPY --from=builder /app/package.json ./
+
+WORKDIR /app/packages/api
 
 # Set environment
 ENV NODE_ENV=production
@@ -38,5 +50,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:3000/api/health || exit 1
 
-# Run
+# Run with bun
 CMD ["bun", "run", "src/index.ts"]
