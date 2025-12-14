@@ -19,8 +19,11 @@ import { getInputGuardrails, isGuardrailsEnabled } from "./core/guardrails";
 import { createHmac, timingSafeEqual } from "crypto";
 import { Octokit } from "octokit";
 import { webhookQueue } from "./services/webhook-queue";
-
-// TODO: Add rate limiting
+import {
+  rateLimitMiddleware,
+  addRateLimitHeaders,
+  getRateLimitStats,
+} from "./core/rate-limiter";
 
 // Validation helpers
 const UUID_REGEX =
@@ -923,6 +926,45 @@ route("GET", "/api/health", async () => {
 
   const httpStatus = overallStatus === "unhealthy" ? 503 : 200;
   return Response.json(response, { status: httpStatus });
+});
+
+// ============================================
+// Rate Limiting Stats (Issue #336)
+// ============================================
+
+/**
+ * GET /api/rate-limit/stats - Get current rate limit statistics
+ */
+route("GET", "/api/rate-limit/stats", async () => {
+  const stats = getRateLimitStats();
+  return Response.json({
+    enabled: process.env.RATE_LIMIT_ENABLED !== "false",
+    stats,
+    config: {
+      webhook: {
+        maxRequests: parseInt(process.env.RATE_LIMIT_WEBHOOK_MAX || "100", 10),
+        windowMs: parseInt(
+          process.env.RATE_LIMIT_WEBHOOK_WINDOW || "60000",
+          10,
+        ),
+      },
+      api: {
+        maxRequests: parseInt(process.env.RATE_LIMIT_API_MAX || "60", 10),
+        windowMs: parseInt(process.env.RATE_LIMIT_API_WINDOW || "60000", 10),
+      },
+      heavy: {
+        maxRequests: parseInt(process.env.RATE_LIMIT_HEAVY_MAX || "10", 10),
+        windowMs: parseInt(process.env.RATE_LIMIT_HEAVY_WINDOW || "60000", 10),
+      },
+      default: {
+        maxRequests: parseInt(process.env.RATE_LIMIT_DEFAULT_MAX || "30", 10),
+        windowMs: parseInt(
+          process.env.RATE_LIMIT_DEFAULT_WINDOW || "60000",
+          10,
+        ),
+      },
+    },
+  });
 });
 
 // ============================================
@@ -4388,10 +4430,18 @@ export async function handleRequest(req: Request): Promise<Response> {
   const method = req.method;
   const path = url.pathname;
 
+  // Apply rate limiting
+  const rateLimitResponse = rateLimitMiddleware(req);
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   for (const route of routes) {
     if (route.method === method && route.pattern.test(path)) {
       try {
-        return await route.handler(req);
+        const response = await route.handler(req);
+        // Add rate limit headers to successful responses
+        return addRateLimitHeaders(response, req);
       } catch (error) {
         console.error(`[Router] Error handling ${method} ${path}:`, error);
         return Response.json(
