@@ -1,1 +1,0 @@
-export { PendingReviews } from "./PendingReviews";
