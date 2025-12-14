@@ -7,6 +7,25 @@ import { useTaskFilters } from "@/hooks/useTaskFilters";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { ToastContainer, useToast } from "@/components/common/Toast";
 
+// Normalize API response from camelCase to snake_case
+function normalizeTask(task: Record<string, unknown>): TaskSummary {
+  return {
+    id: task.id as string,
+    github_repo: (task.githubRepo || task.github_repo) as string,
+    github_issue_number: (task.githubIssueNumber ||
+      task.github_issue_number) as number,
+    github_issue_title: (task.githubIssueTitle ||
+      task.github_issue_title) as string,
+    status: task.status as TaskStatus,
+    attempt_count: (task.attemptCount || task.attempt_count || 0) as number,
+    max_attempts: (task.maxAttempts || task.max_attempts || 3) as number,
+    pr_number: (task.prNumber || task.pr_number) as number | undefined,
+    pr_url: (task.prUrl || task.pr_url) as string | undefined,
+    created_at: (task.createdAt || task.created_at) as string,
+    updated_at: (task.updatedAt || task.updated_at) as string,
+  };
+}
+
 function getStatusColor(status: TaskStatus): string {
   switch (status) {
     case "COMPLETED":
@@ -50,7 +69,9 @@ export function TasksPage() {
     fetch("/api/tasks")
       .then((res) => res.json())
       .then((data) => {
-        setTasks(data);
+        // API returns { tasks: [...] } wrapper with camelCase keys
+        const rawTasks = Array.isArray(data) ? data : data.tasks || [];
+        setTasks(rawTasks.map(normalizeTask));
         setLoading(false);
       })
       .catch(() => setLoading(false));

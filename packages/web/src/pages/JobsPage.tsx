@@ -29,7 +29,8 @@ export function JobsPage() {
     fetch("/api/jobs")
       .then((res) => res.json())
       .then((data) => {
-        setJobs(data);
+        // API returns { jobs: [...] } wrapper
+        setJobs(Array.isArray(data) ? data : data.jobs || []);
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -63,7 +64,9 @@ export function JobsPage() {
       ) : jobs.length === 0 ? (
         <div className="text-center py-12 text-slate-500">
           <p className="text-lg">No jobs yet</p>
-          <p className="text-sm mt-2">Create a job to batch process multiple issues</p>
+          <p className="text-sm mt-2">
+            Create a job to batch process multiple issues
+          </p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -84,7 +87,9 @@ export function JobsPage() {
 
               <div className="flex items-center gap-6 text-sm text-slate-400">
                 <span>Total: {job.total_tasks}</span>
-                <span className="text-emerald-400">Completed: {job.completed_tasks}</span>
+                <span className="text-emerald-400">
+                  Completed: {job.completed_tasks}
+                </span>
                 <span className="text-red-400">Failed: {job.failed_tasks}</span>
               </div>
 
