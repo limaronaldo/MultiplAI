@@ -1,6 +1,7 @@
 import { handleRequest } from "./router";
 import { db } from "./integrations/db";
 import { initModelConfig } from "./core/model-selection";
+import { runStartupCleanup } from "./services/stale-task-cleanup";
 
 // WebSocket client tracking for live updates
 interface WebSocketClient {
@@ -43,6 +44,9 @@ async function main() {
 
   // Load model configuration from database
   await initModelConfig();
+
+  // Run stale task cleanup if enabled
+  await runStartupCleanup();
 
   const PORT = parseInt(process.env.PORT || "3000", 10);
 
