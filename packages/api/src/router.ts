@@ -24,6 +24,8 @@ import {
   addRateLimitHeaders,
   getRateLimitStats,
 } from "./core/rate-limiter";
+import { generateOpenAPISpec, getOpenAPIJSON } from "./core/openapi";
+import { generateSwaggerHTML, generateReDocHTML } from "./core/swagger-ui";
 
 // Validation helpers
 const UUID_REGEX =
@@ -629,6 +631,26 @@ const API_ENDPOINTS = [
   },
   {
     method: "GET",
+    path: "/docs",
+    description: "Swagger UI interactive API documentation",
+  },
+  {
+    method: "GET",
+    path: "/redoc",
+    description: "ReDoc API documentation",
+  },
+  {
+    method: "GET",
+    path: "/openapi.json",
+    description: "OpenAPI 3.0 specification (JSON)",
+  },
+  {
+    method: "GET",
+    path: "/openapi.yaml",
+    description: "OpenAPI 3.0 specification (YAML)",
+  },
+  {
+    method: "GET",
     path: "/api/health",
     description: "Health check with system status",
   },
@@ -821,6 +843,128 @@ route("GET", "/", async (req) => {
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
 });
+
+// ============================================
+// OpenAPI Documentation (Issue #342)
+// ============================================
+
+/**
+ * GET /docs - Swagger UI interactive documentation
+ */
+route("GET", "/docs", async () => {
+  const html = generateSwaggerHTML();
+  return new Response(html, {
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+});
+
+/**
+ * GET /redoc - ReDoc documentation (alternative viewer)
+ */
+route("GET", "/redoc", async () => {
+  const html = generateReDocHTML();
+  return new Response(html, {
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+});
+
+/**
+ * GET /openapi.json - OpenAPI 3.0 specification
+ */
+route("GET", "/openapi.json", async () => {
+  const spec = generateOpenAPISpec();
+  return Response.json(spec);
+});
+
+/**
+ * GET /openapi.yaml - OpenAPI 3.0 specification (YAML format)
+ */
+route("GET", "/openapi.yaml", async () => {
+  // Simple JSON to YAML conversion for OpenAPI spec
+  const spec = generateOpenAPISpec();
+  const yaml = jsonToYaml(spec);
+  return new Response(yaml, {
+    headers: { "Content-Type": "application/x-yaml; charset=utf-8" },
+  });
+});
+
+/**
+ * Simple JSON to YAML converter for OpenAPI spec
+ */
+function jsonToYaml(obj: unknown, indent = 0): string {
+  const spaces = "  ".repeat(indent);
+
+  if (obj === null || obj === undefined) {
+    return "null";
+  }
+
+  if (typeof obj === "boolean" || typeof obj === "number") {
+    return String(obj);
+  }
+
+  if (typeof obj === "string") {
+    // Check if string needs quoting
+    if (
+      obj.includes("\n") ||
+      obj.includes(":") ||
+      obj.includes("#") ||
+      obj.includes("'") ||
+      obj.includes('"') ||
+      obj.startsWith(" ") ||
+      obj.endsWith(" ") ||
+      obj === "" ||
+      /^[\d.]+$/.test(obj) ||
+      ["true", "false", "null", "yes", "no"].includes(obj.toLowerCase())
+    ) {
+      // Use literal block for multiline strings
+      if (obj.includes("\n")) {
+        const lines = obj.split("\n");
+        return `|\n${lines.map((line) => spaces + "  " + line).join("\n")}`;
+      }
+      // Quote other special strings
+      return `"${obj.replace(/"/g, '\\"')}"`;
+    }
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    if (obj.length === 0) return "[]";
+    return obj
+      .map((item) => {
+        const itemYaml = jsonToYaml(item, indent + 1);
+        if (typeof item === "object" && item !== null) {
+          const firstLine = itemYaml.split("\n")[0];
+          const rest = itemYaml.split("\n").slice(1).join("\n");
+          return `${spaces}- ${firstLine}${rest ? "\n" + rest : ""}`;
+        }
+        return `${spaces}- ${itemYaml}`;
+      })
+      .join("\n");
+  }
+
+  if (typeof obj === "object") {
+    const entries = Object.entries(obj);
+    if (entries.length === 0) return "{}";
+    return entries
+      .map(([key, value]) => {
+        const valueYaml = jsonToYaml(value, indent + 1);
+        if (
+          typeof value === "object" &&
+          value !== null &&
+          !Array.isArray(value)
+        ) {
+          return `${spaces}${key}:\n${valueYaml}`;
+        }
+        if (Array.isArray(value) && value.length > 0) {
+          return `${spaces}${key}:\n${valueYaml}`;
+        }
+        return `${spaces}${key}: ${valueYaml}`;
+      })
+      .join("\n");
+  }
+
+  return String(obj);
+}
 
 // ============================================
 // API
