@@ -120,19 +120,29 @@ function getOpenAIDirectClient(): OpenAIDirectClient {
 // Models that should use OpenAI Direct client (responses API)
 // GPT-5.2 and GPT-5.1 Codex models use OpenAI SDK directly
 const OPENAI_DIRECT_MODELS = [
+  // GPT-5.2 base models
   "gpt-5.2",
   "gpt-5.2-instant",
   "gpt-5.2-2025-12-11",
-  // GPT-5.2 config names (internal)
+  // GPT-5.2 config names (with reasoning effort suffix)
   "gpt-5.2-none",
   "gpt-5.2-low",
   "gpt-5.2-medium",
   "gpt-5.2-high",
   "gpt-5.2-xhigh",
-  // GPT-5.1 Codex
+  // GPT-5.1 Codex base models
   "gpt-5.1-codex",
   "gpt-5.1-codex-max",
   "gpt-5.1-codex-mini",
+  // GPT-5.1-Codex-Max config names (supports: low, medium, high, xhigh)
+  "gpt-5.1-codex-max-low",
+  "gpt-5.1-codex-max-medium",
+  "gpt-5.1-codex-max-high",
+  "gpt-5.1-codex-max-xhigh",
+  // GPT-5.1-Codex-Mini config names (supports: medium, high only)
+  "gpt-5.1-codex-mini-medium",
+  "gpt-5.1-codex-mini-high",
+  // O4 models
   "o4-mini",
   "o4",
 ];

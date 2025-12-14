@@ -33,14 +33,43 @@ interface CompletionResult {
 // Models that use the responses API (GPT-5.2 and Codex models)
 // GPT-5.2 works best with Responses API for CoT passing
 const RESPONSES_API_MODELS = [
+  // GPT-5.2 base models
   "gpt-5.2",
   "gpt-5.2-instant",
   "gpt-5.2-2025-12-11",
   "gpt-5.2-pro",
+  // GPT-5.1 Codex base models
   "gpt-5.1-codex",
   "gpt-5.1-codex-max",
   "gpt-5.1-codex-mini",
 ];
+
+/**
+ * Parse a model ID that may include a reasoning effort suffix.
+ *
+ * Examples:
+ * - "gpt-5.2-high" -> { baseModel: "gpt-5.2", reasoningEffort: "high" }
+ * - "gpt-5.1-codex-max-xhigh" -> { baseModel: "gpt-5.1-codex-max", reasoningEffort: "xhigh" }
+ * - "gpt-5.1-codex-mini-medium" -> { baseModel: "gpt-5.1-codex-mini", reasoningEffort: "medium" }
+ * - "gpt-5.2" -> { baseModel: "gpt-5.2", reasoningEffort: undefined }
+ */
+function parseModelId(modelId: string): {
+  baseModel: string;
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
+} {
+  const effortLevels = ["none", "low", "medium", "high", "xhigh"] as const;
+
+  // Check if model ID ends with a reasoning effort suffix
+  for (const effort of effortLevels) {
+    if (modelId.endsWith(`-${effort}`)) {
+      const baseModel = modelId.slice(0, -(effort.length + 1)); // Remove "-effort" suffix
+      return { baseModel, reasoningEffort: effort };
+    }
+  }
+
+  // No suffix found, return as-is
+  return { baseModel: modelId };
+}
 
 // Models that require max_completion_tokens instead of max_tokens
 const REASONING_MODELS = [
@@ -97,7 +126,11 @@ export class OpenAIDirectClient {
   }
 
   private isResponsesModel(model: string): boolean {
-    return RESPONSES_API_MODELS.some((m) => model.includes(m));
+    // Parse the model ID to get the base model (without reasoning effort suffix)
+    const { baseModel } = parseModelId(model);
+    return RESPONSES_API_MODELS.some(
+      (m) => baseModel === m || baseModel.includes(m),
+    );
   }
 
   private isReasoningModel(model: string): boolean {
@@ -130,6 +163,12 @@ export class OpenAIDirectClient {
       try {
         let result: CompletionResult;
 
+        // Parse model ID to extract base model and reasoning effort
+        const { baseModel, reasoningEffort: parsedEffort } = parseModelId(
+          params.model,
+        );
+        const effectiveEffort = parsedEffort || params.reasoningEffort;
+
         if (this.isResponsesModel(params.model)) {
           // Use responses API for GPT-5.2 and Codex models
           result = await this.completeWithResponses(params);
@@ -139,7 +178,11 @@ export class OpenAIDirectClient {
         }
 
         const duration = Date.now() - startTime;
-        let logMsg = `[LLM] OpenAI/${params.model} | ${result.tokens} tokens | ${duration}ms`;
+        let logMsg = `[LLM] OpenAI/${baseModel}`;
+        if (effectiveEffort) {
+          logMsg += ` (effort: ${effectiveEffort})`;
+        }
+        logMsg += ` | ${result.tokens} tokens | ${duration}ms`;
         if (result.responseId) {
           logMsg += ` | response_id: ${result.responseId.slice(0, 20)}...`;
         }
@@ -213,13 +256,22 @@ export class OpenAIDirectClient {
   private async completeWithResponses(
     params: CompletionParams,
   ): Promise<CompletionResult> {
+    // Parse model ID to extract base model and reasoning effort from suffix
+    // e.g., "gpt-5.1-codex-max-high" -> baseModel: "gpt-5.1-codex-max", effort: "high"
+    const { baseModel, reasoningEffort: parsedEffort } = parseModelId(
+      params.model,
+    );
+
+    // Use parsed effort from model ID, or fall back to params.reasoningEffort
+    const effectiveEffort = parsedEffort || params.reasoningEffort;
+
     // Responses API uses a different format
     // GPT-5.2 and Codex models support reasoning effort and verbosity controls
-    const isGPT52 = this.isGPT52Model(params.model);
-    const isCodex = this.isCodexModel(params.model);
+    const isGPT52 = this.isGPT52Model(baseModel);
+    const isCodex = this.isCodexModel(baseModel);
 
     const requestParams: any = {
-      model: params.model,
+      model: baseModel, // Use base model without suffix
       input: params.systemPrompt + "\n\n---\n\n" + params.userPrompt,
       max_output_tokens: params.maxTokens,
     };
@@ -227,16 +279,18 @@ export class OpenAIDirectClient {
     // GPT-5.2 specific parameters (from GPT-5 prompting guide best practices)
     if (isGPT52) {
       // Reasoning effort: default "high", use "xhigh" for Fixer agent
-      const effort = params.reasoningEffort || "high";
+      const effort = effectiveEffort || "high";
       requestParams.reasoning = { effort };
       // High verbosity for detailed code output
       requestParams.text = { verbosity: "high" };
     }
 
-    // Codex models (GPT-5.1-Codex-Max) - optimized for long autonomous coding
+    // Codex models (GPT-5.1-Codex-Max/Mini) - optimized for long autonomous coding
     // Per Codex-Max guide: "medium" for interactive, "high/xhigh" for hard tasks
+    // Codex-Mini only supports: medium, high
+    // Codex-Max supports: low, medium, high, xhigh
     if (isCodex) {
-      const effort = params.reasoningEffort || "high";
+      const effort = effectiveEffort || "high";
       requestParams.reasoning = { effort };
     }
 

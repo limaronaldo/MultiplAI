@@ -198,6 +198,66 @@ export const GPT52_CONFIGS = {
 export type GPT52ConfigName = keyof typeof GPT52_CONFIGS;
 
 /**
+ * GPT-5.1-Codex-Max Configurations
+ *
+ * GPT-5.1-Codex-Max is optimized for long-running autonomous coding tasks.
+ * Uses Responses API with reasoning effort parameter.
+ *
+ * Supported Reasoning Effort Levels:
+ * - low: Light reasoning
+ * - medium: Balanced reasoning (recommended for interactive)
+ * - high: Thorough reasoning (recommended for hard tasks)
+ * - xhigh: Maximum reasoning (hardest problems)
+ *
+ * Note: "none" is NOT supported for Codex models
+ */
+export const CODEX_MAX_CONFIGS = {
+  "gpt-5.1-codex-max-low": {
+    model: "gpt-5.1-codex-max",
+    reasoningEffort: "low" as const,
+  },
+  "gpt-5.1-codex-max-medium": {
+    model: "gpt-5.1-codex-max",
+    reasoningEffort: "medium" as const,
+  },
+  "gpt-5.1-codex-max-high": {
+    model: "gpt-5.1-codex-max",
+    reasoningEffort: "high" as const,
+  },
+  "gpt-5.1-codex-max-xhigh": {
+    model: "gpt-5.1-codex-max",
+    reasoningEffort: "xhigh" as const,
+  },
+} as const;
+
+export type CodexMaxConfigName = keyof typeof CODEX_MAX_CONFIGS;
+
+/**
+ * GPT-5.1-Codex-Mini Configurations
+ *
+ * GPT-5.1-Codex-Mini is a faster, cheaper version of Codex for simpler tasks.
+ * Uses Responses API with reasoning effort parameter.
+ *
+ * Supported Reasoning Effort Levels:
+ * - medium: Balanced reasoning
+ * - high: Thorough reasoning
+ *
+ * Note: "none", "low", and "xhigh" are NOT supported for Codex Mini
+ */
+export const CODEX_MINI_CONFIGS = {
+  "gpt-5.1-codex-mini-medium": {
+    model: "gpt-5.1-codex-mini",
+    reasoningEffort: "medium" as const,
+  },
+  "gpt-5.1-codex-mini-high": {
+    model: "gpt-5.1-codex-mini",
+    reasoningEffort: "high" as const,
+  },
+} as const;
+
+export type CodexMiniConfigName = keyof typeof CODEX_MINI_CONFIGS;
+
+/**
  * DeepSeek V3.2 Special Edition Configurations
  *
  * DeepSeek's reasoning model via OpenRouter with configurable effort levels.
@@ -287,10 +347,12 @@ export const KIMI_CONFIGS = {
 export type KimiConfigName = keyof typeof KIMI_CONFIGS;
 
 /**
- * All reasoning model configurations (GPT-5.2 + DeepSeek)
+ * All reasoning model configurations (GPT-5.2 + Codex + DeepSeek)
  */
 export const REASONING_MODEL_CONFIGS = {
   ...GPT52_CONFIGS,
+  ...CODEX_MAX_CONFIGS,
+  ...CODEX_MINI_CONFIGS,
   ...DEEPSEEK_CONFIGS,
 } as const;
 
@@ -346,13 +408,13 @@ export const MODEL_TIERS: ModelTier[] = [
     models: ["kimi-k2-thinking"],
     description:
       "Kimi K2 Thinking. Agentic reasoning for failed task recovery.",
-    avgCostPerTask: 0.2,
+    avgCostPerTask: 0.03,
   },
   {
     name: "fallback",
     models: ["claude-opus-4-5-20251101"],
     description: "Claude Opus 4.5. Final fallback when all else fails.",
-    avgCostPerTask: 0.75,
+    avgCostPerTask: 0.2,
   },
 ];
 

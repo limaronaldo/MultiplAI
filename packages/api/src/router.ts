@@ -1518,12 +1518,12 @@ route("GET", "/api/costs/export", async (req) => {
  * Available models for selection
  */
 const AVAILABLE_MODELS = [
-  // Anthropic
+  // Anthropic (Opus 4.5: $5/$25 MTok, Sonnet 4.5: $3/$15 MTok)
   {
     id: "claude-opus-4-5-20251101",
     name: "Claude Opus 4.5",
     provider: "anthropic" as const,
-    costPerTask: 0.75,
+    costPerTask: 0.2,
     description: "Most capable Claude model. Final fallback for complex tasks.",
     capabilities: ["reasoning", "coding", "analysis"],
   },
@@ -1531,16 +1531,75 @@ const AVAILABLE_MODELS = [
     id: "claude-sonnet-4-5-20250929",
     name: "Claude Sonnet 4.5",
     provider: "anthropic" as const,
-    costPerTask: 0.15,
+    costPerTask: 0.12,
     description: "Balanced Claude model. Good for most tasks.",
     capabilities: ["reasoning", "coding", "analysis"],
   },
-  // OpenAI
+  // OpenAI GPT-5.1-Codex-Max (agentic coding, powers Codex CLI)
+  // Supports reasoning: low, medium, high, xhigh
+  {
+    id: "gpt-5.1-codex-max-xhigh",
+    name: "GPT-5.1 Codex Max (XHigh)",
+    provider: "openai" as const,
+    costPerTask: 0.2,
+    description: "Maximum reasoning for complex agentic coding tasks.",
+    capabilities: ["reasoning", "coding", "agentic"],
+  },
+  {
+    id: "gpt-5.1-codex-max-high",
+    name: "GPT-5.1 Codex Max (High)",
+    provider: "openai" as const,
+    costPerTask: 0.15,
+    description: "Thorough reasoning for agentic coding. Powers Codex CLI.",
+    capabilities: ["reasoning", "coding", "agentic"],
+  },
+  {
+    id: "gpt-5.1-codex-max-medium",
+    name: "GPT-5.1 Codex Max (Medium)",
+    provider: "openai" as const,
+    costPerTask: 0.1,
+    description: "Balanced reasoning for agentic coding tasks.",
+    capabilities: ["reasoning", "coding", "agentic"],
+  },
+  {
+    id: "gpt-5.1-codex-max-low",
+    name: "GPT-5.1 Codex Max (Low)",
+    provider: "openai" as const,
+    costPerTask: 0.06,
+    description: "Light reasoning for simpler agentic coding.",
+    capabilities: ["coding", "agentic"],
+  },
+  // OpenAI GPT-5.1-Codex-Mini (supports reasoning: medium, high)
+  {
+    id: "gpt-5.1-codex-mini-high",
+    name: "GPT-5.1 Codex Mini (High)",
+    provider: "openai" as const,
+    costPerTask: 0.05,
+    description: "Thorough reasoning, cheaper Codex variant.",
+    capabilities: ["reasoning", "coding"],
+  },
+  {
+    id: "gpt-5.1-codex-mini-medium",
+    name: "GPT-5.1 Codex Mini (Medium)",
+    provider: "openai" as const,
+    costPerTask: 0.03,
+    description: "Balanced reasoning, cheaper Codex variant.",
+    capabilities: ["reasoning", "coding"],
+  },
+  // OpenAI GPT-5.2 (general purpose, $1.75/$14 MTok, 5 reasoning levels: none, low, medium, high, xhigh)
+  {
+    id: "gpt-5.2-xhigh",
+    name: "GPT-5.2 (XHigh Reasoning)",
+    provider: "openai" as const,
+    costPerTask: 0.2,
+    description: "Maximum reasoning for most complex tasks. New in 5.2.",
+    capabilities: ["reasoning", "coding"],
+  },
   {
     id: "gpt-5.2-high",
     name: "GPT-5.2 (High Reasoning)",
     provider: "openai" as const,
-    costPerTask: 0.15,
+    costPerTask: 0.12,
     description: "Thorough reasoning for complex coding tasks.",
     capabilities: ["reasoning", "coding"],
   },
@@ -1556,32 +1615,42 @@ const AVAILABLE_MODELS = [
     id: "gpt-5.2-low",
     name: "GPT-5.2 (Low Reasoning)",
     provider: "openai" as const,
-    costPerTask: 0.03,
+    costPerTask: 0.04,
     description: "Light reasoning for simple tasks.",
     capabilities: ["coding"],
   },
-  // OpenRouter
+  {
+    id: "gpt-5.2-none",
+    name: "GPT-5.2 (No Reasoning)",
+    provider: "openai" as const,
+    costPerTask: 0.02,
+    description: "No reasoning, lowest latency. Default in 5.2.",
+    capabilities: ["coding"],
+  },
+  // OpenRouter - Kimi K2 ($0.60/$2.50 MTok)
   {
     id: "moonshotai/kimi-k2-thinking",
     name: "Kimi K2 Thinking",
     provider: "openrouter" as const,
-    costPerTask: 0.2,
+    costPerTask: 0.02,
     description: "Agentic reasoning model. 262K context, multi-step tool use.",
     capabilities: ["reasoning", "agentic", "coding"],
   },
+  // OpenRouter - DeepSeek V3 ($0.14/$0.28 MTok - ultra cheap)
   {
     id: "deepseek/deepseek-v3.2-speciale",
     name: "DeepSeek Speciale",
     provider: "openrouter" as const,
-    costPerTask: 0.01,
+    costPerTask: 0.003,
     description: "Ultra-cheap reasoning model. Good for simple tasks.",
     capabilities: ["reasoning", "coding"],
   },
+  // OpenRouter - Grok ($2/$10 MTok)
   {
     id: "x-ai/grok-code-fast-1",
     name: "Grok Code Fast",
     provider: "openrouter" as const,
-    costPerTask: 0.01,
+    costPerTask: 0.05,
     description: "Fast code model from xAI. Good for quick fixes.",
     capabilities: ["coding"],
   },
