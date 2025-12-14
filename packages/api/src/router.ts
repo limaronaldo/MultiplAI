@@ -1518,7 +1518,7 @@ route("GET", "/api/costs/export", async (req) => {
  * Available models for selection
  */
 const AVAILABLE_MODELS = [
-  // Anthropic (Opus 4.5: $5/$25 MTok, Sonnet 4.5: $3/$15 MTok)
+  // Anthropic (Opus 4.5: $5/$25 MTok, Sonnet 4.5: $3/$15 MTok, Haiku 4.5: $0.80/$4 MTok)
   {
     id: "claude-opus-4-5-20251101",
     name: "Claude Opus 4.5",
@@ -1534,6 +1534,14 @@ const AVAILABLE_MODELS = [
     costPerTask: 0.12,
     description: "Balanced Claude model. Good for most tasks.",
     capabilities: ["reasoning", "coding", "analysis"],
+  },
+  {
+    id: "claude-haiku-4-5-20251015",
+    name: "Claude Haiku 4.5",
+    provider: "anthropic" as const,
+    costPerTask: 0.03,
+    description: "Fast and cheap Claude model. Good for simple tasks.",
+    capabilities: ["coding", "analysis"],
   },
   // OpenAI GPT-5.1-Codex-Max (agentic coding, powers Codex CLI)
   // Supports reasoning: low, medium, high, xhigh
@@ -2828,8 +2836,9 @@ route("POST", "/api/jobs/:id/cancel", async (req) => {
 
 // Token costs per million tokens (in USD)
 const TOKEN_COSTS: Record<string, { input: number; output: number }> = {
-  "claude-opus-4-5-20251101": { input: 15, output: 75 },
+  "claude-opus-4-5-20251101": { input: 5, output: 25 },
   "claude-sonnet-4-5-20250929": { input: 3, output: 15 },
+  "claude-haiku-4-5-20251015": { input: 0.8, output: 4 },
   "claude-sonnet-4-20250514": { input: 3, output: 15 },
   "claude-3-5-sonnet-20241022": { input: 3, output: 15 },
   "claude-3-5-haiku-20241022": { input: 0.8, output: 4 },
