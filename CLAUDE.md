@@ -344,9 +344,11 @@ Orchestrates Copilot, Codex, and Jules for comprehensive PR reviews.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/health` | Health check (Fly.io) |
+| GET | `/api/health` | Health check (database, GitHub, LLM providers, system metrics) |
+| GET | `/api/stats` | Dashboard statistics |
 | GET | `/api/analytics/costs` | Cost breakdown by day/agent/model |
 | GET | `/api/logs/stream` | SSE real-time event stream |
+| POST | `/api/tasks/cleanup` | Clean up stale tasks |
 
 ### Linear Integration
 
@@ -354,6 +356,26 @@ Orchestrates Copilot, Codex, and Jules for comprehensive PR reviews.
 |--------|----------|-------------|
 | GET | `/api/review/pending` | Issues awaiting human review |
 | POST | `/api/linear/sync` | Sync GitHub issues to Linear |
+
+### Model Configuration
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/config/models` | Get all model configs + available models |
+| PUT | `/api/config/models` | Update model for a position |
+| POST | `/api/config/models/reset` | Reset all to defaults |
+| GET | `/api/config/models/audit` | Get configuration change history |
+
+### Webhook Queue
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/webhooks/failed` | List failed/dead webhook events |
+| GET | `/api/webhooks/stats` | Queue statistics |
+| GET | `/api/webhooks/:id` | Get specific webhook event |
+| POST | `/api/webhooks/:id/retry` | Retry single failed event |
+| POST | `/api/webhooks/retry-all` | Retry all failed events |
+| POST | `/api/webhooks/cleanup` | Delete old completed events |
 
 ---
 
@@ -406,10 +428,22 @@ src/
 │   └── db.ts                   # Tasks/events/session_memory CRUD
 ├── services/
 │   ├── foreman.ts              # Local test runner
-│   └── command-executor.ts     # Shell commands
+│   ├── command-executor.ts     # Shell commands
+│   └── webhook-queue.ts        # Webhook retry queue
 └── lib/
     ├── migrate.ts              # DB migrations
     └── import-analyzer.ts      # Dependency analysis
+
+packages/
+├── api/                        # Backend (moved from src/)
+├── web/                        # React dashboard (Vite + Tailwind)
+│   ├── src/
+│   │   ├── pages/              # DashboardPage, TasksPage, JobsPage, SettingsPage
+│   │   ├── components/         # UI components
+│   │   ├── contexts/           # ThemeContext
+│   │   └── hooks/              # useTaskFilters, useKeyboardShortcuts, useToast
+│   └── ...
+└── shared/                     # Shared types (@autodev/shared)
 
 .github/
 ├── workflows/
@@ -417,7 +451,6 @@ src/
 │   └── ai-super-review.yml     # Multi-agent PR review
 └── copilot-instructions.md     # Copilot repo instructions
 
-autodev-dashboard/              # React monitoring UI
 prompts/                        # LLM prompt templates
 AGENTS.md                       # AI agent instructions
 ```
@@ -494,13 +527,85 @@ Dockerfile, docker-compose.yml, *.pem, *.key
 
 ---
 
+## Dashboard (packages/web)
+
+React dashboard built with Vite + Tailwind CSS for monitoring and managing tasks.
+
+### Features
+- **Task Management**: View, filter, search, retry, rerun, and cancel tasks
+- **Job Monitoring**: Track batch job progress
+- **Model Configuration**: Configure models for each agent position via Settings page
+- **Theme Support**: Dark/light mode toggle with system preference detection
+- **Keyboard Shortcuts**: Vim-style navigation (g+d, g+t, g+j, ?)
+- **Error Boundaries**: Graceful error handling with recovery options
+- **Toast Notifications**: Success/error feedback for user actions
+
+### Key Components
+| Component | Purpose |
+|-----------|---------|
+| `TasksPage` | Task list with filtering, search, and inline actions |
+| `SettingsPage` | Model configuration dropdowns for all agent positions |
+| `FilterBar` | Status, repo, and date filters with URL persistence |
+| `ThemeToggle` | Dark/light mode switcher |
+| `ConfirmDialog` | Confirmation modal for destructive actions |
+| `ToastContainer` | Toast notification system |
+| `ErrorBoundary` | React error boundary with fallback UI |
+
+---
+
+## Webhook Queue & Retry System
+
+Handles failed webhook events with exponential backoff and dead letter storage.
+
+### Retry Strategy
+| Attempt | Delay | Total Wait |
+|---------|-------|------------|
+| 1 | 1 second | 1s |
+| 2 | 5 seconds | 6s |
+| 3 | 30 seconds | 36s |
+| 4 | 5 minutes | 5m 36s |
+| 5 | 30 minutes | 35m 36s |
+
+After 5 failed attempts, events are moved to dead letter queue for manual review.
+
+### Files
+| File | Purpose |
+|------|---------|
+| `src/core/retry.ts` | Retry utilities with exponential backoff |
+| `src/services/webhook-queue.ts` | Webhook event queue service |
+
+### Database Tables
+- `webhook_events` - Queue storage with status tracking
+- `model_config` - User-configurable model assignments
+- `model_config_audit` - Configuration change history
+
+### Usage
+```typescript
+import { withRetry, GITHUB_RETRY_CONFIG } from "./core/retry";
+
+// Wrap any async function with retry logic
+const result = await withRetry(
+  () => github.createPR(params),
+  GITHUB_RETRY_CONFIG
+);
+
+if (!result.success) {
+  console.error(`Failed after ${result.attempts} attempts:`, result.error);
+}
+```
+
+---
+
 ## Key Files Reference
+
+### Backend (packages/api)
 
 | Purpose | File |
 |---------|------|
 | Main orchestrator | `src/core/orchestrator.ts` |
 | Model selection | `src/core/model-selection.ts` |
 | State machine | `src/core/state-machine.ts` |
+| Retry utilities | `src/core/retry.ts` |
 | Patch format conversion | `src/core/patch-formats.ts` |
 | Multi-agent config | `src/core/multi-agent-types.ts` |
 | Consensus voting | `src/core/consensus.ts` |
@@ -511,8 +616,30 @@ Dockerfile, docker-compose.yml, *.pem, *.key
 | OpenAI Direct (Codex) | `src/integrations/openai-direct.ts` |
 | Database operations | `src/integrations/db.ts` |
 | Local testing | `src/services/foreman.ts` |
+| Webhook queue | `src/services/webhook-queue.ts` |
+| DB migrations | `src/lib/migrate.ts` |
+
+### Dashboard (packages/web)
+
+| Purpose | File |
+|---------|------|
+| App entry | `src/App.tsx` |
+| Tasks page | `src/pages/TasksPage.tsx` |
+| Settings page | `src/pages/SettingsPage.tsx` |
+| Theme context | `src/contexts/ThemeContext.tsx` |
+| Task filters hook | `src/hooks/useTaskFilters.ts` |
+| Keyboard shortcuts | `src/hooks/useKeyboardShortcuts.ts` |
+| Toast notifications | `src/components/common/Toast.tsx` |
+| Confirm dialog | `src/components/common/ConfirmDialog.tsx` |
+| Error boundary | `src/components/error/ErrorBoundary.tsx` |
+
+### Other
+
+| Purpose | File |
+|---------|------|
 | AI Super Review | `.github/workflows/ai-super-review.yml` |
 | Agent instructions | `AGENTS.md` |
+| Shared types | `packages/shared/src/index.ts` |
 
 ---
 
@@ -730,4 +857,4 @@ Currently in NEW status, ready for processing:
 
 ---
 
-_Last updated: 2025-12-13_
+_Last updated: 2025-12-14_

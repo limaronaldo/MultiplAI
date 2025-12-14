@@ -1,0 +1,254 @@
+import { useEffect, useState } from "react";
+import { Save, RotateCcw, Check, AlertCircle } from "lucide-react";
+import type { AvailableModel, ModelConfig } from "@autodev/shared";
+
+interface ModelConfigResponse {
+  configs: ModelConfig[];
+  availableModels: AvailableModel[];
+}
+
+const POSITION_LABELS: Record<string, { label: string; description: string }> = {
+  planner: { label: "Planner", description: "Analyzes issues and creates implementation plans" },
+  coder_xs_low: { label: "Coder XS (Low)", description: "Extra small tasks with low effort" },
+  coder_xs_medium: { label: "Coder XS (Medium)", description: "Extra small tasks with medium effort" },
+  coder_xs_high: { label: "Coder XS (High)", description: "Extra small tasks with high effort" },
+  coder_s_low: { label: "Coder S (Low)", description: "Small tasks with low effort" },
+  coder_s_medium: { label: "Coder S (Medium)", description: "Small tasks with medium effort" },
+  coder_s_high: { label: "Coder S (High)", description: "Small tasks with high effort" },
+  coder_m_low: { label: "Coder M (Low)", description: "Medium tasks with low effort" },
+  coder_m_medium: { label: "Coder M (Medium)", description: "Medium tasks with medium effort" },
+  coder_m_high: { label: "Coder M (High)", description: "Medium tasks with high effort" },
+  fixer: { label: "Fixer", description: "Fixes failed tests and errors" },
+  reviewer: { label: "Reviewer", description: "Reviews generated code" },
+  escalation_1: { label: "Escalation 1", description: "First retry after failure" },
+  escalation_2: { label: "Escalation 2", description: "Final fallback model" },
+};
+
+const POSITION_GROUPS = [
+  { title: "Core Agents", positions: ["planner", "fixer", "reviewer"] },
+  { title: "XS Complexity Coders", positions: ["coder_xs_low", "coder_xs_medium", "coder_xs_high"] },
+  { title: "S Complexity Coders", positions: ["coder_s_low", "coder_s_medium", "coder_s_high"] },
+  { title: "M Complexity Coders", positions: ["coder_m_low", "coder_m_medium", "coder_m_high"] },
+  { title: "Escalation", positions: ["escalation_1", "escalation_2"] },
+];
+
+export function SettingsPage() {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [configs, setConfigs] = useState<ModelConfig[]>([]);
+  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
+  const [pendingChanges, setPendingChanges] = useState<Record<string, string>>({});
+  const [saveStatus, setSaveStatus] = useState<{ position: string; success: boolean } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/config/models")
+      .then((res) => res.json())
+      .then((data: ModelConfigResponse) => {
+        setConfigs(data.configs);
+        setAvailableModels(data.availableModels);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const handleModelChange = (position: string, modelId: string) => {
+    setPendingChanges((prev) => ({ ...prev, [position]: modelId }));
+  };
+
+  const handleSave = async (position: string) => {
+    const modelId = pendingChanges[position];
+    if (!modelId) return;
+
+    setSaving(position);
+    try {
+      const res = await fetch("/api/config/models", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ position, modelId }),
+      });
+
+      if (res.ok) {
+        setConfigs((prev) =>
+          prev.map((c) =>
+            c.position === position ? { ...c, modelId, updatedAt: new Date().toISOString() } : c
+          )
+        );
+        setPendingChanges((prev) => {
+          const next = { ...prev };
+          delete next[position];
+          return next;
+        });
+        setSaveStatus({ position, success: true });
+      } else {
+        setSaveStatus({ position, success: false });
+      }
+    } catch {
+      setSaveStatus({ position, success: false });
+    }
+    setSaving(null);
+    setTimeout(() => setSaveStatus(null), 2000);
+  };
+
+  const handleReset = async () => {
+    if (!confirm("Reset all model configurations to defaults?")) return;
+
+    try {
+      await fetch("/api/config/models/reset", { method: "POST" });
+      // Reload configs
+      const res = await fetch("/api/config/models");
+      const data: ModelConfigResponse = await res.json();
+      setConfigs(data.configs);
+      setPendingChanges({});
+    } catch (e) {
+      console.error("Failed to reset", e);
+    }
+  };
+
+  const getConfigForPosition = (position: string) => {
+    return configs.find((c) => c.position === position);
+  };
+
+  const getCurrentModel = (position: string) => {
+    return pendingChanges[position] || getConfigForPosition(position)?.modelId || "";
+  };
+
+  const hasPendingChange = (position: string) => {
+    const config = getConfigForPosition(position);
+    return pendingChanges[position] && pendingChanges[position] !== config?.modelId;
+  };
+
+  if (loading) {
+    return (
+      <div className="p-8">
+        <div className="animate-pulse space-y-4">
+          <div className="h-8 w-48 bg-slate-800 rounded" />
+          <div className="h-64 bg-slate-800 rounded-xl" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-8 max-w-4xl">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Model Configuration</h1>
+          <p className="text-sm text-slate-400 mt-1">
+            Select which model to use for each agent position
+          </p>
+        </div>
+        <button
+          onClick={handleReset}
+          className="flex items-center gap-2 px-3 py-2 text-sm text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+        >
+          <RotateCcw className="w-4 h-4" />
+          Reset to Defaults
+        </button>
+      </div>
+
+      <div className="space-y-8">
+        {POSITION_GROUPS.map((group) => (
+          <div key={group.title} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-800 bg-slate-800/50">
+              <h2 className="font-semibold text-white">{group.title}</h2>
+            </div>
+
+            <div className="divide-y divide-slate-800">
+              {group.positions.map((position) => {
+                const posInfo = POSITION_LABELS[position];
+                const currentModel = getCurrentModel(position);
+                const model = availableModels.find((m) => m.id === currentModel);
+                const hasChange = hasPendingChange(position);
+
+                return (
+                  <div key={position} className="px-5 py-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-white">{posInfo?.label || position}</div>
+                        <div className="text-sm text-slate-500 mt-0.5">
+                          {posInfo?.description}
+                        </div>
+                        {model && (
+                          <div className="flex items-center gap-2 mt-2 text-xs text-slate-500">
+                            <span className={`px-1.5 py-0.5 rounded ${
+                              model.provider === "anthropic" ? "bg-purple-500/20 text-purple-400" :
+                              model.provider === "openai" ? "bg-emerald-500/20 text-emerald-400" :
+                              "bg-blue-500/20 text-blue-400"
+                            }`}>
+                              {model.provider}
+                            </span>
+                            <span>~${model.costPerTask.toFixed(2)}/task</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={currentModel}
+                          onChange={(e) => handleModelChange(position, e.target.value)}
+                          className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-blue-500 min-w-[200px]"
+                        >
+                          {availableModels.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name}
+                            </option>
+                          ))}
+                        </select>
+
+                        {hasChange && (
+                          <button
+                            onClick={() => handleSave(position)}
+                            disabled={saving === position}
+                            className="flex items-center gap-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
+                          >
+                            {saving === position ? (
+                              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            ) : (
+                              <Save className="w-4 h-4" />
+                            )}
+                            Save
+                          </button>
+                        )}
+
+                        {saveStatus?.position === position && (
+                          <span className={`flex items-center gap-1 text-sm ${
+                            saveStatus.success ? "text-emerald-400" : "text-red-400"
+                          }`}>
+                            {saveStatus.success ? <Check className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Model legend */}
+      <div className="mt-8 bg-slate-900 border border-slate-800 rounded-xl p-5">
+        <h3 className="font-semibold text-white mb-4">Available Models</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {availableModels.map((model) => (
+            <div key={model.id} className="flex items-start gap-3 p-3 bg-slate-800/50 rounded-lg">
+              <div className={`px-2 py-1 rounded text-xs font-medium ${
+                model.provider === "anthropic" ? "bg-purple-500/20 text-purple-400" :
+                model.provider === "openai" ? "bg-emerald-500/20 text-emerald-400" :
+                "bg-blue-500/20 text-blue-400"
+              }`}>
+                {model.provider}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-white text-sm">{model.name}</div>
+                <div className="text-xs text-slate-500 mt-0.5">{model.description}</div>
+                <div className="text-xs text-slate-400 mt-1">~${model.costPerTask.toFixed(2)}/task</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
