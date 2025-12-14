@@ -4,35 +4,136 @@ import { useNavigate } from "react-router-dom";
 export interface Shortcut {
   keys: string;
   description: string;
+  category?: "navigation" | "actions" | "general";
   action: () => void;
 }
 
-export function useKeyboardShortcuts() {
+export interface KeyboardShortcutsOptions {
+  onSearch?: () => void;
+  onNewJob?: () => void;
+  onRefresh?: () => void;
+  onExport?: () => void;
+  onToggleTheme?: () => void;
+  onToggleNotifications?: () => void;
+}
+
+export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}) {
   const navigate = useNavigate();
   const [showHelp, setShowHelp] = useState(false);
 
   const shortcuts: Shortcut[] = [
-    { keys: "g d", description: "Go to Dashboard", action: () => navigate("/") },
-    { keys: "g t", description: "Go to Tasks", action: () => navigate("/tasks") },
-    { keys: "g j", description: "Go to Jobs", action: () => navigate("/jobs") },
-    { keys: "?", description: "Show keyboard shortcuts", action: () => setShowHelp(true) },
-    { keys: "Escape", description: "Close modal", action: () => setShowHelp(false) },
-    { keys: "r", description: "Refresh page", action: () => window.location.reload() },
+    // Navigation
+    {
+      keys: "g d",
+      description: "Go to Dashboard",
+      category: "navigation",
+      action: () => navigate("/"),
+    },
+    {
+      keys: "g t",
+      description: "Go to Tasks",
+      category: "navigation",
+      action: () => navigate("/tasks"),
+    },
+    {
+      keys: "g j",
+      description: "Go to Jobs",
+      category: "navigation",
+      action: () => navigate("/jobs"),
+    },
+    {
+      keys: "g s",
+      description: "Go to Settings",
+      category: "navigation",
+      action: () => navigate("/settings"),
+    },
+    // Actions
+    {
+      keys: "⌘ k",
+      description: "Search tasks",
+      category: "actions",
+      action: () => options.onSearch?.(),
+    },
+    {
+      keys: "⌘ e",
+      description: "Export data",
+      category: "actions",
+      action: () => options.onExport?.(),
+    },
+    {
+      keys: "n",
+      description: "New job",
+      category: "actions",
+      action: () => options.onNewJob?.(),
+    },
+    {
+      keys: "r",
+      description: "Refresh data",
+      category: "actions",
+      action: () => options.onRefresh?.() || window.location.reload(),
+    },
+    // General
+    {
+      keys: "?",
+      description: "Show shortcuts",
+      category: "general",
+      action: () => setShowHelp(true),
+    },
+    {
+      keys: "Escape",
+      description: "Close modal/panel",
+      category: "general",
+      action: () => setShowHelp(false),
+    },
+    {
+      keys: "t",
+      description: "Toggle theme",
+      category: "general",
+      action: () => options.onToggleTheme?.(),
+    },
+    {
+      keys: "b",
+      description: "Toggle notifications",
+      category: "general",
+      action: () => options.onToggleNotifications?.(),
+    },
   ];
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      // Ignore if typing in an input
-      if (
+      // Ignore if typing in an input (except for Cmd/Ctrl shortcuts)
+      const isInput =
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement ||
-        e.target instanceof HTMLSelectElement
-      ) {
+        e.target instanceof HTMLSelectElement;
+
+      if (isInput) {
         // Allow Escape in inputs
         if (e.key === "Escape") {
           (e.target as HTMLElement).blur();
+          return;
+        }
+        // Allow Cmd+K for search even in inputs
+        if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+          e.preventDefault();
+          options.onSearch?.();
+          return;
         }
         return;
+      }
+
+      // Cmd/Ctrl shortcuts
+      if (e.metaKey || e.ctrlKey) {
+        switch (e.key) {
+          case "k":
+            e.preventDefault();
+            options.onSearch?.();
+            return;
+          case "e":
+            e.preventDefault();
+            options.onExport?.();
+            return;
+        }
       }
 
       // Single key shortcuts
@@ -49,7 +150,25 @@ export function useKeyboardShortcuts() {
 
       if (e.key === "r" && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
-        window.location.reload();
+        options.onRefresh?.() || window.location.reload();
+        return;
+      }
+
+      if (e.key === "n" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        options.onNewJob?.();
+        return;
+      }
+
+      if (e.key === "t" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        options.onToggleTheme?.();
+        return;
+      }
+
+      if (e.key === "b" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        options.onToggleNotifications?.();
         return;
       }
 
@@ -66,6 +185,9 @@ export function useKeyboardShortcuts() {
             case "j":
               navigate("/jobs");
               break;
+            case "s":
+              navigate("/settings");
+              break;
           }
           document.removeEventListener("keydown", handleSecondKey);
         };
@@ -78,7 +200,7 @@ export function useKeyboardShortcuts() {
         }, 1000);
       }
     },
-    [navigate]
+    [navigate, options],
   );
 
   useEffect(() => {
