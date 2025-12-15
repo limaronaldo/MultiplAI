@@ -228,6 +228,16 @@ export const db = {
     return results.map(this.mapTask);
   },
 
+  async getTasksByStatus(status: TaskStatus): Promise<Task[]> {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM tasks
+      WHERE status = ${status}
+      ORDER BY created_at ASC
+    `;
+    return results.map(this.mapTask);
+  },
+
   async getRecentTasksByRepo(
     repo: string,
     limit: number = 10,
