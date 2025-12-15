@@ -398,6 +398,15 @@ export const ReviewerOutputSchema = z.object({
     }),
   ),
   suggestedChanges: z.array(z.string()).optional(),
+  dodVerification: z
+    .array(
+      z.object({
+        item: z.string(),
+        met: z.boolean(),
+        evidence: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 export type ReviewerOutput = z.infer<typeof ReviewerOutputSchema>;

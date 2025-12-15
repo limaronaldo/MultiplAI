@@ -1449,12 +1449,17 @@ export class Orchestrator {
       testsPassed: true, // We only get here if tests passed
     });
 
-    // Log review completion with model info and verdict
+    // Log review completion with model info, verdict, and full feedback
     await this.logEvent(task, "REVIEWED", "reviewer", {
       model: this.reviewer["config"].model,
       reasoningEffort: this.reviewer["config"].reasoningEffort,
       verdict: reviewerOutput.verdict,
       attemptCount: task.attemptCount,
+      // Include full feedback for debugging rejected reviews
+      summary: reviewerOutput.summary,
+      comments: reviewerOutput.comments,
+      suggestedChanges: reviewerOutput.suggestedChanges,
+      dodVerification: reviewerOutput.dodVerification,
     });
 
     if (reviewerOutput.verdict === "APPROVE") {
