@@ -12,7 +12,7 @@ const TOKEN_COSTS: Record<string, { input: number; output: number }> = {
   "claude-sonnet-4-5-20250929": { input: 3, output: 15 },
   "claude-sonnet-4-20250514": { input: 3, output: 15 },
   "claude-3-5-sonnet-20241022": { input: 3, output: 15 },
-  "claude-3-5-haiku-20241022": { input: 0.8, output: 4 },
+  "claude-3-5-haiku-20241022": { input: 1, output: 5 },
   "gpt-5.1-codex-max": { input: 5, output: 20 },
   "gpt-5.1-codex-mini": { input: 1, output: 4 },
   "gpt-5.2-high": { input: 4, output: 16 },
