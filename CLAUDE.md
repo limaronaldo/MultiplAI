@@ -977,29 +977,64 @@ Imported and processed 14 UI feature issues (#51-#64) from `MbInteligen/MVP-TS-i
 
 ---
 
-## Next Steps (as of 2025-12-15)
+## Completed Work (2025-12-15)
 
-### Immediate (Bug Fixes)
-- [ ] **Fix #404** - Reviewer JSON parse bug (5 tasks failed due to this)
-- [ ] **Fix #403** - Merge conflict handling automation
+### Bug Fixes ✅
+- [x] **Fixed #404** - Reviewer JSON parse bug
+  - Enhanced JSON extraction in `base.ts` with fallback logic
+  - Added graceful degradation in `reviewer.ts` for malformed responses
+  - Deployed to production
+  
+- [x] **Fixed #403** - Merge conflict detection
+  - Added `getOpenPRs()` and `detectConflictingPRs()` methods to GitHub client
+  - Integrated conflict warnings into PR creation flow
+  - Added `CONFLICT_DETECTED` event type for audit trail
 
-### Short-term
-- [ ] **Review 5 PRs** on MVP-TS-ibvi-ai (#66-#70) - waiting for human review
-- [ ] **Retry failed tasks** after fixing #404
-- [ ] **Check #63** - still in ORCHESTRATING state
+### Infrastructure Improvements ✅
+- [x] **Setup TypeScript/Jest for autodev-test repo**
+  - Added `package.json`, `tsconfig.json`, `jest.config.js`
+  - PR #77 merged to main
+  - Enables typecheck and test validation
+  
+- [x] **Enabled Foreman for dependency installation**
+  - Set `USE_FOREMAN=true` in Fly.io
+  - Fixes typecheck failures by running `npm install` before validation
+  
+- [x] **Replaced Kimi K2 with Claude Haiku 4.5**
+  - Updated planner, fixer, and escalation_1 agents
+  - Cost reduction: $0.15 → $0.01 per task (93% savings)
+  - Deployed to production
 
-### Medium-term (PMVP)
-- [ ] **Increase diff limit** or improve task breakdown for large tasks (e.g., #54 had 880 lines)
-- [ ] **Add repo-specific context** to improve success rate on complex codebases
-- [ ] **Deploy fixes** to Fly.io
-
-### Current System Status
-- **API:** localhost:3000
-- **Web Dashboard:** localhost:5173
-- **Linked Repos:** limaronaldo/autodev-test, limaronaldo/MultiplAI, MbInteligen/MVP-TS-ibvi-ai
-- **Open PRs:** 5 on MVP-TS-ibvi-ai (#66-#70)
-- **Tasks Processing:** 1 (#63 - ORCHESTRATING)
+### Deployment
+- [x] All fixes deployed to Fly.io
+- [x] Node.js/npm tools added to production Docker image
 
 ---
 
-_Last updated: 2025-12-15_
+## Next Steps (as of 2025-12-15)
+
+### Immediate
+- [ ] **Debug production app crashes** - Machines keep stopping
+- [ ] **Test bug fixes in production** - Verify #404 and #403 work end-to-end
+- [ ] **Verify Claude Haiku 4.5 performance** - Monitor planner/fixer quality
+
+### Short-term
+- [ ] **Review 5 PRs** on MVP-TS-ibvi-ai (#66-#70) - waiting for human review
+- [ ] **Check #63** - still in ORCHESTRATING state
+- [ ] **Process issues #6 and #7** - Ready for autodev
+
+### Medium-term (PMVP)
+- [ ] **Dashboard implementation** - 55 XS issues ready (#80-#130)
+- [ ] **AI Super Review setup** - Enable Copilot, Codex, Jules
+- [ ] **Increase diff limit** or improve task breakdown for large tasks
+
+### Current System Status
+- **API:** Production (multiplai.fly.dev) - **UNSTABLE** (machines stopping)
+- **Web Dashboard:** localhost:5173
+- **Linked Repos:** limaronaldo/autodev-test, limaronaldo/MultiplAI, MbInteligen/MVP-TS-ibvi-ai
+- **Open PRs:** 5 on MVP-TS-ibvi-ai (#66-#70), 1 on autodev-test (#77 merged)
+- **Recent Changes:** Kimi K2 → Claude Haiku 4.5, USE_FOREMAN=true, bug fixes deployed
+
+---
+
+_Last updated: 2025-12-15 (end of day)_
