@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -9,7 +10,10 @@ import {
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ShortcutsModal } from "@/components/ShortcutsModal";
+import { MobileNav } from "@/components/layout/MobileNav";
+import { BottomTabBar } from "@/components/layout/BottomTabBar";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useTheme } from "@/contexts/ThemeContext";
 
 const navItems = [
@@ -23,14 +27,56 @@ const navItems = [
 export function Layout({ children }: { children: React.ReactNode }) {
   const { shortcuts, showHelp, setShowHelp } = useKeyboardShortcuts();
   const { resolvedTheme } = useTheme();
+  const isMobile = useIsMobile();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
+  const closeSidebar = () => setSidebarOpen(false);
 
   return (
     <div
       className={`flex h-screen ${resolvedTheme === "dark" ? "bg-slate-950 text-slate-200" : "bg-slate-50 text-slate-900"}`}
     >
+      {/* Mobile Header */}
+      {isMobile && (
+        <header
+          className={`fixed top-0 left-0 right-0 z-40 h-14 flex items-center justify-between px-4 border-b ${
+            resolvedTheme === "dark"
+              ? "bg-slate-900 border-slate-800"
+              : "bg-white border-slate-200"
+          }`}
+        >
+          <h1
+            className={`text-lg font-bold flex items-center gap-2 ${
+              resolvedTheme === "dark" ? "text-white" : "text-slate-900"
+            }`}
+          >
+            <span className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center text-xs text-white">
+              AD
+            </span>
+            AutoDev
+          </h1>
+          <MobileNav isOpen={sidebarOpen} onToggle={toggleSidebar} />
+        </header>
+      )}
+
+      {/* Sidebar Overlay (mobile) */}
+      {isMobile && sidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 transition-opacity"
+          onClick={closeSidebar}
+        />
+      )}
+
       {/* Sidebar */}
       <aside
-        className={`w-64 border-r flex flex-col ${resolvedTheme === "dark" ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"}`}
+        className={`
+          ${isMobile ? "fixed inset-y-0 left-0 z-50 w-64" : "w-64"}
+          border-r flex flex-col
+          transition-transform duration-300 ease-in-out
+          ${resolvedTheme === "dark" ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"}
+          ${isMobile && !sidebarOpen ? "-translate-x-full" : "translate-x-0"}
+        `}
       >
         {/* Logo */}
         <div
@@ -53,6 +99,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               key={to}
               to={to}
               end={to === "/"}
+              onClick={isMobile ? closeSidebar : undefined}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
                   isActive
@@ -113,10 +160,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Main content */}
       <main
-        className={`flex-1 overflow-auto ${resolvedTheme === "dark" ? "bg-slate-950" : "bg-slate-100"}`}
+        className={`flex-1 overflow-auto ${resolvedTheme === "dark" ? "bg-slate-950" : "bg-slate-100"} ${
+          isMobile ? "pt-14 pb-16" : ""
+        }`}
       >
         {children}
       </main>
+
+      {/* Bottom Tab Bar (mobile only) */}
+      {isMobile && <BottomTabBar />}
 
       {/* Shortcuts modal */}
       <ShortcutsModal
