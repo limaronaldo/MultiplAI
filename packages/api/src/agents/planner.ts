@@ -37,7 +37,10 @@ function asCodeChunk(value: unknown): CodeChunk | null {
   return v as CodeChunk;
 }
 
-function buildRagContext(results: unknown[]): { suggestedFiles: string[]; snippets: string } {
+function buildRagContext(results: unknown[]): {
+  suggestedFiles: string[];
+  snippets: string;
+} {
   const chunks: CodeChunk[] = [];
   for (const r of results) {
     const c = asCodeChunk(r);
@@ -51,12 +54,9 @@ function buildRagContext(results: unknown[]): { suggestedFiles: string[]; snippe
     .map((c) => {
       const body =
         c.content.length > 800 ? `${c.content.slice(0, 800)}\n…` : c.content;
-      return [
-        `### ${c.filePath}:${c.startLine}`,
-        "```",
-        body,
-        "```",
-      ].join("\n");
+      return [`### ${c.filePath}:${c.startLine}`, "```", body, "```"].join(
+        "\n",
+      );
     })
     .join("\n\n");
 
@@ -220,24 +220,60 @@ Analyze this issue and provide your implementation plan as JSON.
     const response = await this.complete(SYSTEM_PROMPT, userPrompt);
 
     console.log(`[Planner] Response type: ${typeof response}`);
-    console.log(`[Planner] Response preview: ${String(response).slice(0, 500)}...`);
+    console.log(
+      `[Planner] Response preview: ${String(response).slice(0, 500)}...`,
+    );
 
     if (typeof response === "object" && response !== null) {
-      const validated = PlannerOutputSchema.parse(response);
-      return {
-        ...validated,
-        targetFiles: uniq([...(validated.targetFiles ?? []), ...ragSuggestedFiles]),
-      };
+      try {
+        const validated = PlannerOutputSchema.parse(response);
+        return {
+          ...validated,
+          targetFiles: uniq([
+            ...(validated.targetFiles ?? []),
+            ...ragSuggestedFiles,
+          ]),
+        };
+      } catch (validationError) {
+        console.error(
+          "[Planner] Schema validation failed for object response:",
+          validationError,
+        );
+        throw validationError;
+      }
     }
 
-    const parsed = this.parseJSON<PlannerOutput>(response);
-    console.log(`[Planner] Parsed result keys: ${Object.keys(parsed || {}).join(", ")}`);
+    let parsed: PlannerOutput;
+    try {
+      parsed = this.parseJSON<PlannerOutput>(response);
+      console.log(
+        `[Planner] Parsed result keys: ${Object.keys(parsed || {}).join(", ")}`,
+      );
+    } catch (parseError) {
+      console.error("[Planner] JSON parse failed:", parseError);
+      console.error(
+        "[Planner] Response preview:",
+        String(response).slice(0, 500),
+      );
+      throw parseError;
+    }
 
-    const validated = PlannerOutputSchema.parse(parsed);
-    return {
-      ...validated,
-      targetFiles: uniq([...(validated.targetFiles ?? []), ...ragSuggestedFiles]),
-    };
+    try {
+      const validated = PlannerOutputSchema.parse(parsed);
+      return {
+        ...validated,
+        targetFiles: uniq([
+          ...(validated.targetFiles ?? []),
+          ...ragSuggestedFiles,
+        ]),
+      };
+    } catch (validationError) {
+      console.error("[Planner] Schema validation failed:", validationError);
+      console.error(
+        "[Planner] Parsed data:",
+        JSON.stringify(parsed, null, 2).slice(0, 500),
+      );
+      throw validationError;
+    }
   }
 }
-
