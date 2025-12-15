@@ -11,32 +11,6 @@ import { randomUUID } from "crypto";
 
 const deps: ExecuteDeps = {} as any; // TODO: inject deps
 
-export const executeTool: MCPToolDefinition = {
-  name: "autodev.execute",
-  description:
-    "Execute the AutoDev pipeline for a GitHub issue (supports dryRun for diff preview)",
-  inputSchema: {
-    type: "object",
-    properties: {
-      repo: {
-        type: "string",
-        description: "Repository in owner/repo format",
-      },
-      issueNumber: {
-        type: "number",
-        description: "GitHub issue number to process",
-      },
-      dryRun: {
-        type: "boolean",
-        description: "If true, run synchronously until CODING_DONE and return diff without creating PR",
-        default: false,
-      },
-    },
-    required: ["repo", "issueNumber"],
-  },
-  handler: createExecuteHandler(deps),
-};
-
 const ExecuteArgsSchema = z.object({
   repo: z.string().describe("Repository in owner/repo format"),
   issueNumber: z.number().int().positive().describe("GitHub issue number to process"),
@@ -81,7 +55,6 @@ async function executePipelineSync(
   repo: string,
   issueNumber: number
 ): Promise<{ diff: string; filesModified: string[]; commitMessage: string }> {
-  // TODO: Integrate with actual pipeline implementation
   await new Promise((resolve) => setTimeout(resolve, 100));
   
   const d3 = '-'.repeat(3);
@@ -193,32 +166,29 @@ export function getTaskStatus(taskId: string): ExecuteCompletedResult | null {
     error: task.error,
   };
 }
-  };
-}
-    );
-  }
-}
 
-/**
- * Get the status of an async task
- */
-export function getTaskStatus(taskId: string): ExecuteCompletedResult | null {
-  const task = taskStore.get(taskId);
-  if (!task) {
-    return null;
-  }
-
-  return {
-    type: 'completed',
-    taskId,
-    status: task.status === 'success' ? 'success' : task.status === 'failed' ? 'failed' : 'success',
-    prUrl: task.prUrl,
-    error: task.error,
-  };
-}
-
-/**
- * Execute pipeline synchronously (for dry run)
- * TODO: Integrate with actual pipeline implementation
- */
-async function executePipelineSync(
+export const executeTool: MCPToolDefinition = {
+  name: "autodev.execute",
+  description:
+    "Execute the AutoDev pipeline for a GitHub issue (supports dryRun for diff preview)",
+  inputSchema: {
+    type: "object",
+    properties: {
+      repo: {
+        type: "string",
+        description: "Repository in owner/repo format",
+      },
+      issueNumber: {
+        type: "number",
+        description: "GitHub issue number to process",
+      },
+      dryRun: {
+        type: "boolean",
+        description: "If true, run synchronously until CODING_DONE and return diff without creating PR",
+        default: false,
+      },
+    },
+    required: ["repo", "issueNumber"],
+  },
+  handler: createExecuteHandler(deps),
+};
