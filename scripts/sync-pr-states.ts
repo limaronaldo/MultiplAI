@@ -76,7 +76,7 @@ async function syncTaskStates(
     // Skip tasks without PR
     if (!task.prNumber) {
       console.log(
-        `${progress} ⏭️  Task ${task.id.slice(0, 8)} (Issue #${task.issueNumber}): No PR created yet`,
+        `${progress} ⏭️  Task ${task.id.slice(0, 8)} (Issue #${task.githubIssueNumber}): No PR created yet`,
       );
       skipped++;
       continue;
@@ -84,16 +84,16 @@ async function syncTaskStates(
 
     try {
       console.log(
-        `${progress} 🔍 Checking ${task.repo} PR #${task.prNumber} (Issue #${task.issueNumber})...`,
+        `${progress} 🔍 Checking ${task.githubRepo} PR #${task.prNumber} (Issue #${task.githubIssueNumber})...`,
       );
 
-      const prState = await getPRState(task.repo, task.prNumber);
+      const prState = await getPRState(task.githubRepo, task.prNumber);
 
       if (!prState) {
         // PR not found - likely deleted
         results.push({
           taskId: task.id,
-          issueNumber: task.issueNumber,
+          issueNumber: task.githubIssueNumber,
           prNumber: task.prNumber,
           oldStatus: "WAITING_HUMAN",
           newStatus: "FAILED",
@@ -104,10 +104,13 @@ async function syncTaskStates(
         if (!dryRun) {
           await db.updateTask(task.id, {
             status: "FAILED",
-            error: "PR not found on GitHub",
+            lastError: "PR not found on GitHub",
           });
-          await db.createTaskEvent(task.id, "FAILED", {
-            reason: "PR deleted or not found",
+          await db.createTaskEvent({
+            taskId: task.id,
+            eventType: "FAILED",
+            agent: "sync-pr-states",
+            metadata: { reason: "PR deleted or not found" },
           });
         }
 
@@ -138,7 +141,7 @@ async function syncTaskStates(
 
       results.push({
         taskId: task.id,
-        issueNumber: task.issueNumber,
+        issueNumber: task.githubIssueNumber,
         prNumber: task.prNumber,
         oldStatus: "WAITING_HUMAN",
         newStatus,
@@ -149,11 +152,16 @@ async function syncTaskStates(
       if (!dryRun) {
         await db.updateTask(task.id, {
           status: newStatus as any,
-          ...(newStatus === "FAILED" ? { error: reason } : {}),
+          ...(newStatus === "FAILED" ? { lastError: reason } : {}),
         });
-        await db.createTaskEvent(task.id, newStatus as any, {
-          reason,
-          prState: prState.merged ? "merged" : "closed",
+        await db.createTaskEvent({
+          taskId: task.id,
+          eventType: newStatus as any,
+          agent: "sync-pr-states",
+          metadata: {
+            reason,
+            prState: prState.merged ? "merged" : "closed",
+          },
         });
       }
     } catch (error: any) {
