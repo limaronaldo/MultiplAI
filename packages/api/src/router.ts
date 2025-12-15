@@ -4644,6 +4644,386 @@ route("POST", "/api/webhooks/cleanup", async (req) => {
 });
 
 // ============================================
+// Repositories API
+// ============================================
+
+const github = new GitHubClient();
+
+/**
+ * GET /api/repositories - List all linked repositories
+ */
+route("GET", "/api/repositories", async () => {
+  try {
+    const repositories = await db.getRepositories();
+    return Response.json({ repositories, count: repositories.length });
+  } catch (error) {
+    console.error("[API] Failed to get repositories:", error);
+    return Response.json(
+      { error: "Failed to fetch repositories" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/repositories - Link a new repository
+ * Body: { fullName: string } (format: "owner/repo")
+ */
+route("POST", "/api/repositories", async (req) => {
+  try {
+    const body = await req.json();
+    const { fullName } = body as { fullName: string };
+
+    if (!fullName || !isValidRepo(fullName)) {
+      return Response.json(
+        { error: "Invalid repository format. Expected: owner/repo" },
+        { status: 400 },
+      );
+    }
+
+    // Validate repository exists on GitHub
+    const repoData = await github.validateRepository(fullName);
+    if (!repoData) {
+      return Response.json(
+        { error: "Repository not found or not accessible" },
+        { status: 404 },
+      );
+    }
+
+    // Check if already linked
+    const existing = await db.getRepositoryByName(
+      repoData.owner,
+      repoData.repo,
+    );
+    if (existing) {
+      return Response.json(
+        { error: "Repository already linked", repository: existing },
+        { status: 409 },
+      );
+    }
+
+    // Create repository record
+    const repository = await db.createRepository(
+      repoData.owner,
+      repoData.repo,
+      repoData.description || undefined,
+      repoData.html_url,
+      repoData.private,
+    );
+
+    console.log(`[API] Linked repository: ${fullName}`);
+
+    return Response.json({
+      ok: true,
+      message: `Repository ${fullName} linked successfully`,
+      repository,
+    });
+  } catch (error) {
+    console.error("[API] Failed to create repository:", error);
+    return Response.json(
+      { error: "Failed to link repository", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/repositories/:id - Get a specific repository
+ */
+route("GET", "/api/repositories/:id", async (req) => {
+  const url = new URL(req.url);
+  const id = url.pathname.split("/").pop()!;
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid repository ID" }, { status: 400 });
+  }
+
+  try {
+    const repository = await db.getRepository(id);
+    if (!repository) {
+      return Response.json({ error: "Repository not found" }, { status: 404 });
+    }
+    return Response.json({ repository });
+  } catch (error) {
+    console.error("[API] Failed to get repository:", error);
+    return Response.json(
+      { error: "Failed to fetch repository" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * DELETE /api/repositories/:id - Remove a linked repository
+ */
+route("DELETE", "/api/repositories/:id", async (req) => {
+  const url = new URL(req.url);
+  const id = url.pathname.split("/").pop()!;
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid repository ID" }, { status: 400 });
+  }
+
+  try {
+    const repository = await db.getRepository(id);
+    if (!repository) {
+      return Response.json({ error: "Repository not found" }, { status: 404 });
+    }
+
+    await db.deleteRepository(id);
+
+    console.log(`[API] Unlinked repository: ${repository.full_name}`);
+
+    return Response.json({
+      ok: true,
+      message: `Repository ${repository.full_name} unlinked successfully`,
+    });
+  } catch (error) {
+    console.error("[API] Failed to delete repository:", error);
+    return Response.json(
+      { error: "Failed to unlink repository", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/repositories/sync - Sync repositories from existing tasks
+ */
+route("POST", "/api/repositories/sync", async () => {
+  try {
+    const count = await db.syncRepositoriesFromTasks();
+    console.log(`[API] Synced ${count} repositories from tasks`);
+
+    return Response.json({
+      ok: true,
+      synced: count,
+      message:
+        count > 0
+          ? `Added ${count} repositories from existing tasks`
+          : "All repositories already synced",
+    });
+  } catch (error) {
+    console.error("[API] Failed to sync repositories:", error);
+    return Response.json(
+      { error: "Failed to sync repositories", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/issues - Create a GitHub issue and optionally trigger AutoDev
+ */
+route("POST", "/api/issues", async (req) => {
+  try {
+    const body = await req.json();
+    const {
+      repo,
+      title,
+      body: issueBody,
+      labels = [],
+      autoProcess = true,
+    } = body;
+
+    if (!repo || !title) {
+      return Response.json(
+        { error: "Missing required fields: repo, title" },
+        { status: 400 },
+      );
+    }
+
+    // Validate repo format
+    if (!repo.includes("/")) {
+      return Response.json(
+        { error: "Invalid repo format. Use owner/repo" },
+        { status: 400 },
+      );
+    }
+
+    const [owner, repoName] = repo.split("/");
+
+    // Create GitHub issue
+    const issue = await github.createIssue(owner, repoName, {
+      title,
+      body: issueBody || "",
+      labels: autoProcess ? [...labels, "auto-dev"] : labels,
+    });
+
+    console.log(`[API] Created GitHub issue #${issue.number} in ${repo}`);
+
+    // If autoProcess is true and auto-dev label is added, create a task
+    let task = null;
+    if (autoProcess) {
+      task = await db.createTask({
+        githubRepo: repo,
+        githubIssueNumber: issue.number,
+        githubIssueTitle: title,
+        githubIssueBody: issueBody || "",
+        status: "NEW",
+        attemptCount: 0,
+        maxAttempts: 3,
+        isOrchestrated: false,
+      });
+      console.log(`[API] Created task ${task.id} for issue #${issue.number}`);
+    }
+
+    return Response.json({
+      ok: true,
+      issue: {
+        number: issue.number,
+        url: issue.html_url,
+        title: issue.title,
+      },
+      task: task ? { id: task.id, status: task.status } : null,
+    });
+  } catch (error) {
+    console.error("[API] Failed to create issue:", error);
+    return Response.json(
+      { error: "Failed to create issue", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/issues/:repo - List GitHub issues for a repo
+ */
+route("GET", "/api/issues/:owner/:repo", async (req) => {
+  const url = new URL(req.url);
+  // Extract repo from path: /api/issues/owner/repo -> owner/repo
+  const pathParts = url.pathname.replace("/api/issues/", "").split("/");
+
+  if (pathParts.length < 2) {
+    return Response.json(
+      { error: "Invalid repo format. Use /api/issues/owner/repo" },
+      { status: 400 },
+    );
+  }
+
+  const owner = pathParts[0];
+  const repo = pathParts[1];
+  const state = url.searchParams.get("state") || "open";
+  const labels = url.searchParams.get("labels") || undefined;
+
+  try {
+    const issues = await github.listIssues(owner, repo, {
+      state: state as "open" | "closed" | "all",
+      labels,
+    });
+
+    return Response.json({
+      issues: issues.map((issue: any) => ({
+        number: issue.number,
+        title: issue.title,
+        body: issue.body,
+        state: issue.state,
+        labels: issue.labels.map((l: any) => l.name),
+        url: issue.html_url,
+        created_at: issue.created_at,
+        updated_at: issue.updated_at,
+      })),
+      count: issues.length,
+    });
+  } catch (error) {
+    console.error("[API] Failed to list issues:", error);
+    return Response.json(
+      { error: "Failed to list issues", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/tasks/import - Import GitHub issues as tasks
+ */
+route("POST", "/api/tasks/import", async (req) => {
+  try {
+    const body = await req.json();
+    const { repo, issues } = body;
+
+    if (!repo || !issues || !Array.isArray(issues) || issues.length === 0) {
+      return Response.json(
+        {
+          error:
+            "Missing required fields: repo, issues (array of issue numbers)",
+        },
+        { status: 400 },
+      );
+    }
+
+    const [owner, repoName] = repo.split("/");
+    if (!owner || !repoName) {
+      return Response.json(
+        { error: "Invalid repo format. Use owner/repo" },
+        { status: 400 },
+      );
+    }
+
+    const results: { issue: number; taskId?: string; error?: string }[] = [];
+    let imported = 0;
+    let skipped = 0;
+
+    for (const issueNumber of issues) {
+      try {
+        // Check if task already exists for this issue
+        const existingTask = await db.getTaskByIssue(repo, issueNumber);
+        if (existingTask) {
+          results.push({
+            issue: issueNumber,
+            error: "Already imported",
+            taskId: existingTask.id,
+          });
+          skipped++;
+          continue;
+        }
+
+        // Fetch issue details from GitHub
+        const issueData = await github.getIssue(owner, repoName, issueNumber);
+
+        // Create task
+        const task = await db.createTask({
+          githubRepo: repo,
+          githubIssueNumber: issueNumber,
+          githubIssueTitle: issueData.title,
+          githubIssueBody: issueData.body || "",
+          status: "NEW",
+          attemptCount: 0,
+          maxAttempts: 3,
+          isOrchestrated: false,
+        });
+
+        results.push({ issue: issueNumber, taskId: task.id });
+        imported++;
+      } catch (e: any) {
+        results.push({
+          issue: issueNumber,
+          error: e.message || "Failed to import",
+        });
+      }
+    }
+
+    console.log(
+      `[API] Imported ${imported} issues, skipped ${skipped} from ${repo}`,
+    );
+
+    return Response.json({
+      ok: true,
+      imported,
+      skipped,
+      total: issues.length,
+      results,
+    });
+  } catch (error) {
+    console.error("[API] Failed to import issues:", error);
+    return Response.json(
+      { error: "Failed to import issues", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+// ============================================
 // Router
 // ============================================
 

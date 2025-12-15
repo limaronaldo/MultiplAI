@@ -45,27 +45,6 @@ export class GitHubClient {
   }
 
   /**
-   * Fetch a GitHub issue (title/body/url)
-   */
-  async getIssue(
-    fullName: string,
-    issueNumber: number,
-  ): Promise<{ title: string; body: string; url: string }> {
-    const { owner, repo } = this.parseRepo(fullName);
-    const result = await this.octokit.rest.issues.get({
-      owner,
-      repo,
-      issue_number: issueNumber,
-    });
-
-    return {
-      title: result.data.title,
-      body: result.data.body || "",
-      url: result.data.html_url,
-    };
-  }
-
-  /**
    * Obtém contexto básico do repositório (README, estrutura)
    */
   async getRepoContext(
@@ -80,36 +59,43 @@ export class GitHubClient {
     );
     const cacheKey: CacheKey = { type: "repo", identifier, contentHash };
 
-    return this.promptCache.getOrSet(cacheKey, getPromptCacheTtlMs("repo"), async () => {
-      let context = "";
+    return this.promptCache.getOrSet(
+      cacheKey,
+      getPromptCacheTtlMs("repo"),
+      async () => {
+        let context = "";
 
-      // Tenta pegar README
-      try {
-        const readme = await this.octokit.rest.repos.getReadme({ owner, repo });
-        const content = Buffer.from(readme.data.content, "base64").toString(
-          "utf-8",
-        );
-        context += `## README\n${content.slice(0, 2000)}\n\n`;
-      } catch {
-        // README não existe, ok
-      }
+        // Tenta pegar README
+        try {
+          const readme = await this.octokit.rest.repos.getReadme({
+            owner,
+            repo,
+          });
+          const content = Buffer.from(readme.data.content, "base64").toString(
+            "utf-8",
+          );
+          context += `## README\n${content.slice(0, 2000)}\n\n`;
+        } catch {
+          // README não existe, ok
+        }
 
-      // Estrutura de diretórios (raiz)
-      try {
-        const tree = await this.octokit.rest.git.getTree({
-          owner,
-          repo,
-          tree_sha: "HEAD",
-          recursive: "false",
-        });
-        const paths = tree.data.tree.map((t) => t.path).filter(Boolean);
-        context += `## Repository Structure\n${paths.join("\n")}\n\n`;
-      } catch (e) {
-        console.warn("Could not fetch repo tree:", e);
-      }
+        // Estrutura de diretórios (raiz)
+        try {
+          const tree = await this.octokit.rest.git.getTree({
+            owner,
+            repo,
+            tree_sha: "HEAD",
+            recursive: "false",
+          });
+          const paths = tree.data.tree.map((t) => t.path).filter(Boolean);
+          context += `## Repository Structure\n${paths.join("\n")}\n\n`;
+        } catch (e) {
+          console.warn("Could not fetch repo tree:", e);
+        }
 
-      return context;
-    });
+        return context;
+      },
+    );
   }
 
   /**
@@ -224,10 +210,9 @@ export class GitHubClient {
         });
 
         if ("content" in response.data && response.data.type === "file") {
-          const value = Buffer.from(
-            response.data.content,
-            "base64",
-          ).toString("utf-8");
+          const value = Buffer.from(response.data.content, "base64").toString(
+            "utf-8",
+          );
           contents[path] = value;
           this.promptCache.set(cacheKey, value, getPromptCacheTtlMs("file"));
         }
@@ -681,6 +666,87 @@ export class GitHubClient {
   }
 
   /**
+   * Get all open PRs for a repository
+   */
+  async getOpenPRs(
+    fullName: string,
+    base: string = "main",
+  ): Promise<
+    Array<{
+      number: number;
+      title: string;
+      head: string;
+      files: string[];
+    }>
+  > {
+    const { owner, repo } = this.parseRepo(fullName);
+
+    const response = await this.octokit.rest.pulls.list({
+      owner,
+      repo,
+      state: "open",
+      base,
+      per_page: 100,
+    });
+
+    const prs = [];
+    for (const pr of response.data) {
+      // Get files modified by this PR
+      const filesResponse = await this.octokit.rest.pulls.listFiles({
+        owner,
+        repo,
+        pull_number: pr.number,
+      });
+
+      prs.push({
+        number: pr.number,
+        title: pr.title,
+        head: pr.head.ref,
+        files: filesResponse.data.map((f) => f.filename),
+      });
+    }
+
+    return prs;
+  }
+
+  /**
+   * Check if there are open PRs that modify the same files
+   * Returns conflicting PRs if any
+   */
+  async detectConflictingPRs(
+    fullName: string,
+    modifiedFiles: string[],
+    excludeBranch?: string,
+  ): Promise<
+    Array<{ number: number; title: string; conflictingFiles: string[] }>
+  > {
+    const openPRs = await this.getOpenPRs(fullName);
+    const conflicts = [];
+
+    for (const pr of openPRs) {
+      // Skip the current branch if specified
+      if (excludeBranch && pr.head === excludeBranch) {
+        continue;
+      }
+
+      // Find files that overlap
+      const overlappingFiles = pr.files.filter((f) =>
+        modifiedFiles.includes(f),
+      );
+
+      if (overlappingFiles.length > 0) {
+        conflicts.push({
+          number: pr.number,
+          title: pr.title,
+          conflictingFiles: overlappingFiles,
+        });
+      }
+    }
+
+    return conflicts;
+  }
+
+  /**
    * Cria um Pull Request
    */
   async createPR(fullName: string, params: CreatePRParams): Promise<PRResult> {
@@ -896,5 +962,132 @@ export class GitHubClient {
       number: issue.number,
       title: issue.title,
     }));
+  }
+
+  /**
+   * Validate that a repository exists and is accessible
+   * Returns repo metadata if accessible, null if not found or inaccessible
+   */
+  async validateRepository(fullName: string): Promise<{
+    owner: string;
+    repo: string;
+    description: string | null;
+    html_url: string;
+    private: boolean;
+  } | null> {
+    try {
+      const { owner, repo } = this.parseRepo(fullName);
+
+      const response = await this.octokit.rest.repos.get({
+        owner,
+        repo,
+      });
+
+      return {
+        owner: response.data.owner.login,
+        repo: response.data.name,
+        description: response.data.description,
+        html_url: response.data.html_url,
+        private: response.data.private,
+      };
+    } catch (e: any) {
+      if (e.status === 404 || e.status === 403) {
+        // Not found or no access
+        return null;
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Create a new GitHub issue
+   */
+  async createIssue(
+    owner: string,
+    repo: string,
+    options: {
+      title: string;
+      body?: string;
+      labels?: string[];
+      assignees?: string[];
+    },
+  ): Promise<{
+    number: number;
+    title: string;
+    html_url: string;
+    state: string;
+  }> {
+    const response = await this.octokit.rest.issues.create({
+      owner,
+      repo,
+      title: options.title,
+      body: options.body,
+      labels: options.labels,
+      assignees: options.assignees,
+    });
+
+    return {
+      number: response.data.number,
+      title: response.data.title,
+      html_url: response.data.html_url,
+      state: response.data.state,
+    };
+  }
+
+  /**
+   * List issues for a repository
+   */
+  async listIssues(
+    owner: string,
+    repo: string,
+    options?: {
+      state?: "open" | "closed" | "all";
+      labels?: string;
+      per_page?: number;
+    },
+  ): Promise<any[]> {
+    const response = await this.octokit.rest.issues.listForRepo({
+      owner,
+      repo,
+      state: options?.state || "open",
+      labels: options?.labels,
+      per_page: options?.per_page || 100,
+    });
+
+    // Filter out pull requests (GitHub API returns them as issues)
+    return response.data.filter((issue) => !issue.pull_request);
+  }
+
+  /**
+   * Get a single issue by number
+   */
+  async getIssue(
+    owner: string,
+    repo: string,
+    issueNumber: number,
+  ): Promise<{
+    number: number;
+    title: string;
+    body: string | null;
+    state: string;
+    labels: string[];
+    html_url: string;
+  }> {
+    const response = await this.octokit.rest.issues.get({
+      owner,
+      repo,
+      issue_number: issueNumber,
+    });
+
+    return {
+      number: response.data.number,
+      title: response.data.title,
+      body: response.data.body ?? null,
+      state: response.data.state,
+      labels: response.data.labels.map((l: any) =>
+        typeof l === "string" ? l : l.name,
+      ),
+      html_url: response.data.html_url,
+    };
   }
 }

@@ -22,6 +22,7 @@ import { ReviewerAgent } from "../agents/reviewer";
 import { BreakdownAgent } from "../agents/breakdown";
 import { GitHubClient } from "../integrations/github";
 import { db } from "../integrations/db";
+import parseDiff from "parse-diff";
 import {
   MultiAgentConfig,
   MultiAgentMetadata,
@@ -1500,7 +1501,7 @@ export class Orchestrator {
       // Update PR body with latest info (attempt count, etc.)
       try {
         await this.github.updatePR(task.githubRepo, task.prNumber, {
-          body: this.buildPRBody(task),
+          body: this.buildPRBody(task, undefined),
         });
         logger.info(`Updated PR #${task.prNumber} body with latest info`);
       } catch (updateError) {
@@ -1521,7 +1522,31 @@ export class Orchestrator {
     }
 
     // Create new PR
-    const prBody = this.buildPRBody(task);
+    // Check for conflicting PRs before creating new one
+    const modifiedFiles = this.extractModifiedFiles(task.currentDiff!);
+    const conflictingPRs = await this.github.detectConflictingPRs(
+      task.githubRepo,
+      modifiedFiles,
+      task.branchName,
+    );
+
+    if (conflictingPRs.length > 0) {
+      // Found conflicting PRs - log warning
+      this.systemLogger.warn(
+        `[Orchestrator] Task ${task.id} has conflicting PRs: ${conflictingPRs.map((p) => `#${p.number}`).join(", ")}`,
+      );
+
+      // Log the conflict detection
+      await this.logEvent(task, "CONFLICT_DETECTED", "orchestrator", {
+        conflictingPRs: conflictingPRs.map((p) => ({
+          number: p.number,
+          title: p.title,
+          files: p.conflictingFiles,
+        })),
+      });
+    }
+
+    const prBody = this.buildPRBody(task, conflictingPRs);
 
     const pr = await this.github.createPR(task.githubRepo, {
       title: `[AutoDev] ${task.githubIssueTitle}`,
@@ -1534,10 +1559,23 @@ export class Orchestrator {
     task.prUrl = pr.url;
 
     // Adiciona labels
-    await this.github.addLabels(task.githubRepo, pr.number, [
-      "auto-dev",
-      "ready-for-human-review",
-    ]);
+    const labels = ["auto-dev", "ready-for-human-review"];
+    if (conflictingPRs.length > 0) {
+      labels.push("potential-conflict");
+    }
+    await this.github.addLabels(task.githubRepo, pr.number, labels);
+
+    // Comment on conflicting PRs to notify about potential conflict
+    for (const conflictPR of conflictingPRs) {
+      await this.github.addComment(
+        task.githubRepo,
+        conflictPR.number,
+        `⚠️ **Potential Merge Conflict Detected**\n\n` +
+          `PR #${pr.number} modifies the same files as this PR:\n` +
+          `- ${conflictPR.conflictingFiles.map((f) => `\`${f}\``).join("\n- ")}\n\n` +
+          `Consider coordinating these changes or merging one PR before the other.`,
+      );
+    }
 
     // Linka com a issue original
     await this.github.addComment(
@@ -1993,7 +2031,14 @@ export class Orchestrator {
       .slice(0, 50);
   }
 
-  private buildPRBody(task: Task): string {
+  private buildPRBody(
+    task: Task,
+    conflictingPRs?: Array<{
+      number: number;
+      title: string;
+      conflictingFiles: string[];
+    }>,
+  ): string {
     let body = `
 ## 🤖 MultiplAI PR
 
@@ -2008,6 +2053,24 @@ ${task.plan?.map((p, i) => `${i + 1}. ${p}`).join("\n")}
 ### Files Modified
 ${task.targetFiles?.map((f) => `- \`${f}\``).join("\n")}
 `;
+
+    // Add conflict warning if detected
+    if (conflictingPRs && conflictingPRs.length > 0) {
+      body += `\n---\n\n## ⚠️ Potential Merge Conflicts Detected\n\n`;
+      body += `This PR modifies files that are also being modified by other open PRs:\n\n`;
+
+      for (const pr of conflictingPRs) {
+        body += `### PR #${pr.number}: ${pr.title}\n`;
+        body += `Conflicting files:\n`;
+        body += pr.conflictingFiles.map((f) => `- \`${f}\``).join("\n");
+        body += `\n\n`;
+      }
+
+      body += `**Recommendation:** Review and coordinate these PRs to avoid merge conflicts. Consider:\n`;
+      body += `1. Merging one PR before the other\n`;
+      body += `2. Combining related changes into a single PR\n`;
+      body += `3. Rebasing this PR after the other(s) are merged\n\n`;
+    }
 
     // Add multi-agent consensus reports if available
     if (this.lastCoderConsensus) {
@@ -2030,6 +2093,30 @@ This PR was generated automatically. Please review carefully before merging.
 `;
 
     return body.trim();
+  }
+
+  /**
+   * Extract list of modified files from a unified diff
+   */
+  private extractModifiedFiles(diff: string): string[] {
+    const files: string[] = [];
+
+    try {
+      const parsed = parseDiff(diff);
+      for (const file of parsed) {
+        // Use 'to' for new/modified files, 'from' for deleted files
+        const path = file.to || file.from;
+        if (path && path !== "/dev/null") {
+          files.push(path);
+        }
+      }
+    } catch (error) {
+      this.systemLogger.warn(
+        `[Orchestrator] Failed to parse diff for file extraction: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+    }
+
+    return files;
   }
 
   // ============================================

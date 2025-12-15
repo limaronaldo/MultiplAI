@@ -102,6 +102,15 @@ export abstract class BaseAgent<TInput, TOutput> {
 
     let jsonStr = jsonMatch ? jsonMatch[1].trim() : textStr.trim();
 
+    // Remove any leading/trailing non-JSON text (common with verbose models)
+    // Look for the first { and last } to extract just the JSON object
+    const firstBrace = jsonStr.indexOf("{");
+    const lastBrace = jsonStr.lastIndexOf("}");
+
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      jsonStr = jsonStr.slice(firstBrace, lastBrace + 1);
+    }
+
     // If it starts with { and doesn't end with }, try to find the JSON object
     if (jsonStr.startsWith("{") && !jsonStr.endsWith("}")) {
       // Try to find the last complete JSON by finding balanced braces
@@ -134,8 +143,14 @@ export abstract class BaseAgent<TInput, TOutput> {
         const aggressiveFixed = this.aggressiveJsonFix(jsonStr);
         return JSON.parse(aggressiveFixed);
       } catch (e2) {
+        // Log the problematic JSON for debugging
+        console.error("[parseJSON] Failed to parse JSON:");
+        console.error("Original length:", textStr.length);
+        console.error("Extracted JSON length:", jsonStr.length);
+        console.error("First 500 chars:", jsonStr.slice(0, 500));
+        console.error("Last 500 chars:", jsonStr.slice(-500));
         throw new Error(
-          `Failed to parse JSON from LLM response: ${textStr.slice(0, 200)}...`,
+          `Failed to parse JSON from LLM response. First 200 chars: ${textStr.slice(0, 200)}...`,
         );
       }
     }

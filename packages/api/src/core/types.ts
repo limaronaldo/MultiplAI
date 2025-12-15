@@ -499,7 +499,8 @@ export interface TaskEvent {
     | "CONSENSUS_DECISION" // Multi-agent selection decision
     | "AGENTIC_LOOP_COMPLETE" // Agentic loop finished (Issue #193)
     | "REFLECTION_COMPLETE" // Reflection analysis done (Issue #220)
-    | "REPLAN_TRIGGERED"; // Replanning triggered by reflection (Issue #220)
+    | "REPLAN_TRIGGERED" // Replanning triggered by reflection (Issue #220)
+    | "CONFLICT_DETECTED"; // Merge conflict detected with other PRs (Issue #403)
   agent?: string;
   inputSummary?: string;
   outputSummary?: string;
