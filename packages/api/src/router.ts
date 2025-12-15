@@ -1635,11 +1635,11 @@ const AVAILABLE_MODELS = [
     description: "No reasoning, lowest latency. Default in 5.2.",
     capabilities: ["coding"],
   },
-  // OpenRouter - Kimi K2 ($0.60/$2.50 MTok)
-  {
-    id: "moonshotai/kimi-k2-thinking",
-    name: "Kimi K2 Thinking",
-    provider: "openrouter" as const,
+  // Removed Kimi K2 - replaced with Claude Haiku 4.5
+  // {
+  //   id: "moonshotai/kimi-k2-thinking",
+  //   name: "Kimi K2 Thinking",
+  //   provider: "openrouter" as const,
     costPerTask: 0.02,
     description: "Agentic reasoning model. 262K context, multi-step tool use.",
     capabilities: ["reasoning", "agentic", "coding"],
@@ -1668,7 +1668,7 @@ const AVAILABLE_MODELS = [
  * Default model assignments per position
  */
 const DEFAULT_MODEL_CONFIG: Record<string, string> = {
-  planner: "moonshotai/kimi-k2-thinking",
+  planner: "claude-haiku-4-5-20250514",
   coder_xs_low: "deepseek/deepseek-v3.2-speciale",
   coder_xs_medium: "gpt-5.2-medium",
   coder_xs_high: "gpt-5.2-high",
@@ -1678,9 +1678,9 @@ const DEFAULT_MODEL_CONFIG: Record<string, string> = {
   coder_m_low: "gpt-5.2-medium",
   coder_m_medium: "gpt-5.2-high",
   coder_m_high: "claude-opus-4-5-20251101",
-  fixer: "moonshotai/kimi-k2-thinking",
+  fixer: "claude-haiku-4-5-20250514",
   reviewer: "deepseek/deepseek-v3.2-speciale",
-  escalation_1: "moonshotai/kimi-k2-thinking",
+  escalation_1: "claude-haiku-4-5-20250514",
   escalation_2: "claude-opus-4-5-20251101",
 };
 

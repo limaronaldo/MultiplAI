@@ -335,8 +335,7 @@ export const AVAILABLE_MODELS = {
     "deepseek/deepseek-v3.2-speciale": "DeepSeek V3.2 Speciale",
     // Zhipu AI
     "z-ai/glm-4.6v": "GLM-4.6V (Vision)",
-    // Moonshot AI
-    "moonshotai/kimi-k2-thinking": "Kimi K2 Thinking (Reasoning)",
+    // Moonshot AI - removed Kimi K2, replaced with Claude Haiku 4.5
     // Mistral
     "mistralai/codestral-2501": "Codestral (Code specialist)",
     // Qwen

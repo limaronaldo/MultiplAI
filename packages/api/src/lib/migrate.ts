@@ -837,10 +837,10 @@ async function migrate() {
   // Insert default model configuration
   await sql.unsafe(`
     INSERT INTO model_config (position, model_id) VALUES
-      ('planner', 'moonshotai/kimi-k2-thinking'),
-      ('fixer', 'moonshotai/kimi-k2-thinking'),
+      ('planner', 'claude-haiku-4-5-20250514'),
+      ('fixer', 'claude-haiku-4-5-20250514'),
       ('reviewer', 'deepseek/deepseek-v3.2-speciale'),
-      ('escalation_1', 'moonshotai/kimi-k2-thinking'),
+      ('escalation_1', 'claude-haiku-4-5-20250514'),
       ('escalation_2', 'claude-opus-4-5-20251101'),
       ('coder_xs_low', 'deepseek/deepseek-v3.2-speciale'),
       ('coder_xs_medium', 'gpt-5.2-medium'),
@@ -919,6 +919,23 @@ async function migrate() {
       EXECUTE FUNCTION update_webhook_events_timestamp();
   `);
   console.log("✅ Created webhook events queue table");
+
+  // Repositories table (v0.17) - linked repositories for AutoDev
+  await sql`
+    CREATE TABLE IF NOT EXISTS repositories (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      owner VARCHAR(255) NOT NULL,
+      repo VARCHAR(255) NOT NULL,
+      description TEXT,
+      github_url VARCHAR(500),
+      is_private BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT unique_owner_repo UNIQUE (owner, repo)
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_repositories_owner_repo ON repositories(owner, repo)`;
+  console.log("✅ Created repositories table");
 
   console.log("\n✨ Migrations complete!");
 

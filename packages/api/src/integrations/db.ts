@@ -854,10 +854,10 @@ export const db = {
     const sql = getDb();
 
     const defaults: Record<string, string> = {
-      planner: "moonshotai/kimi-k2-thinking",
-      fixer: "moonshotai/kimi-k2-thinking",
+      planner: "claude-haiku-4-5-20250514",
+      fixer: "claude-haiku-4-5-20250514",
       reviewer: "deepseek/deepseek-v3.2-speciale",
-      escalation_1: "moonshotai/kimi-k2-thinking",
+      escalation_1: "claude-haiku-4-5-20250514",
       escalation_2: "claude-opus-4-5-20251101",
       coder_xs_low: "deepseek/deepseek-v3.2-speciale",
       coder_xs_medium: "gpt-5.2-medium",
@@ -908,5 +908,152 @@ export const db = {
     } catch {
       return [];
     }
+  },
+
+  // ============================================
+  // Repositories
+  // ============================================
+
+  async createRepository(
+    owner: string,
+    repo: string,
+    description?: string,
+    githubUrl?: string,
+    isPrivate?: boolean,
+  ): Promise<{
+    id: string;
+    owner: string;
+    repo: string;
+    description?: string;
+    github_url: string;
+    is_private: boolean;
+    created_at: string;
+    updated_at: string;
+  }> {
+    const sql = getDb();
+    const [result] = await sql`
+      INSERT INTO repositories (owner, repo, description, github_url, is_private)
+      VALUES (${owner}, ${repo}, ${description || null}, ${githubUrl || null}, ${isPrivate || false})
+      RETURNING *
+    `;
+    return this.mapRepository(result);
+  },
+
+  async getRepositories(): Promise<
+    Array<{
+      id: string;
+      owner: string;
+      repo: string;
+      full_name: string;
+      description?: string;
+      github_url: string;
+      is_private: boolean;
+      created_at: string;
+      updated_at: string;
+    }>
+  > {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM repositories
+      ORDER BY created_at DESC
+    `;
+    return results.map((row: any) => this.mapRepository(row));
+  },
+
+  async getRepository(id: string): Promise<{
+    id: string;
+    owner: string;
+    repo: string;
+    full_name: string;
+    description?: string;
+    github_url: string;
+    is_private: boolean;
+    created_at: string;
+    updated_at: string;
+  } | null> {
+    const sql = getDb();
+    const [result] = await sql`
+      SELECT * FROM repositories WHERE id = ${id}
+    `;
+    return result ? this.mapRepository(result) : null;
+  },
+
+  async getRepositoryByName(
+    owner: string,
+    repo: string,
+  ): Promise<{
+    id: string;
+    owner: string;
+    repo: string;
+    full_name: string;
+    description?: string;
+    github_url: string;
+    is_private: boolean;
+    created_at: string;
+    updated_at: string;
+  } | null> {
+    const sql = getDb();
+    const [result] = await sql`
+      SELECT * FROM repositories WHERE owner = ${owner} AND repo = ${repo}
+    `;
+    return result ? this.mapRepository(result) : null;
+  },
+
+  async deleteRepository(id: string): Promise<boolean> {
+    const sql = getDb();
+    const result = await sql`
+      DELETE FROM repositories WHERE id = ${id}
+      RETURNING id
+    `;
+    return result.length > 0;
+  },
+
+  // Sync repositories from existing tasks (auto-populate)
+  async syncRepositoriesFromTasks(): Promise<number> {
+    const sql = getDb();
+    // Get distinct repos from tasks that aren't already in repositories table
+    const result = await sql`
+      INSERT INTO repositories (owner, repo, github_url)
+      SELECT DISTINCT
+        split_part(github_repo, '/', 1) as owner,
+        split_part(github_repo, '/', 2) as repo,
+        'https://github.com/' || github_repo as github_url
+      FROM tasks
+      WHERE github_repo IS NOT NULL
+        AND github_repo LIKE '%/%'
+        AND NOT EXISTS (
+          SELECT 1 FROM repositories r
+          WHERE r.owner = split_part(tasks.github_repo, '/', 1)
+            AND r.repo = split_part(tasks.github_repo, '/', 2)
+        )
+      ON CONFLICT (owner, repo) DO NOTHING
+      RETURNING id
+    `;
+    return result.length;
+  },
+
+  mapRepository(row: any): {
+    id: string;
+    owner: string;
+    repo: string;
+    full_name: string;
+    description?: string;
+    github_url: string;
+    is_private: boolean;
+    created_at: string;
+    updated_at: string;
+  } {
+    return {
+      id: row.id,
+      owner: row.owner,
+      repo: row.repo,
+      full_name: `${row.owner}/${row.repo}`,
+      description: row.description || undefined,
+      github_url:
+        row.github_url || `https://github.com/${row.owner}/${row.repo}`,
+      is_private: row.is_private || false,
+      created_at: row.created_at?.toISOString?.() || row.created_at,
+      updated_at: row.updated_at?.toISOString?.() || row.updated_at,
+    };
   },
 };

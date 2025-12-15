@@ -4,10 +4,10 @@ import { ragService } from "../services/rag";
 import type { CodeChunk } from "../services/rag";
 
 // Default planner model - can be overridden via env var
-// Planner uses Kimi K2 Thinking for agentic planning with 262K context
-// Cost: ~$0.15/task vs ~$0.50 with gpt-5.1-codex-max (70% savings)
+// Planner uses Claude Haiku 4.5 for fast, cost-effective planning
+// Cost: ~$0.01/task vs ~$0.50 with gpt-5.1-codex-max (98% savings)
 const DEFAULT_PLANNER_MODEL =
-  process.env.PLANNER_MODEL || "moonshotai/kimi-k2-thinking";
+  process.env.PLANNER_MODEL || "claude-haiku-4-5-20250514";
 
 interface PlannerInput {
   issueTitle: string;

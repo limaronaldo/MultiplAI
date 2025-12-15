@@ -5,6 +5,7 @@ import {
   Layers,
   Keyboard,
   Settings,
+  Github,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ShortcutsModal } from "@/components/ShortcutsModal";
@@ -15,6 +16,7 @@ const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/tasks", icon: ListTodo, label: "Tasks" },
   { to: "/jobs", icon: Layers, label: "Jobs" },
+  { to: "/repositories", icon: Github, label: "Repositories" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];
 

@@ -26,10 +26,10 @@ CREATE TRIGGER model_config_updated_at
 
 -- Insert default model configuration
 INSERT INTO model_config (position, model_id) VALUES
-  ('planner', 'moonshotai/kimi-k2-thinking'),
-  ('fixer', 'moonshotai/kimi-k2-thinking'),
+  ('planner', 'claude-haiku-4-5-20250514'),
+  ('fixer', 'claude-haiku-4-5-20250514'),
   ('reviewer', 'deepseek/deepseek-v3.2-speciale'),
-  ('escalation_1', 'moonshotai/kimi-k2-thinking'),
+  ('escalation_1', 'claude-haiku-4-5-20250514'),
   ('escalation_2', 'claude-opus-4-5-20251101'),
   ('coder_xs_low', 'deepseek/deepseek-v3.2-speciale'),
   ('coder_xs_medium', 'gpt-5.2-medium'),

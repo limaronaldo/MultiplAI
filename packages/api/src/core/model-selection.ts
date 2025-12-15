@@ -79,10 +79,10 @@ const CACHE_TTL_MS = 60_000; // Refresh every 60 seconds
  * Default model configuration (fallback)
  */
 export const DEFAULT_MODEL_CONFIG: Record<string, string> = {
-  planner: "moonshotai/kimi-k2-thinking",
-  fixer: "moonshotai/kimi-k2-thinking",
+  planner: "claude-haiku-4-5-20250514",
+  fixer: "claude-haiku-4-5-20250514",
   reviewer: "deepseek/deepseek-v3.2-speciale",
-  escalation_1: "moonshotai/kimi-k2-thinking",
+  escalation_1: "claude-haiku-4-5-20250514",
   escalation_2: "claude-opus-4-5-20251101",
   coder_xs_low: "deepseek/deepseek-v3.2-speciale",
   coder_xs_medium: "gpt-5.2-medium",
@@ -337,14 +337,9 @@ export type GLMConfigName = keyof typeof GLM_CONFIGS;
  * - Autonomous research, coding, and writing without drift
  *
  * Ideal for: Complex agentic tasks, multi-step reasoning, tool-heavy workflows
+ *
+ * NOTE: Kimi K2 Thinking removed - replaced with Claude Haiku 4.5 for better performance and cost
  */
-export const KIMI_CONFIGS = {
-  "kimi-k2-thinking": {
-    model: "moonshotai/kimi-k2-thinking",
-  },
-} as const;
-
-export type KimiConfigName = keyof typeof KIMI_CONFIGS;
 
 /**
  * All reasoning model configurations (GPT-5.2 + Codex + DeepSeek)

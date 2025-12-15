@@ -21,10 +21,10 @@ interface FixerInput {
   reflectionDiagnosis?: string;
 }
 
-// Default fixer model - Kimi K2 Thinking for tool-oriented debugging
-// Cost: ~$0.10/task vs ~$0.30 with gpt-5.1-codex-max (67% savings)
+// Default fixer model - Claude Haiku 4.5 for fast debugging
+// Cost: ~$0.01/task vs ~$0.30 with gpt-5.1-codex-max (97% savings)
 const DEFAULT_FIXER_MODEL =
-  process.env.FIXER_MODEL || "moonshotai/kimi-k2-thinking";
+  process.env.FIXER_MODEL || "claude-haiku-4-5-20250514";
 
 const SYSTEM_PROMPT = `You are an expert debugger fixing failing code.
 

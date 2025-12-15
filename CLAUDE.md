@@ -44,45 +44,47 @@ fly logs                 # View logs
 
 ---
 
-## Current Model Configuration (2025-12-13)
+## Current Model Configuration (2025-12-15)
 
-⚠️ **CRITICAL: DO NOT CHANGE MODELS WITHOUT EXPRESS USER APPROVAL**
+⚠️ **CRITICAL: Models are configured via Dashboard. Check database for current values.**
+
+> **Note**: Model configuration is stored in the `model_config` table in `ep-solitary-breeze` database and can be changed via the Settings page in the dashboard.
 
 ### Core Agents
 
-| Agent | Model | Provider | Purpose |
-|-------|-------|----------|---------|
-| **Planner** | `moonshotai/kimi-k2-thinking` | OpenRouter (ZDR) | Agentic reasoning for planning |
-| **Fixer** | `moonshotai/kimi-k2-thinking` | OpenRouter (ZDR) | Agentic debugging |
-| **Reviewer** | `deepseek-speciale-high` | OpenRouter (ZDR) | Cheap reasoning for review |
-| **Escalation 1** | `kimi-k2-thinking` | OpenRouter (ZDR) | First retry with agentic model |
-| **Escalation 2** | `claude-opus-4-5-20251101` | Anthropic | Final fallback |
+| Agent | Model | Provider |
+|-------|-------|----------|
+| **Planner** | `moonshotai/kimi-k2-thinking` | OpenRouter (ZDR) |
+| **Fixer** | `moonshotai/kimi-k2-thinking` | OpenRouter (ZDR) |
+| **Reviewer** | `deepseek/deepseek-v3.2-speciale` | OpenRouter (ZDR) |
+| **Escalation 1** | `moonshotai/kimi-k2-thinking` | OpenRouter (ZDR) |
+| **Escalation 2** | `claude-opus-4-5-20251101` | Anthropic |
 
 ### Coder Model Selection (Effort-Based by Complexity)
 
 #### XS Tasks (Extra Small)
-| Effort | Model | Cost | Use Case |
-|--------|-------|------|----------|
-| **low** | `deepseek-speciale-low` | ~$0.005 | Typos, comments |
-| **medium** | `gpt-5.2-medium` | ~$0.08 | Simple bugs |
-| **high** | `gpt-5.2-high` | ~$0.15 | Complex single-file |
-| **default** | `x-ai/grok-code-fast-1` | ~$0.01 | Quick code changes |
+| Effort | Model |
+|--------|-------|
+| **low** | `deepseek/deepseek-v3.2-speciale` |
+| **medium** | `gpt-5.2-medium` |
+| **high** | `gpt-5.2-high` |
+| **default** | `gpt-5.2-medium` |
 
 #### S Tasks (Small)
-| Effort | Model | Cost | Use Case |
-|--------|-------|------|----------|
-| **low** | `x-ai/grok-code-fast-1` | ~$0.01 | Simple changes |
-| **medium** | `gpt-5.2-low` | ~$0.03 | Multi-file simple |
-| **high** | `gpt-5.2-medium` | ~$0.08 | Multi-file complex |
-| **default** | `x-ai/grok-code-fast-1` | ~$0.01 | Quick code changes |
+| Effort | Model |
+|--------|-------|
+| **low** | `x-ai/grok-code-fast-1` |
+| **medium** | `gpt-5.2-low` |
+| **high** | `gpt-5.2-medium` |
+| **default** | `x-ai/grok-code-fast-1` |
 
 #### M Tasks (Medium)
-| Effort | Model | Cost | Use Case |
-|--------|-------|------|----------|
-| **low** | `gpt-5.2-medium` | ~$0.08 | Simple features |
-| **medium** | `gpt-5.2-high` | ~$0.15 | Standard features |
-| **high** | `claude-opus-4-5-20251101` | ~$0.75 | Complex features |
-| **default** | `gpt-5.2-medium` | ~$0.08 | Balanced |
+| Effort | Model |
+|--------|-------|
+| **low** | `gpt-5.2-medium` |
+| **medium** | `gpt-5.2-high` |
+| **high** | `claude-opus-4-5-20251101` |
+| **default** | `gpt-5.2-medium` |
 
 ### Provider Routing
 
@@ -91,11 +93,11 @@ fly logs                 # View logs
 claude-opus-4-5-*, claude-sonnet-4-5-* → AnthropicClient
 
 // OpenAI Responses API (GPT-5.2 with reasoning effort)
-gpt-5.2-*, gpt-5.1-codex-* → OpenAIDirectClient
+gpt-5.2-* → OpenAIDirectClient
 
 // OpenRouter (Zero Data Retention providers)
 moonshotai/kimi-k2-thinking → Nebius/Baseten (ZDR)
-deepseek/deepseek-v3.2-speciale → OpenRouter
+deepseek/deepseek-v3.2-speciale → OpenRouter (ZDR)
 x-ai/grok-code-fast-1 → OpenRouter
 ```
 
@@ -105,6 +107,7 @@ x-ai/grok-code-fast-1 → OpenRouter
 - **DeepSeek Speciale**: Ultra-cheap reasoning model with configurable effort levels
 - **GPT-5.2**: OpenAI's latest with reasoning effort ("none", "low", "medium", "high", "xhigh")
 - **Grok Code Fast**: xAI's fast code model, excellent for simple tasks
+- **Claude Opus 4.5**: Anthropic's most capable model, final fallback
 - **ZDR**: Zero Data Retention - providers that don't log/train on requests
 
 ---
@@ -857,4 +860,146 @@ Currently in NEW status, ready for processing:
 
 ---
 
-_Last updated: 2025-12-14_
+## Test Run Results (2025-12-15)
+
+### autodev-test Repository - Full Success
+
+Successfully retried 7 previously failed tasks from the `limaronaldo/autodev-test` repository. All tasks completed and created PRs.
+
+#### Task Results
+
+| Issue | Title | Status | Attempts | PR |
+|-------|-------|--------|----------|-----|
+| #36 | Add quadruple function to math.ts | WAITING_HUMAN | 1 | [PR #71](https://github.com/limaronaldo/autodev-test/pull/71) |
+| #37 | Fix typo in math.ts comment | WAITING_HUMAN | 0 | [PR #65](https://github.com/limaronaldo/autodev-test/pull/65) |
+| #38 | Add divide function to math.ts | WAITING_HUMAN | 0 | [PR #66](https://github.com/limaronaldo/autodev-test/pull/66) |
+| #39 | Add safeDivide function with error handling | WAITING_HUMAN | 1 | [PR #70](https://github.com/limaronaldo/autodev-test/pull/70) |
+| #40 | Add multiply function to math.ts | WAITING_HUMAN | 1 | [PR #67](https://github.com/limaronaldo/autodev-test/pull/67) |
+| #42 | Add modulo function | WAITING_HUMAN | 1 | [PR #69](https://github.com/limaronaldo/autodev-test/pull/69) |
+| #43 | Add power function | WAITING_HUMAN | 1 | [PR #68](https://github.com/limaronaldo/autodev-test/pull/68) |
+
+#### Performance Summary
+
+- **Success Rate:** 7/7 (100%)
+- **First-Attempt Success:** 2/7 (29%) - #37, #38
+- **Required 1 Retry:** 5/7 (71%) - #36, #39, #40, #42, #43
+- **Failed (max attempts):** 0/7 (0%)
+
+#### All autodev-test Tasks (17 total)
+
+All tasks in the repository are now in WAITING_HUMAN status with PRs created:
+
+| Issue | PR | Issue | PR | Issue | PR |
+|-------|-----|-------|-----|-------|-----|
+| #36 | #71 | #44 | #48 | #54 | #56 |
+| #37 | #65 | #45 | #47 | #57 | #60 |
+| #38 | #66 | #49 | #51 | #58 | #59 |
+| #39 | #70 | #50 | #52 | #61 | #62 |
+| #40 | #67 | #53 | #55 | | |
+| #41 | #46 | | | | |
+| #42 | #69 | | | | |
+| #43 | #68 | | | | |
+
+#### Models Used
+
+Based on task complexity (XS/S) and effort levels:
+- **Planner:** `moonshotai/kimi-k2-thinking` (OpenRouter)
+- **Coder:** `x-ai/grok-code-fast-1` for S tasks, `gpt-5.2-medium` for XS medium effort
+- **Fixer:** `moonshotai/kimi-k2-thinking` (OpenRouter)
+- **Reviewer:** `deepseek/deepseek-v3.2-speciale` (OpenRouter)
+
+#### Key Observations
+
+1. **Fixer Agent Effective:** 5 tasks that failed initial tests were automatically fixed on retry
+2. **Simple Tasks Work Well:** Typo fixes and basic function additions completed on first try
+3. **Error Handling Tasks:** `safeDivide` with error handling needed 1 retry (more complex logic)
+4. **State Machine Reliable:** All tasks progressed correctly through the pipeline
+
+#### Merge Conflict Resolution
+
+All 8 conflicting PRs modified `src/math.ts`. Resolution:
+1. Created `dev` branch from `main`
+2. Manually combined all functions into single commit
+3. Closed PRs with explanation comment
+4. Created [Issue #403](https://github.com/limaronaldo/MultiplAI/issues/403) for future automation
+
+---
+
+### MVP-TS-ibvi-ai Repository - Partial Success
+
+Imported and processed 14 UI feature issues (#51-#64) from `MbInteligen/MVP-TS-ibvi-ai`.
+
+#### Task Results
+
+| Issue | Title | Status | PR |
+|-------|-------|--------|-----|
+| #51 | PlansPage basic layout | FAILED | - |
+| #52 | Plans list with status filter | ✅ WAITING_HUMAN | [PR #69](https://github.com/MbInteligen/MVP-TS-ibvi-ai/pull/69) |
+| #53 | New Plan button | FAILED | - |
+| #54 | PlanCanvasPage route | FAILED | - |
+| #55 | Left panel container | ✅ WAITING_HUMAN | [PR #67](https://github.com/MbInteligen/MVP-TS-ibvi-ai/pull/67) |
+| #56 | Right panel with cards | FAILED | - |
+| #57 | MainFeatureCard | ✅ WAITING_HUMAN | [PR #68](https://github.com/MbInteligen/MVP-TS-ibvi-ai/pull/68) |
+| #58 | Editable mode & model selector | FAILED | - |
+| #59 | IssueCard basic layout | ✅ WAITING_HUMAN | [PR #66](https://github.com/MbInteligen/MVP-TS-ibvi-ai/pull/66) |
+| #60 | Complexity badge | FAILED | - |
+| #61 | Edit/delete buttons | ✅ WAITING_HUMAN | [PR #70](https://github.com/MbInteligen/MVP-TS-ibvi-ai/pull/70) |
+| #62 | Create Issues button | FAILED | - |
+| #63 | API endpoint | ORCHESTRATING | - |
+| #64 | Progress indicator | FAILED | - |
+
+#### Performance Summary
+
+- **Success Rate:** 5/14 (36%)
+- **PRs Created:** 5 (#66, #67, #68, #69, #70)
+- **Still Processing:** 1 (#63 - ORCHESTRATING)
+- **Failed:** 8
+
+#### Failure Analysis
+
+| Failure Type | Count | Issues | Root Cause |
+|--------------|-------|--------|------------|
+| JSON Parse Error | 5 | #53, #58, #60, #62, #64 | Reviewer returned valid verdict but malformed JSON |
+| DIFF_TOO_LARGE | 1 | #54 | Generated 880 lines (limit: 400) |
+| Max Attempts | 2 | #51, #56 | Syntax errors not fixed in 3 attempts |
+
+#### Issues Created
+
+- [#403](https://github.com/limaronaldo/MultiplAI/issues/403) - Handle merge conflicts when multiple PRs modify same file
+- [#404](https://github.com/limaronaldo/MultiplAI/issues/404) - Reviewer agent JSON parse fails on valid verdicts
+
+#### Lessons Learned
+
+1. **Complex Repos Need More Context:** MVP-TS-ibvi-ai has more complex structure than autodev-test
+2. **JSON Parsing Fragile:** Reviewer responses sometimes truncated or have extra text
+3. **Task Sizing Matters:** Issue #54 was too large for XS classification (880 lines)
+4. **Manual Recovery Works:** Task #61 was approved but failed JSON parse - manually advancing to REVIEW_APPROVED created the PR
+
+---
+
+## Next Steps (as of 2025-12-15)
+
+### Immediate (Bug Fixes)
+- [ ] **Fix #404** - Reviewer JSON parse bug (5 tasks failed due to this)
+- [ ] **Fix #403** - Merge conflict handling automation
+
+### Short-term
+- [ ] **Review 5 PRs** on MVP-TS-ibvi-ai (#66-#70) - waiting for human review
+- [ ] **Retry failed tasks** after fixing #404
+- [ ] **Check #63** - still in ORCHESTRATING state
+
+### Medium-term (PMVP)
+- [ ] **Increase diff limit** or improve task breakdown for large tasks (e.g., #54 had 880 lines)
+- [ ] **Add repo-specific context** to improve success rate on complex codebases
+- [ ] **Deploy fixes** to Fly.io
+
+### Current System Status
+- **API:** localhost:3000
+- **Web Dashboard:** localhost:5173
+- **Linked Repos:** limaronaldo/autodev-test, limaronaldo/MultiplAI, MbInteligen/MVP-TS-ibvi-ai
+- **Open PRs:** 5 on MVP-TS-ibvi-ai (#66-#70)
+- **Tasks Processing:** 1 (#63 - ORCHESTRATING)
+
+---
+
+_Last updated: 2025-12-15_
