@@ -1636,14 +1636,6 @@ const AVAILABLE_MODELS = [
     capabilities: ["coding"],
   },
   // Removed Kimi K2 - replaced with Claude Haiku 4.5
-  // {
-  //   id: "moonshotai/kimi-k2-thinking",
-  //   name: "Kimi K2 Thinking",
-  //   provider: "openrouter" as const,
-    costPerTask: 0.02,
-    description: "Agentic reasoning model. 262K context, multi-step tool use.",
-    capabilities: ["reasoning", "agentic", "coding"],
-  },
   // OpenRouter - DeepSeek V3 ($0.14/$0.28 MTok - ultra cheap)
   {
     id: "deepseek/deepseek-v3.2-speciale",
