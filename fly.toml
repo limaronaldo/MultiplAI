@@ -22,5 +22,5 @@ primary_region = "gru"
     hard_limit = 100
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
+  size = "shared-cpu-2x"
+  memory = "2gb"

@@ -357,7 +357,6 @@ export const REASONING_MODEL_CONFIGS = {
 export const ALL_MODEL_CONFIGS = {
   ...REASONING_MODEL_CONFIGS,
   ...GLM_CONFIGS,
-  ...KIMI_CONFIGS,
 } as const;
 
 export type ReasoningModelConfigName = keyof typeof REASONING_MODEL_CONFIGS;
