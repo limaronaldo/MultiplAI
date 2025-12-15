@@ -137,7 +137,7 @@ export const KeypressActionSchema = z.object({
 
 export const WaitActionSchema = z.object({
   type: z.literal("wait"),
-  ms: z.number().int().nonnegative(),
+  ms: z.number().int().positive(),
 });
 
 export const ScreenshotActionSchema = z.object({
@@ -197,5 +197,5 @@ export const VisualTestResultSchema = z.object({
   success: z.boolean(),
   screenshots: z.array(z.string()),
   error: z.string().optional(),
-  duration: z.number().int().nonnegative(),
+  duration: z.number().nonnegative(),
 });
