@@ -114,19 +114,52 @@ export abstract class BaseAgent<TInput, TOutput> {
     // If it starts with { and doesn't end with }, try to find the JSON object
     if (jsonStr.startsWith("{") && !jsonStr.endsWith("}")) {
       // Try to find the last complete JSON by finding balanced braces
+      // Also track if we're inside a string to avoid counting braces in strings
       let braceCount = 0;
       let lastValidEnd = -1;
+      let inString = false;
+      let escapeNext = false;
+
       for (let i = 0; i < jsonStr.length; i++) {
-        if (jsonStr[i] === "{") braceCount++;
-        if (jsonStr[i] === "}") {
-          braceCount--;
-          if (braceCount === 0) {
-            lastValidEnd = i;
+        const char = jsonStr[i];
+
+        if (escapeNext) {
+          escapeNext = false;
+          continue;
+        }
+
+        if (char === "\\") {
+          escapeNext = true;
+          continue;
+        }
+
+        if (char === '"') {
+          inString = !inString;
+          continue;
+        }
+
+        // Only count braces outside of strings
+        if (!inString) {
+          if (char === "{") braceCount++;
+          if (char === "}") {
+            braceCount--;
+            if (braceCount === 0) {
+              lastValidEnd = i;
+            }
           }
         }
       }
+
       if (lastValidEnd > 0) {
         jsonStr = jsonStr.slice(0, lastValidEnd + 1);
+      } else if (inString) {
+        // String was not closed - try to close it and complete the JSON
+        // Find the last complete key-value pair before the truncation
+        const lastCommaOutsideString = this.findLastCompleteField(jsonStr);
+        if (lastCommaOutsideString > 0) {
+          // Truncate to last complete field and close the object
+          jsonStr = jsonStr.slice(0, lastCommaOutsideString) + "\n}";
+        }
       }
     }
 
@@ -154,6 +187,51 @@ export abstract class BaseAgent<TInput, TOutput> {
         );
       }
     }
+  }
+
+  /**
+   * Find the position of the last complete field in truncated JSON
+   * Returns the position after the last comma outside of a string
+   */
+  private findLastCompleteField(jsonStr: string): number {
+    let lastComma = -1;
+    let inString = false;
+    let escapeNext = false;
+    let braceDepth = 0;
+    let bracketDepth = 0;
+
+    for (let i = 0; i < jsonStr.length; i++) {
+      const char = jsonStr[i];
+
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === "\\") {
+        escapeNext = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (!inString) {
+        if (char === "{") braceDepth++;
+        if (char === "}") braceDepth--;
+        if (char === "[") bracketDepth++;
+        if (char === "]") bracketDepth--;
+
+        // Only track commas at the top level of the object
+        if (char === "," && braceDepth === 1 && bracketDepth === 0) {
+          lastComma = i;
+        }
+      }
+    }
+
+    return lastComma;
   }
 
   /**
