@@ -130,16 +130,6 @@ export const db = {
     return result ? this.mapTask(result) : null;
   },
 
-  async getTasksByStatus(status: string): Promise<Task[]> {
-    const sql = getDb();
-    const results = await sql`
-      SELECT * FROM tasks
-      WHERE status = ${status}
-      ORDER BY created_at DESC
-    `;
-    return results.map((r: any) => this.mapTask(r));
-  },
-
   async updateTask(id: string, updates: Partial<Task>): Promise<Task> {
     const sql = getDb();
 
@@ -251,6 +241,16 @@ export const db = {
       SELECT * FROM tasks
       WHERE github_repo = ${repo}
       AND status = ${status}
+      ORDER BY created_at ASC
+    `;
+    return results.map(this.mapTask);
+  },
+
+  async getTasksByStatus(status: TaskStatus): Promise<Task[]> {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM tasks
+      WHERE status = ${status}
       ORDER BY created_at ASC
     `;
     return results.map(this.mapTask);
