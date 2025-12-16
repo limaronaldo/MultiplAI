@@ -4,7 +4,7 @@ import { ErrorBoundary } from "@/components/error";
 import { StoreProvider } from "@/stores";
 import { DashboardPageMobX as DashboardPage } from "@/pages/DashboardPageMobX";
 import { TasksPageMobX as TasksPage } from "@/pages/TasksPageMobX";
-import { TaskDetailPage } from "@/pages/TaskDetailPage";
+import { TaskDetailPageMobX as TaskDetailPage } from "@/pages/TaskDetailPageMobX";
 import { JobsPage } from "@/pages/JobsPage";
 import { JobDetailPage } from "@/pages/JobDetailPage";
 import { SettingsPageMobX as SettingsPage } from "@/pages/SettingsPageMobX";
