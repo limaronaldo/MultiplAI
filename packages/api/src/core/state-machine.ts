@@ -99,6 +99,8 @@ export function getNextAction(status: TaskStatus): TaskAction {
       return "REVIEW";
     case "VISUAL_TESTS_FAILED":
       return "FIX";
+    case "REVIEWING":
+      return "REVIEW"; // Continue review if interrupted
     case "REFLECTING":
     case "REPLANNING":
       // These phases are handled by orchestrator extensions; treat as wait states for now.
