@@ -29,7 +29,7 @@ export const validTransitions: StatusTransitions = {
   REFLECTING: ["REPLANNING", "FIXING", "FAILED"],
   REPLANNING: ["CODING", "FAILED"],
   FIXING: ["CODING_DONE", "FAILED"],
-  REVIEWING: ["REVIEW_APPROVED", "REVIEW_REJECTED", "FAILED"],
+  REVIEWING: ["REVIEWING", "REVIEW_APPROVED", "REVIEW_REJECTED", "FAILED"], // Allow idempotent transition
   REVIEW_APPROVED: ["PR_CREATED", "WAITING_BATCH", "FAILED"], // Can go to batch or direct PR
   REVIEW_REJECTED: ["CODING", "FAILED"],
   WAITING_BATCH: ["PR_CREATED", "REVIEW_APPROVED", "FAILED"], // Batch complete or fallback
