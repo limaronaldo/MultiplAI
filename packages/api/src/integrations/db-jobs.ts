@@ -252,8 +252,16 @@ export const dbJobs = {
       githubRepo: row.github_repo,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
-      summary: row.summary ? JSON.parse(row.summary) : undefined,
-      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+      summary: row.summary
+        ? typeof row.summary === "string"
+          ? JSON.parse(row.summary)
+          : row.summary
+        : undefined,
+      metadata: row.metadata
+        ? typeof row.metadata === "string"
+          ? JSON.parse(row.metadata)
+          : row.metadata
+        : undefined,
     };
   },
 
