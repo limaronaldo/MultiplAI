@@ -366,12 +366,12 @@ export const PlannerOutputSchema = z.object({
   estimatedComplexity: z.enum(["XS", "S", "M", "L", "XL"]),
   // Effort level within complexity (for model selection)
   estimatedEffort: z.enum(["low", "medium", "high"]).optional(),
-  risks: z.array(z.string()).optional(),
+  risks: z.array(z.string()).nullable().optional(),
   // Multi-file coordination (optional, for M+ complexity)
   multiFilePlan: MultiFilePlanSchema.nullable().optional(),
   // Commands to execute (optional)
-  commands: z.array(PlannerCommandSchema).optional(),
-  commandOrder: z.enum(["before_diff", "after_diff"]).optional(),
+  commands: z.array(PlannerCommandSchema).nullable().optional(),
+  commandOrder: z.enum(["before_diff", "after_diff"]).nullable().optional(),
 });
 
 export type PlannerOutput = z.infer<typeof PlannerOutputSchema>;
