@@ -16,6 +16,8 @@ export type {
   AIReviewConfig,
 } from "./config.store";
 
+export { DashboardStore } from "./dashboard.store";
+
 export {
   RootStore,
   rootStore,
@@ -23,6 +25,7 @@ export {
   useStores,
   useTaskStore,
   useConfigStore,
+  useDashboardStore,
 } from "./root.store";
 
 export { StoreProvider } from "./StoreProvider";

@@ -2,7 +2,7 @@ import { Routes, Route, Navigate, useParams } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { ErrorBoundary } from "@/components/error";
 import { StoreProvider } from "@/stores";
-import { DashboardPage } from "@/pages/DashboardPage";
+import { DashboardPageMobX as DashboardPage } from "@/pages/DashboardPageMobX";
 import { TasksPageMobX as TasksPage } from "@/pages/TasksPageMobX";
 import { TaskDetailPage } from "@/pages/TaskDetailPage";
 import { JobsPage } from "@/pages/JobsPage";
