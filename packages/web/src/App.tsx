@@ -5,6 +5,7 @@ import { DashboardPage } from "@/pages/DashboardPage";
 import { TasksPage } from "@/pages/TasksPage";
 import { TaskDetailPage } from "@/pages/TaskDetailPage";
 import { JobsPage } from "@/pages/JobsPage";
+import { JobDetailPage } from "@/pages/JobDetailPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { RepositoriesPage } from "@/pages/RepositoriesPage";
 import { ImportPage } from "@/pages/ImportPage";
@@ -26,7 +27,7 @@ export default function App() {
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
           <Route path="/jobs" element={<JobsPage />} />
-          <Route path="/jobs/:jobId" element={<JobsPage />} />
+          <Route path="/jobs/:jobId" element={<JobDetailPage />} />
           <Route path="/repositories" element={<RepositoriesPage />} />
           <Route path="/import" element={<ImportPage />} />
           <Route path="/plans" element={<PlansPage />} />
