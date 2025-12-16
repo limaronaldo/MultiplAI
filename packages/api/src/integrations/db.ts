@@ -1124,4 +1124,48 @@ export const db = {
     `;
     return result || null;
   },
+
+  // ============================================
+  // Plans
+  // ============================================
+
+  async getPlan(id: string): Promise<any> {
+    const sql = getDb();
+    const [result] = await sql`
+      SELECT * FROM plans WHERE id = ${id}
+    `;
+    return result || null;
+  },
+
+  async getPlanCards(planId: string): Promise<any[]> {
+    const sql = getDb();
+    return await sql`
+      SELECT * FROM plan_cards
+      WHERE plan_id = ${planId}
+      ORDER BY sort_order ASC
+    `;
+  },
+
+  async updatePlanCard(
+    id: string,
+    updates: {
+      github_issue_number?: number;
+      github_issue_url?: string;
+      status?: string;
+    },
+  ): Promise<any> {
+    const sql = getDb();
+    const { github_issue_number, github_issue_url, status } = updates;
+    const [result] = await sql`
+      UPDATE plan_cards
+      SET
+        github_issue_number = COALESCE(${github_issue_number}, github_issue_number),
+        github_issue_url = COALESCE(${github_issue_url}, github_issue_url),
+        status = COALESCE(${status}, status),
+        updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING *
+    `;
+    return result || null;
+  },
 };
