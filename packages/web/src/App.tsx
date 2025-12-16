@@ -1,8 +1,9 @@
 import { Routes, Route, Navigate, useParams } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { ErrorBoundary } from "@/components/error";
+import { StoreProvider } from "@/stores";
 import { DashboardPage } from "@/pages/DashboardPage";
-import { TasksPage } from "@/pages/TasksPage";
+import { TasksPageMobX as TasksPage } from "@/pages/TasksPageMobX";
 import { TaskDetailPage } from "@/pages/TaskDetailPage";
 import { JobsPage } from "@/pages/JobsPage";
 import { JobDetailPage } from "@/pages/JobDetailPage";
@@ -21,21 +22,23 @@ function PlanCanvasRoute() {
 export default function App() {
   return (
     <ErrorBoundary>
-      <Layout>
-        <Routes>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/tasks" element={<TasksPage />} />
-          <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
-          <Route path="/jobs" element={<JobsPage />} />
-          <Route path="/jobs/:jobId" element={<JobDetailPage />} />
-          <Route path="/repositories" element={<RepositoriesPage />} />
-          <Route path="/import" element={<ImportPage />} />
-          <Route path="/plans" element={<PlansPage />} />
-          <Route path="/plans/:planId" element={<PlanCanvasRoute />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Layout>
+      <StoreProvider>
+        <Layout>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
+            <Route path="/jobs" element={<JobsPage />} />
+            <Route path="/jobs/:jobId" element={<JobDetailPage />} />
+            <Route path="/repositories" element={<RepositoriesPage />} />
+            <Route path="/import" element={<ImportPage />} />
+            <Route path="/plans" element={<PlansPage />} />
+            <Route path="/plans/:planId" element={<PlanCanvasRoute />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Layout>
+      </StoreProvider>
     </ErrorBoundary>
   );
 }

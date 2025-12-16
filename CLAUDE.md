@@ -1574,3 +1574,209 @@ Waiting Human:   0
 2. **Retry failed tasks** - Reset and reprocess with current model config
 3. **Test batch merge** - Create 2+ test issues targeting same file to verify feature
 4. **Review model performance** - Check if current models (Kimi K2, DeepSeek, Grok) are performing well
+
+---
+
+## Architecture & Future Roadmap
+
+### Current Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         AutoDev System                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐         │
+│  │   GitHub    │───►│  Webhooks   │───►│   Router    │         │
+│  │   Issues    │    │  /webhooks  │    │  (Bun)      │         │
+│  └─────────────┘    └─────────────┘    └──────┬──────┘         │
+│                                               │                 │
+│                                               ▼                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │                    Orchestrator                          │   │
+│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐     │   │
+│  │  │ Planner │─►│  Coder  │─►│  Fixer  │─►│Reviewer │     │   │
+│  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘     │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                           │                                     │
+│           ┌───────────────┼───────────────┐                    │
+│           ▼               ▼               ▼                    │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐            │
+│  │   Neon DB   │  │  GitHub API │  │  LLM APIs   │            │
+│  │ (PostgreSQL)│  │  (Octokit)  │  │ Claude/GPT  │            │
+│  └─────────────┘  └─────────────┘  └─────────────┘            │
+│                                                                 │
+├─────────────────────────────────────────────────────────────────┤
+│                      Dashboard (React)                          │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐       │
+│  │  Tasks   │  │   Jobs   │  │ Settings │  │  Charts  │       │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Package Structure
+
+```
+autodev/
+├── packages/
+│   ├── api/                    # Backend (Bun + TypeScript)
+│   │   ├── src/
+│   │   │   ├── agents/         # AI agents (Planner, Coder, Fixer, Reviewer)
+│   │   │   ├── core/           # Orchestrator, state machine, types
+│   │   │   ├── integrations/   # GitHub, LLM, Database clients
+│   │   │   ├── services/       # Webhook queue, cost tracking
+│   │   │   └── router.ts       # API routes
+│   │   └── prompts/            # LLM prompt templates
+│   │
+│   ├── web/                    # Dashboard (React + Vite)
+│   │   ├── src/
+│   │   │   ├── pages/          # TasksPage, JobsPage, SettingsPage
+│   │   │   ├── components/     # UI components, widgets, filters
+│   │   │   └── hooks/          # Custom React hooks
+│   │   └── ...
+│   │
+│   └── shared/                 # Shared types (@autodev/shared)
+│       └── src/index.ts        # TaskStatus, JobStatus, ModelConfig
+│
+├── plane-preview/              # Plane.so reference (future integration)
+└── CLAUDE.md                   # This file
+```
+
+---
+
+## Plane.so Integration Insights
+
+Analyzed Plane.so open-source codebase for patterns to adopt.
+
+### Key Patterns to Adopt
+
+| Pattern | Plane Implementation | AutoDev Status | Priority |
+|---------|---------------------|----------------|----------|
+| **MobX State** | `packages/shared-state` | Not implemented | HIGH |
+| **Rich Filtering** | Query builder + saved views | Basic (just added) | MEDIUM |
+| **Real-time (SSE)** | HocusPocus + Yjs | Polling only | MEDIUM |
+| **UI Components** | `packages/ui` (38+ components) | Ad-hoc components | LOW |
+| **Collaborative Editor** | TipTap + Yjs | Not needed yet | LOW |
+
+### MobX State Management (Next Implementation)
+
+Plane uses MobX instead of Redux. Benefits:
+- Less boilerplate than Redux
+- Observable-based (simpler mental model)
+- Fine-grained reactivity
+- Great for filtering/search state
+
+**Proposed Store Structure:**
+```typescript
+// packages/web/src/stores/
+├── task.store.ts       # Task list, filters, sorting
+├── job.store.ts        # Job list and status
+├── config.store.ts     # Model configuration
+├── ui.store.ts         # Theme, sidebar, modals
+└── root.store.ts       # Combines all stores
+```
+
+**Example Pattern (from Plane):**
+```typescript
+import { makeAutoObservable, runInAction } from "mobx";
+
+class TaskStore {
+  tasks: Task[] = [];
+  filters: FilterState = defaultFilters;
+  loading = false;
+
+  constructor() {
+    makeAutoObservable(this);
+  }
+
+  async fetchTasks() {
+    this.loading = true;
+    const data = await api.getTasks(this.filters);
+    runInAction(() => {
+      this.tasks = data;
+      this.loading = false;
+    });
+  }
+
+  setFilter(key: string, value: any) {
+    this.filters[key] = value;
+    this.fetchTasks(); // Auto-refetch on filter change
+  }
+}
+```
+
+### Real-time Updates (SSE vs WebSocket)
+
+**Current:** Dashboard polls `/api/tasks` every 10 seconds.
+
+**Recommended:** Server-Sent Events (SSE) for live updates.
+
+```
+┌─────────────┐                    ┌─────────────┐
+│  Dashboard  │◄───── SSE ─────────│   API       │
+│  (Browser)  │   /api/tasks/stream│   (Bun)     │
+└─────────────┘                    └─────────────┘
+        │                                │
+        │  EventSource connection        │
+        │  (one-way push)                │
+        │                                │
+        └── Task updates pushed ◄────────┘
+            instantly when status
+            changes
+```
+
+**Implementation Plan:**
+1. Add `/api/tasks/stream` SSE endpoint
+2. Broadcast task status changes
+3. Dashboard subscribes on mount
+4. Falls back to polling if SSE fails
+
+### Plane.so Future Integration
+
+When ready to integrate with Plane.so:
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│   GitHub    │───►│   AutoDev   │───►│  Plane.so   │
+│   Issues    │    │  (Process)  │    │  (Track)    │
+└─────────────┘    └─────────────┘    └─────────────┘
+                         │                   │
+                         ▼                   ▼
+                   ┌─────────────┐    ┌─────────────┐
+                   │  Create PR  │    │ Update Cycle│
+                   │  on GitHub  │    │ in Plane    │
+                   └─────────────┘    └─────────────┘
+```
+
+**Integration Points:**
+- Sync GitHub issues to Plane work items
+- Update Plane cycle progress when tasks complete
+- Link PRs to Plane issues
+- Dashboard can show Plane cycles/sprints
+
+---
+
+## Implementation Roadmap
+
+### Phase 1: State Management (Current Sprint)
+- [ ] Install MobX + mobx-react-lite
+- [ ] Create TaskStore with filters
+- [ ] Create ConfigStore for models
+- [ ] Migrate TasksPage to use stores
+- [ ] Add SSE for live task updates
+
+### Phase 2: UI Polish (Next Sprint)
+- [ ] Create shared component library
+- [ ] Improve table component (sorting, selection)
+- [ ] Add keyboard shortcuts (Plane has great ones)
+- [ ] Dark/light theme persistence
+
+### Phase 3: Plane.so Integration (Future)
+- [ ] Plane.so API client
+- [ ] Cycle/Sprint sync
+- [ ] Work item linking
+- [ ] Dashboard integration
+
+---
+
+_Last updated: 2025-12-16 20:00 UTC_

@@ -32,3 +32,5 @@ coverage/
 
 # Turbo
 .turbo/
+
+plane-preview/
