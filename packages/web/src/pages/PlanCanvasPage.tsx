@@ -198,32 +198,28 @@ export const PlanCanvasPage: React.FC<PlanCanvasPageProps> = ({ planId }) => {
     }
   };
 
-  const handleCreateIssues = async () => {
-    try {
-      const response = await fetch(
-        `${API_BASE}/api/plans/${planId}/create-issues`,
-        {
-          method: "POST",
-        },
-      );
+  const handleCreateIssues = async (): Promise<{
+    created: number;
+    failed: number;
+  }> => {
+    const response = await fetch(
+      `${API_BASE}/api/plans/${planId}/create-issues`,
+      {
+        method: "POST",
+      },
+    );
 
-      if (!response.ok) {
-        throw new Error("Failed to create issues");
-      }
-
-      const data = await response.json();
-      console.log("Created issues:", data);
-
-      // Refresh plan data to get updated card statuses
-      await fetchPlan();
-
-      alert(
-        `Created ${data.created} issues successfully!${data.failed > 0 ? ` (${data.failed} failed)` : ""}`,
-      );
-    } catch (err) {
-      console.error("Failed to create issues:", err);
-      alert("Failed to create issues. Please try again.");
+    if (!response.ok) {
+      throw new Error("Failed to create issues");
     }
+
+    const data = await response.json();
+    console.log("Created issues:", data);
+
+    // Refresh plan data to get updated card statuses
+    await fetchPlan();
+
+    return { created: data.created || 0, failed: data.failed || 0 };
   };
 
   if (loading) {

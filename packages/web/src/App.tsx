@@ -3,6 +3,7 @@ import { Layout } from "@/components/Layout";
 import { ErrorBoundary } from "@/components/error";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { TasksPage } from "@/pages/TasksPage";
+import { TaskDetailPage } from "@/pages/TaskDetailPage";
 import { JobsPage } from "@/pages/JobsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { RepositoriesPage } from "@/pages/RepositoriesPage";
@@ -23,7 +24,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/tasks" element={<TasksPage />} />
-          <Route path="/tasks/:taskId" element={<TasksPage />} />
+          <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
           <Route path="/jobs" element={<JobsPage />} />
           <Route path="/jobs/:jobId" element={<JobsPage />} />
           <Route path="/repositories" element={<RepositoriesPage />} />
