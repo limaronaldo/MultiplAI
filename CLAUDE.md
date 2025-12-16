@@ -44,9 +44,104 @@ fly logs                 # View logs
 
 ---
 
-## Current Model Configuration (2025-12-15)
+---
+
+## 🚨 PENDING WORK (2025-12-16)
+
+### Blocking Issue: OpenAI Quota Exhausted
+
+**Status:** Production is hitting 429 errors from OpenAI (quota exceeded)  
+**Impact:** Cannot process new tasks that use GPT-5.2 or GPT-5.1 Codex models  
+**Deployed Improvements Waiting to Test:**
+- ✅ ReviewerAgent structured output (eliminates JSON parse failures)
+- ✅ Increased diff limit to 700 lines
+- ✅ Improved PlannerAgent with auto-correction (12 files → auto-correct to XL)
+
+### Options to Unblock Production
+
+#### Option 1: Switch Remaining OpenAI Models to Alternatives (15 min)
+
+**Current OpenAI usage:**
+- Coder XS medium/high: `gpt-5.2-medium`, `gpt-5.2-high`
+- Coder S medium/high: `gpt-5.2-medium`, `gpt-5.2-high`
+- Coder M low/medium: `gpt-5.2-medium`, `gpt-5.2-high`
+- Escalation tier 1: `gpt-5.1-codex-max-xhigh`
+
+**Recommended switches:**
+```bash
+# Via Dashboard Settings page or API:
+PUT /api/config/models
+{
+  "position": "coder_xs_medium",
+  "modelId": "claude-haiku-4-5-20251015"  # $0.006 vs $0.08
+}
+
+PUT /api/config/models
+{
+  "position": "coder_s_medium", 
+  "modelId": "claude-haiku-4-5-20251015"
+}
+
+PUT /api/config/models
+{
+  "position": "coder_m_low",
+  "modelId": "claude-sonnet-4-5-20250929"  # $0.12 vs $0.08
+}
+
+PUT /api/config/models
+{
+  "position": "escalation_1",
+  "modelId": "claude-opus-4-5-20251101"  # $0.20 (same cost)
+}
+```
+
+**Pros:** Unblocks production immediately, reduces costs
+**Cons:** Different model behavior (need to verify quality)
+
+#### Option 2: Add OpenAI Credits (5 min)
+
+1. Visit https://platform.openai.com/settings/organization/billing
+2. Add payment method / increase credits
+3. Wait for quota to refresh
+4. Test improvements immediately
+
+**Pros:** Keep current model configs, known performance
+**Cons:** Costs money, may hit limits again
+
+#### Option 3: Hybrid Approach (10 min)
+
+- Switch Coder agents to Claude Haiku (cheap, fast)
+- Keep Escalation as Claude Opus (already configured)
+- Add small OpenAI credits for future use
+- Best of both worlds
+
+### Tasks Ready When Unblocked
+
+1. **Test Issue #401** - Should auto-correct from S → XL with improved PlannerAgent
+2. **Retry 20 UNKNOWN_ERROR tasks** - Structured output should eliminate JSON parse failures
+3. **Measure success rate improvement** - Track reduction in DIFF_TOO_LARGE and UNKNOWN_ERROR
+
+### Manual Fixes Ready to Deploy
+
+**autodev-test Repository:**
+- ✅ PR #84 created (fixes issues #78, #76, #75, #74)
+- 🔨 Branch `fix/add-more-math-functions` ready for PR #85 (fixes 9 more issues)
+
+**Command to create PR #85:**
+```bash
+cd /tmp/autodev-test
+git push origin fix/add-more-math-functions
+gh pr create --title "feat: add fibonacci, power, modulo, multiply functions" --base main
+```
+
+---
+
+## Current Model Configuration (2025-12-16)
 
 ⚠️ **CRITICAL: Models are configured via Dashboard. Check database for current values.**
+
+**Last Updated:** 2025-12-16 04:35 UTC  
+**Planner:** `claude-sonnet-4-5-20250929` (switched from gpt-5.2-high due to quota)
 
 > **Note**: Model configuration is stored in the `model_config` table in `ep-solitary-breeze` database and can be changed via the Settings page in the dashboard.
 
