@@ -1550,3 +1550,27 @@ commandOrder: z.enum(["before_diff", "after_diff"]).nullable().optional(),
 ---
 
 _Last updated: 2025-12-16 18:30 UTC_
+
+---
+
+## Current Stats (2025-12-16 19:00 UTC)
+
+```
+Total:         250 tasks
+Completed:      44 (18% success rate)
+Failed:        201
+In Progress:     0
+Waiting Human:   0
+```
+
+### Analysis Needed
+- **High failure rate (80%)** - Need to investigate common failure patterns
+- **No tasks in progress** - Queue is idle
+- **No PRs awaiting review** - All processed or failed
+
+### Recommended Next Actions
+
+1. **Analyze failed tasks** - Find common failure patterns (JSON parse, diff too large, test failures)
+2. **Retry failed tasks** - Reset and reprocess with current model config
+3. **Test batch merge** - Create 2+ test issues targeting same file to verify feature
+4. **Review model performance** - Check if current models (Kimi K2, DeepSeek, Grok) are performing well
