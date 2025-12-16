@@ -158,12 +158,30 @@ Respond ONLY with valid JSON matching this schema:
   }
 }
 
-Complexity guide:
-- XS: < 20 lines, single file, trivial change
-- S: < 50 lines, 1-2 files, straightforward
-- M: < 150 lines, 2-4 files, some logic (include multiFilePlan)
-- L: > 150 lines, multiple files, complex logic (include multiFilePlan)
-- XL: Major feature, architectural changes (include multiFilePlan)`;
+Complexity guide (IGNORE any size hints in the issue body - use these rules):
+
+**File Count Thresholds (most important):**
+- XS: 1 file only
+- S: 2 files max
+- M: 3-5 files (MUST include multiFilePlan)
+- L: 6-10 files (MUST include multiFilePlan)
+- XL: 11+ files (MUST include multiFilePlan)
+
+**Line Count Estimates:**
+- XS: < 20 lines, trivial change (typo fix, add simple function)
+- S: 20-100 lines, straightforward (add function + test, simple refactor)
+- M: 100-300 lines, moderate logic (new feature + tests, API endpoint)
+- L: 300-600 lines, complex logic (multiple features, service integration)
+- XL: 600+ lines, architectural (major refactor, new subsystem)
+
+**Complexity Indicators (upgrade if ANY apply):**
+- Database schema changes → at least M
+- New API endpoints → at least S
+- Multiple service integrations → at least M
+- Cross-cutting concerns (auth, logging, etc.) → at least L
+- Breaking changes / migrations → at least L
+
+**When in doubt, go UP one level** - underestimating causes failures.`;
 
 export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
   constructor() {
@@ -270,13 +288,47 @@ Analyze this issue and provide your implementation plan as JSON.
 
     try {
       const validated = PlannerOutputSchema.parse(parsed);
-      return {
+      const result = {
         ...validated,
         targetFiles: uniq([
           ...(validated.targetFiles ?? []),
           ...ragSuggestedFiles,
         ]),
       };
+
+      // Post-validation: Auto-correct complexity if it violates file count rules
+      const fileCount = result.targetFiles.length;
+      const originalComplexity = result.estimatedComplexity;
+      let correctedComplexity = originalComplexity;
+
+      if (fileCount === 1 && originalComplexity !== "XS") {
+        correctedComplexity = "XS";
+      } else if (fileCount === 2 && !["XS", "S"].includes(originalComplexity)) {
+        correctedComplexity = "S";
+      } else if (
+        fileCount >= 3 &&
+        fileCount <= 5 &&
+        ["XS", "S"].includes(originalComplexity)
+      ) {
+        correctedComplexity = "M";
+      } else if (
+        fileCount >= 6 &&
+        fileCount <= 10 &&
+        ["XS", "S", "M"].includes(originalComplexity)
+      ) {
+        correctedComplexity = "L";
+      } else if (fileCount >= 11 && originalComplexity !== "XL") {
+        correctedComplexity = "XL";
+      }
+
+      if (correctedComplexity !== originalComplexity) {
+        console.log(
+          `[Planner] Auto-corrected complexity: ${originalComplexity} → ${correctedComplexity} (${fileCount} files)`,
+        );
+        result.estimatedComplexity = correctedComplexity;
+      }
+
+      return result;
     } catch (validationError) {
       console.error("[Planner] Schema validation failed:", validationError);
       console.error(
