@@ -1,12 +1,15 @@
 import { BaseAgent } from "./base";
 import { ReviewerOutput, ReviewerOutputSchema } from "../core/types";
 import { AgentTools } from "../core/tool-generator";
+import { getModelForPositionSync } from "../core/model-selection";
 
-// Default reviewer model - can be overridden via env var
-// Reviewer uses DeepSeek Speciale for fast, cheap code review
-// Cost: ~$0.02/task vs ~$0.20 with gpt-5.1-codex-max (90% savings)
-const DEFAULT_REVIEWER_MODEL =
-  process.env.REVIEWER_MODEL || "deepseek-speciale-high";
+// Default reviewer model - used if database config not available
+const DEFAULT_REVIEWER_MODEL = "claude-sonnet-4-5-20250929";
+
+// Get reviewer model from database config
+function getReviewerModel(): string {
+  return getModelForPositionSync("reviewer") || DEFAULT_REVIEWER_MODEL;
+}
 
 interface ReviewerInput {
   definitionOfDone: string[];
@@ -66,19 +69,20 @@ Respond ONLY with valid JSON:
 
 export class ReviewerAgent extends BaseAgent<ReviewerInput, ReviewerOutput> {
   constructor() {
-    // DeepSeek Speciale with high reasoning - fast and cheap reviews
-    // reasoningEffort is resolved via REASONING_MODEL_CONFIGS in llm.ts
+    // Model is set at runtime in run() to use database config
     // Increased maxTokens from 2048 to 4096 to prevent truncation of detailed reviews
     super({
-      model: DEFAULT_REVIEWER_MODEL,
+      model: DEFAULT_REVIEWER_MODEL, // Placeholder, updated in run()
       temperature: 0.1,
       maxTokens: 4096,
     });
   }
 
   async run(input: ReviewerInput): Promise<ReviewerOutput> {
-    // Always use Opus for review - no auto-approve
-    // This ensures all DoD items are properly verified
+    // Get model from database config at runtime
+    const model = getReviewerModel();
+    this.config.model = model;
+    console.log(`[Reviewer] Using model: ${model}`);
     const fileContentsStr = Object.entries(input.fileContents)
       .map(([path, content]) => `### ${path}\n\`\`\`\n${content}\n\`\`\``)
       .join("\n\n");
