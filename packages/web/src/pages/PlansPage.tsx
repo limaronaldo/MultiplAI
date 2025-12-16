@@ -1,38 +1,20 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
-// Mock data for development - replace with API calls
-const MOCK_PLANS = [
-  {
-    id: "1",
-    name: "User Authentication System",
-    description: "Implement complete auth flow with OAuth",
-    github_repo: "limaronaldo/autodev",
-    status: "in_progress",
-    card_count: 12,
-    completed_count: 5,
-    created_at: "2025-12-10T10:00:00Z",
-  },
-  {
-    id: "2",
-    name: "Dashboard Analytics",
-    description: "Add analytics charts and metrics",
-    github_repo: "limaronaldo/autodev",
-    status: "draft",
-    card_count: 8,
-    completed_count: 0,
-    created_at: "2025-12-12T14:30:00Z",
-  },
-  {
-    id: "3",
-    name: "Payment Integration",
-    description: "Stripe payment processing",
-    github_repo: "limaronaldo/autodev",
-    status: "completed",
-    card_count: 6,
-    completed_count: 6,
-    created_at: "2025-12-05T09:15:00Z",
-  },
-];
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
+
+interface Plan {
+  id: string;
+  name: string;
+  description: string | null;
+  github_repo: string;
+  status: string;
+  selected_model: string;
+  card_count: number;
+  completed_count: number;
+  created_at: string;
+  updated_at: string;
+}
 
 type PlanStatus = "all" | "draft" | "in_progress" | "completed";
 
@@ -50,12 +32,40 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export const PlansPage: React.FC = () => {
+  const navigate = useNavigate();
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<PlanStatus>("all");
 
-  const filteredPlans =
-    statusFilter === "all"
-      ? MOCK_PLANS
-      : MOCK_PLANS.filter((p) => p.status === statusFilter);
+  useEffect(() => {
+    fetchPlans();
+  }, [statusFilter]);
+
+  const fetchPlans = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const params = new URLSearchParams();
+      if (statusFilter !== "all") {
+        params.set("status", statusFilter);
+      }
+
+      const response = await fetch(`${API_BASE}/api/plans?${params}`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch plans: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      setPlans(data.plans || []);
+    } catch (err) {
+      console.error("Failed to fetch plans:", err);
+      setError(err instanceof Error ? err.message : "Failed to load plans");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const getProgressPercentage = (completed: number, total: number): number => {
     if (total === 0) return 0;
@@ -70,15 +80,21 @@ export const PlansPage: React.FC = () => {
     });
   };
 
+  const handlePlanClick = (planId: string) => {
+    navigate(`/plans/${planId}`);
+  };
+
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-slate-900">
       {/* Header */}
-      <div className="bg-white border-b border-gray-200">
+      <div className="bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-semibold text-gray-900">Plans</h1>
-              <p className="text-sm text-gray-500 mt-1">
+              <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
+                Plans
+              </h1>
+              <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
                 Manage your feature implementation plans
               </p>
             </div>
@@ -99,13 +115,13 @@ export const PlansPage: React.FC = () => {
               className={`px-4 py-2 rounded-lg font-medium transition-colors ${
                 statusFilter === status
                   ? "bg-blue-600 text-white"
-                  : "bg-white text-gray-700 hover:bg-gray-50"
+                  : "bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700"
               }`}
             >
               {STATUS_LABELS[status]}
-              {status === "all" && (
+              {status === "all" && !loading && (
                 <span className="ml-2 text-xs opacity-75">
-                  ({MOCK_PLANS.length})
+                  ({plans.length})
                 </span>
               )}
             </button>
@@ -113,45 +129,76 @@ export const PlansPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Plans Grid */}
+      {/* Content */}
       <div className="max-w-7xl mx-auto px-6 pb-12">
-        {filteredPlans.length === 0 ? (
-          <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
-            <p className="text-gray-500">No plans found</p>
+        {/* Loading State */}
+        {loading && (
+          <div className="flex items-center justify-center py-12">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            <span className="ml-3 text-gray-500 dark:text-slate-400">
+              Loading plans...
+            </span>
+          </div>
+        )}
+
+        {/* Error State */}
+        {error && !loading && (
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-6 text-center">
+            <p className="text-red-600 dark:text-red-400">{error}</p>
+            <button
+              onClick={fetchPlans}
+              className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Empty State */}
+        {!loading && !error && plans.length === 0 && (
+          <div className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-12 text-center">
+            <p className="text-gray-500 dark:text-slate-400">
+              {statusFilter === "all"
+                ? "No plans yet"
+                : `No ${STATUS_LABELS[statusFilter].toLowerCase()} plans`}
+            </p>
             <button className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">
               + Create Your First Plan
             </button>
           </div>
-        ) : (
+        )}
+
+        {/* Plans Grid */}
+        {!loading && !error && plans.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredPlans.map((plan) => (
+            {plans.map((plan) => (
               <div
                 key={plan.id}
-                className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-lg transition-shadow cursor-pointer"
-                onClick={() => (window.location.href = `/plans/${plan.id}`)}
+                className="bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 p-6 hover:shadow-lg transition-shadow cursor-pointer"
+                onClick={() => handlePlanClick(plan.id)}
               >
                 {/* Status Badge */}
                 <div className="flex items-center justify-between mb-3">
                   <span
-                    className={`px-3 py-1 rounded-full text-xs font-medium ${STATUS_COLORS[plan.status]}`}
+                    className={`px-3 py-1 rounded-full text-xs font-medium ${STATUS_COLORS[plan.status] || "bg-gray-100 text-gray-700"}`}
                   >
                     {plan.status.replace("_", " ")}
                   </span>
-                  <span className="text-xs text-gray-400">
+                  <span className="text-xs text-gray-400 dark:text-slate-500">
                     {formatDate(plan.created_at)}
                   </span>
                 </div>
 
                 {/* Plan Info */}
-                <h3 className="text-lg font-semibold text-gray-900 mb-2 line-clamp-2">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2 line-clamp-2">
                   {plan.name}
                 </h3>
-                <p className="text-sm text-gray-600 mb-4 line-clamp-2">
-                  {plan.description}
+                <p className="text-sm text-gray-600 dark:text-slate-400 mb-4 line-clamp-2">
+                  {plan.description || "No description"}
                 </p>
 
                 {/* Repository */}
-                <div className="flex items-center gap-2 mb-4 text-xs text-gray-500">
+                <div className="flex items-center gap-2 mb-4 text-xs text-gray-500 dark:text-slate-500">
                   <svg
                     className="w-4 h-4"
                     fill="currentColor"
@@ -164,7 +211,7 @@ export const PlansPage: React.FC = () => {
 
                 {/* Progress Bar */}
                 <div>
-                  <div className="flex items-center justify-between text-xs text-gray-600 mb-2">
+                  <div className="flex items-center justify-between text-xs text-gray-600 dark:text-slate-400 mb-2">
                     <span>
                       {plan.completed_count} of {plan.card_count} cards done
                     </span>
@@ -176,7 +223,7 @@ export const PlansPage: React.FC = () => {
                       %
                     </span>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div className="w-full bg-gray-200 dark:bg-slate-700 rounded-full h-2">
                     <div
                       className="bg-blue-600 h-2 rounded-full transition-all"
                       style={{
