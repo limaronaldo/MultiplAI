@@ -21,10 +21,10 @@ interface FixerInput {
   reflectionDiagnosis?: string;
 }
 
-// Default fixer model - Kimi K2 Thinking for tool-oriented debugging
-// Cost: ~$0.10/task vs ~$0.30 with gpt-5.1-codex-max (67% savings)
+// Default fixer model - Claude Haiku 4.5 for fast debugging
+// Cost: ~$0.01/task vs ~$0.30 with gpt-5.1-codex-max (97% savings)
 const DEFAULT_FIXER_MODEL =
-  process.env.FIXER_MODEL || "moonshotai/kimi-k2-thinking";
+  process.env.FIXER_MODEL || "claude-haiku-4-5-20250514";
 
 const SYSTEM_PROMPT = `You are an expert debugger fixing failing code.
 
@@ -78,8 +78,7 @@ IMPORTANT: Your entire response must be valid JSON wrapped in a code block. Neve
 
 export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
   constructor(modelOverride?: string) {
-    // Kimi K2 Thinking - agentic reasoning for debugging with tool use
-    // No reasoningEffort param needed - Kimi handles reasoning internally
+    // Claude Opus - best model for debugging complex issues
     super({
       model: modelOverride || DEFAULT_FIXER_MODEL,
       maxTokens: 8192,

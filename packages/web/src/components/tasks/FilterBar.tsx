@@ -27,18 +27,49 @@ const STATUS_OPTIONS: TaskStatus[] = [
 
 const COMPLEXITY_OPTIONS = ["XS", "S", "M", "L", "XL"];
 
+// Format display text for dropdown options
+function formatOptionDisplay(
+  option: string,
+  type?: "repo" | "status" | "default",
+): string {
+  if (type === "repo") {
+    // For repos, show "repo (owner)" format
+    const parts = option.split("/");
+    if (parts.length === 2) {
+      return parts[1]; // Just show repo name in the list
+    }
+  }
+  return option.replace(/_/g, " ");
+}
+
+// Get short display for selected value in button
+function getSelectedDisplay(
+  value: string,
+  type?: "repo" | "status" | "default",
+): string {
+  if (type === "repo") {
+    const parts = value.split("/");
+    if (parts.length === 2) {
+      return parts[1]; // Just show repo name
+    }
+  }
+  return value.replace(/_/g, " ");
+}
+
 function Dropdown({
   label,
   value,
   options,
   onChange,
   multiple = false,
+  type = "default",
 }: {
   label: string;
   value: string | string[];
   options: string[];
   onChange: (value: string | string[]) => void;
   multiple?: boolean;
+  type?: "repo" | "status" | "default";
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -69,6 +100,20 @@ function Dropdown({
     }
   };
 
+  // For repos, group by owner
+  const groupedOptions =
+    type === "repo"
+      ? options.reduce(
+          (acc, opt) => {
+            const [owner] = opt.split("/");
+            if (!acc[owner]) acc[owner] = [];
+            acc[owner].push(opt);
+            return acc;
+          },
+          {} as Record<string, string[]>,
+        )
+      : null;
+
   return (
     <div ref={ref} className="relative">
       <button
@@ -79,8 +124,10 @@ function Dropdown({
             : "bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200"
         }`}
       >
-        {label}
-        {hasValue && (
+        {hasValue && !multiple
+          ? getSelectedDisplay(selectedValues[0], type)
+          : label}
+        {hasValue && multiple && (
           <span className="px-1.5 py-0.5 text-xs bg-blue-500 text-white rounded-full">
             {selectedValues.length}
           </span>
@@ -89,25 +136,75 @@ function Dropdown({
       </button>
 
       {open && (
-        <div className="absolute z-50 mt-1 w-48 py-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl">
-          {options.map((option) => (
-            <button
-              key={option}
-              onClick={() => handleSelect(option)}
-              className={`w-full px-3 py-2 text-left text-sm hover:bg-slate-700 transition-colors ${
-                selectedValues.includes(option)
-                  ? "text-blue-400 bg-blue-500/10"
-                  : "text-slate-300"
-              }`}
-            >
-              {multiple && (
-                <span className="inline-block w-4 mr-2">
-                  {selectedValues.includes(option) ? "✓" : ""}
-                </span>
-              )}
-              {option.replace(/_/g, " ")}
-            </button>
-          ))}
+        <div className="absolute z-50 mt-1 min-w-[200px] max-h-80 overflow-auto py-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl">
+          {/* Clear selection option */}
+          {hasValue && !multiple && (
+            <>
+              <button
+                onClick={() => {
+                  onChange("");
+                  setOpen(false);
+                }}
+                className="w-full px-3 py-2 text-left text-sm text-slate-500 hover:bg-slate-700 hover:text-slate-300 transition-colors border-b border-slate-700"
+              >
+                Clear selection
+              </button>
+            </>
+          )}
+
+          {groupedOptions
+            ? // Grouped display for repos
+              Object.entries(groupedOptions).map(([owner, repos]) => (
+                <div key={owner}>
+                  <div className="px-3 py-1.5 text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-900/50">
+                    {owner}
+                  </div>
+                  {repos.map((option) => {
+                    const repoName = option.split("/")[1];
+                    return (
+                      <button
+                        key={option}
+                        onClick={() => handleSelect(option)}
+                        className={`w-full px-3 py-2 text-left text-sm hover:bg-slate-700 transition-colors flex items-center gap-2 ${
+                          selectedValues.includes(option)
+                            ? "text-blue-400 bg-blue-500/10"
+                            : "text-slate-300"
+                        }`}
+                      >
+                        {selectedValues.includes(option) && (
+                          <span className="text-blue-400">✓</span>
+                        )}
+                        <span
+                          className={
+                            selectedValues.includes(option) ? "" : "ml-5"
+                          }
+                        >
+                          {repoName}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))
+            : // Regular display
+              options.map((option) => (
+                <button
+                  key={option}
+                  onClick={() => handleSelect(option)}
+                  className={`w-full px-3 py-2 text-left text-sm hover:bg-slate-700 transition-colors ${
+                    selectedValues.includes(option)
+                      ? "text-blue-400 bg-blue-500/10"
+                      : "text-slate-300"
+                  }`}
+                >
+                  {multiple && (
+                    <span className="inline-block w-4 mr-2">
+                      {selectedValues.includes(option) ? "✓" : ""}
+                    </span>
+                  )}
+                  {formatOptionDisplay(option, type)}
+                </button>
+              ))}
         </div>
       )}
     </div>
@@ -161,6 +258,7 @@ export function FilterBar({
             value={filters.repo}
             options={repos}
             onChange={(v) => onFiltersChange({ repo: v as string })}
+            type="repo"
           />
         )}
 

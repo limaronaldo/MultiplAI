@@ -1,8 +1,6 @@
-import type { Sql } from "postgres";
-import {
-  StaticMemory,
-  RepoIdentifier,
-} from "./static-types";
+import type { SqlClient } from "../../integrations/db";
+type Sql = SqlClient;
+import { StaticMemory, RepoIdentifier } from "./static-types";
 import { StaticMemoryStore } from "./static-memory-store";
 import { StaticMemoryDBStore } from "./static-memory-db-store";
 import { SessionMemoryStore } from "./session-memory-store";
@@ -23,35 +21,50 @@ import {
 /**
  * Agent system prompts - stable prefix for caching
  */
-const AGENT_PROMPTS: Record<AgentType, { identity: string; instructions: string; outputFormat: string }> = {
+const AGENT_PROMPTS: Record<
+  AgentType,
+  { identity: string; instructions: string; outputFormat: string }
+> = {
   initializer: {
-    identity: "You are an initialization agent that prepares context for coding tasks.",
-    instructions: "Analyze the issue and prepare structured context for the coding agent.",
+    identity:
+      "You are an initialization agent that prepares context for coding tasks.",
+    instructions:
+      "Analyze the issue and prepare structured context for the coding agent.",
     outputFormat: "JSON with validated fields",
   },
   planner: {
-    identity: "You are a senior tech lead planning the implementation of a GitHub issue.",
-    instructions: "Create a detailed implementation plan with clear acceptance criteria.",
-    outputFormat: "JSON with definitionOfDone, plan, targetFiles, estimatedComplexity",
+    identity:
+      "You are a senior tech lead planning the implementation of a GitHub issue.",
+    instructions:
+      "Create a detailed implementation plan with clear acceptance criteria.",
+    outputFormat:
+      "JSON with definitionOfDone, plan, targetFiles, estimatedComplexity",
   },
   coder: {
-    identity: "You are an expert software engineer implementing a planned change.",
-    instructions: "Follow the implementation plan exactly. Generate clean, idiomatic code.",
+    identity:
+      "You are an expert software engineer implementing a planned change.",
+    instructions:
+      "Follow the implementation plan exactly. Generate clean, idiomatic code.",
     outputFormat: "JSON with unified diff and commit message",
   },
   fixer: {
-    identity: "You are a debugging expert fixing code that failed tests or validation.",
-    instructions: "Analyze the error, understand what went wrong, and generate a corrected diff.",
+    identity:
+      "You are a debugging expert fixing code that failed tests or validation.",
+    instructions:
+      "Analyze the error, understand what went wrong, and generate a corrected diff.",
     outputFormat: "JSON with corrected unified diff and explanation",
   },
   validator: {
-    identity: "You are a code validator checking output before applying changes.",
-    instructions: "Validate the diff format, check paths, and verify the changes are safe.",
+    identity:
+      "You are a code validator checking output before applying changes.",
+    instructions:
+      "Validate the diff format, check paths, and verify the changes are safe.",
     outputFormat: "JSON with validation result and any errors",
   },
   reviewer: {
     identity: "You are a code reviewer ensuring quality and correctness.",
-    instructions: "Review the changes against the definition of done and best practices.",
+    instructions:
+      "Review the changes against the definition of done and best practices.",
     outputFormat: "JSON with verdict (APPROVE/REQUEST_CHANGES) and comments",
   },
   orchestrator: {
@@ -74,10 +87,12 @@ export class MemoryManager {
   private staticDbStore: StaticMemoryDBStore | null = null;
   private sessionStore: SessionMemoryStore | null = null;
 
-  constructor(options: {
-    configDir?: string;
-    sql?: Sql;
-  } = {}) {
+  constructor(
+    options: {
+      configDir?: string;
+      sql?: Sql;
+    } = {},
+  ) {
     this.staticFileStore = new StaticMemoryStore(options.configDir);
 
     if (options.sql) {
@@ -95,7 +110,7 @@ export class MemoryManager {
   async compileContext(
     request: ContextRequest,
     repo: RepoIdentifier,
-    fileContents?: Record<string, string>
+    fileContents?: Record<string, string>,
   ): Promise<CompiledContext> {
     // Merge default includes with request overrides
     const includes: ContextIncludes = {
@@ -116,7 +131,10 @@ export class MemoryManager {
     const context: CompiledContext = {
       // Stable prefix
       systemIdentity: prompts.identity,
-      agentInstructions: this.buildAgentInstructions(prompts.instructions, staticMemory),
+      agentInstructions: this.buildAgentInstructions(
+        prompts.instructions,
+        staticMemory,
+      ),
       outputFormat: prompts.outputFormat,
 
       // Constraints
@@ -131,7 +149,9 @@ export class MemoryManager {
       task: {
         issueTitle: sessionMemory?.context.issueTitle ?? "",
         issueNumber: sessionMemory?.context.issueNumber ?? 0,
-        issueBody: includes.issueBody ? sessionMemory?.context.issueBody : undefined,
+        issueBody: includes.issueBody
+          ? sessionMemory?.context.issueBody
+          : undefined,
       },
 
       // Metadata
@@ -147,7 +167,9 @@ export class MemoryManager {
     if (includes.planContext && sessionMemory?.context.definitionOfDone) {
       context.plan = {
         definitionOfDone: sessionMemory.context.definitionOfDone,
-        steps: sessionMemory.context.implementationPlan?.map(s => s.description) ?? [],
+        steps:
+          sessionMemory.context.implementationPlan?.map((s) => s.description) ??
+          [],
         targetFiles: sessionMemory.context.targetFiles ?? [],
       };
     }
@@ -155,16 +177,23 @@ export class MemoryManager {
     // Add code context if requested
     if (includes.currentDiff || includes.fileContents) {
       context.code = {
-        currentDiff: includes.currentDiff ? (sessionMemory?.context.currentDiff ?? "") : "",
+        currentDiff: includes.currentDiff
+          ? (sessionMemory?.context.currentDiff ?? "")
+          : "",
         fileContents: includes.fileContents ? (fileContents ?? {}) : {},
       };
     }
 
     // Add error context if requested (for fixer)
     if (includes.previousAttempts > 0 && sessionMemory) {
-      const hasErrors = sessionMemory.attempts.attempts.some(a => a.failureReason);
+      const hasErrors = sessionMemory.attempts.attempts.some(
+        (a) => a.failureReason,
+      );
       if (hasErrors) {
-        const lastAttempt = sessionMemory.attempts.attempts[sessionMemory.attempts.attempts.length - 1];
+        const lastAttempt =
+          sessionMemory.attempts.attempts[
+            sessionMemory.attempts.attempts.length - 1
+          ];
         context.errors = {
           lastError: lastAttempt?.failureReason ?? "",
           attemptSummary: getAttemptSummary(sessionMemory.attempts),
@@ -176,7 +205,7 @@ export class MemoryManager {
     // Add review context if requested
     if (includes.reviewFeedback && sessionMemory?.context.reviewComments) {
       context.review = {
-        comments: sessionMemory.context.reviewComments.map(c => ({
+        comments: sessionMemory.context.reviewComments.map((c) => ({
           file: c.file,
           comment: c.comment,
         })),
@@ -207,7 +236,10 @@ export class MemoryManager {
   /**
    * Build agent instructions with repo-specific customizations
    */
-  private buildAgentInstructions(baseInstructions: string, staticMemory: StaticMemory): string {
+  private buildAgentInstructions(
+    baseInstructions: string,
+    staticMemory: StaticMemory,
+  ): string {
     const parts = [baseInstructions];
 
     // Add repo-specific hints

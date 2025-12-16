@@ -1,4 +1,5 @@
-import type { Sql } from "postgres";
+import type { SqlClient } from "../../integrations/db";
+type Sql = SqlClient;
 import {
   SessionMemory,
   SessionMemorySchema,
@@ -59,9 +60,14 @@ export class SessionMemoryStore {
     taskId: string,
     issueTitle: string,
     issueBody: string,
-    issueNumber: number
+    issueNumber: number,
   ): Promise<SessionMemory> {
-    const session = createSessionMemory(taskId, issueTitle, issueBody, issueNumber);
+    const session = createSessionMemory(
+      taskId,
+      issueTitle,
+      issueBody,
+      issueNumber,
+    );
 
     await this.sql`
       INSERT INTO session_memory (
@@ -85,7 +91,7 @@ export class SessionMemoryStore {
    * Load session memory for a task
    */
   async load(taskId: string): Promise<SessionMemory | null> {
-    const result = await this.sql<SessionMemoryRow[]>`
+    const result = await this.sql`
       SELECT * FROM session_memory WHERE task_id = ${taskId}
     `;
 
@@ -168,7 +174,7 @@ export class SessionMemoryStore {
    */
   async updateContext(
     taskId: string,
-    updates: Partial<TaskContext>
+    updates: Partial<TaskContext>,
   ): Promise<void> {
     await this.sql`
       UPDATE session_memory
@@ -192,12 +198,19 @@ export class SessionMemoryStore {
     phase: TaskPhase,
     attemptNumber: number,
     summary: string,
-    data?: Parameters<typeof createProgressEntry>[4]
+    data?: Parameters<typeof createProgressEntry>[4],
   ): Promise<ProgressEntry> {
-    const entry = createProgressEntry(eventType, phase, attemptNumber, summary, data);
+    const entry = createProgressEntry(
+      eventType,
+      phase,
+      attemptNumber,
+      summary,
+      data,
+    );
 
     // Append entry and update counters atomically
-    const isError = eventType.includes("failed") || eventType === "error_occurred";
+    const isError =
+      eventType.includes("failed") || eventType === "error_occurred";
     const isRetry = eventType === "retry_triggered";
 
     await this.sql`
@@ -225,7 +238,10 @@ export class SessionMemoryStore {
   /**
    * Get recent errors from progress log (for fixer agent context)
    */
-  async getRecentErrors(taskId: string, limit: number = 3): Promise<ProgressEntry[]> {
+  async getRecentErrors(
+    taskId: string,
+    limit: number = 3,
+  ): Promise<ProgressEntry[]> {
     const session = await this.load(taskId);
     if (!session) return [];
     return getRecentErrors(session.progress, limit);
@@ -276,7 +292,7 @@ export class SessionMemoryStore {
       failureDetails?: AttemptRecord["failureDetails"];
       totalTokens?: number;
       totalDurationMs?: number;
-    }
+    },
   ): Promise<void> {
     const session = await this.load(taskId);
     if (!session) throw new Error(`Session not found: ${taskId}`);
@@ -297,9 +313,13 @@ export class SessionMemoryStore {
 
     // Update failure patterns if this attempt failed
     let failurePatterns = [...session.attempts.failurePatterns];
-    if (outcome !== "success" && outcome !== "in_progress" && result.failureReason) {
+    if (
+      outcome !== "success" &&
+      outcome !== "in_progress" &&
+      result.failureReason
+    ) {
       const pattern = this.extractFailurePattern(result.failureReason);
-      const existing = failurePatterns.find(p => p.pattern === pattern);
+      const existing = failurePatterns.find((p) => p.pattern === pattern);
 
       if (existing) {
         existing.occurrences++;
@@ -365,7 +385,7 @@ export class SessionMemoryStore {
   async setAgentOutput<K extends keyof AgentOutputs>(
     taskId: string,
     agent: K,
-    output: AgentOutputs[K]
+    output: AgentOutputs[K],
   ): Promise<void> {
     await this.sql`
       UPDATE session_memory
@@ -385,7 +405,7 @@ export class SessionMemoryStore {
     const session = await this.load(taskId);
     if (!session) throw new Error(`Session not found: ${taskId}`);
 
-    const result = await this.sql<{ id: string }[]>`
+    const result = await this.sql`
       INSERT INTO session_checkpoints (task_id, checkpoint_reason, checkpoint_data)
       VALUES (${taskId}, ${reason ?? null}, ${JSON.stringify(session)})
       RETURNING id
@@ -408,7 +428,7 @@ export class SessionMemoryStore {
    * Restore from checkpoint
    */
   async restore(taskId: string, checkpointId: string): Promise<SessionMemory> {
-    const result = await this.sql<{ checkpoint_data: Record<string, unknown> }[]>`
+    const result = await this.sql`
       SELECT checkpoint_data FROM session_checkpoints
       WHERE id = ${checkpointId} AND task_id = ${taskId}
     `;
@@ -426,19 +446,21 @@ export class SessionMemoryStore {
   /**
    * List checkpoints for a task
    */
-  async listCheckpoints(taskId: string): Promise<Array<{
-    id: string;
-    reason: string | null;
-    createdAt: Date;
-  }>> {
-    const result = await this.sql<{ id: string; checkpoint_reason: string | null; created_at: Date }[]>`
+  async listCheckpoints(taskId: string): Promise<
+    Array<{
+      id: string;
+      reason: string | null;
+      createdAt: Date;
+    }>
+  > {
+    const result = await this.sql`
       SELECT id, checkpoint_reason, created_at
       FROM session_checkpoints
       WHERE task_id = ${taskId}
       ORDER BY created_at DESC
     `;
 
-    return result.map(r => ({
+    return result.map((r) => ({
       id: r.id,
       reason: r.checkpoint_reason,
       createdAt: r.created_at,
@@ -453,67 +475,73 @@ export class SessionMemoryStore {
    * Get sessions by phase
    */
   async getByPhase(phase: TaskPhase): Promise<SessionMemory[]> {
-    const result = await this.sql<SessionMemoryRow[]>`
+    const result = await this.sql`
       SELECT * FROM session_memory WHERE phase = ${phase}
     `;
 
-    return result.map(row => SessionMemorySchema.parse({
-      taskId: row.task_id,
-      startedAt: row.started_at.toISOString(),
-      phase: row.phase,
-      status: row.status,
-      context: row.context,
-      progress: row.progress,
-      attempts: row.attempts,
-      outputs: row.outputs,
-      parentTaskId: row.parent_task_id,
-      subtaskId: row.subtask_id,
-    }));
+    return result.map((row) =>
+      SessionMemorySchema.parse({
+        taskId: row.task_id,
+        startedAt: row.started_at.toISOString(),
+        phase: row.phase,
+        status: row.status,
+        context: row.context,
+        progress: row.progress,
+        attempts: row.attempts,
+        outputs: row.outputs,
+        parentTaskId: row.parent_task_id,
+        subtaskId: row.subtask_id,
+      }),
+    );
   }
 
   /**
    * Get child sessions for a parent task
    */
   async getChildSessions(parentTaskId: string): Promise<SessionMemory[]> {
-    const result = await this.sql<SessionMemoryRow[]>`
+    const result = await this.sql`
       SELECT * FROM session_memory WHERE parent_task_id = ${parentTaskId}
     `;
 
-    return result.map(row => SessionMemorySchema.parse({
-      taskId: row.task_id,
-      startedAt: row.started_at.toISOString(),
-      phase: row.phase,
-      status: row.status,
-      context: row.context,
-      progress: row.progress,
-      attempts: row.attempts,
-      outputs: row.outputs,
-      parentTaskId: row.parent_task_id,
-      subtaskId: row.subtask_id,
-    }));
+    return result.map((row) =>
+      SessionMemorySchema.parse({
+        taskId: row.task_id,
+        startedAt: row.started_at.toISOString(),
+        phase: row.phase,
+        status: row.status,
+        context: row.context,
+        progress: row.progress,
+        attempts: row.attempts,
+        outputs: row.outputs,
+        parentTaskId: row.parent_task_id,
+        subtaskId: row.subtask_id,
+      }),
+    );
   }
 
   /**
    * Get sessions with errors (for monitoring)
    */
   async getSessionsWithErrors(minErrors: number = 1): Promise<SessionMemory[]> {
-    const result = await this.sql<SessionMemoryRow[]>`
+    const result = await this.sql`
       SELECT * FROM session_memory
       WHERE (progress->>'errorCount')::int >= ${minErrors}
       ORDER BY (progress->>'errorCount')::int DESC
     `;
 
-    return result.map(row => SessionMemorySchema.parse({
-      taskId: row.task_id,
-      startedAt: row.started_at.toISOString(),
-      phase: row.phase,
-      status: row.status,
-      context: row.context,
-      progress: row.progress,
-      attempts: row.attempts,
-      outputs: row.outputs,
-      parentTaskId: row.parent_task_id,
-      subtaskId: row.subtask_id,
-    }));
+    return result.map((row) =>
+      SessionMemorySchema.parse({
+        taskId: row.task_id,
+        startedAt: row.started_at.toISOString(),
+        phase: row.phase,
+        status: row.status,
+        context: row.context,
+        progress: row.progress,
+        attempts: row.attempts,
+        outputs: row.outputs,
+        parentTaskId: row.parent_task_id,
+        subtaskId: row.subtask_id,
+      }),
+    );
   }
 }

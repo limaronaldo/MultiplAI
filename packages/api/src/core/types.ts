@@ -43,6 +43,9 @@ export const TaskStatus = {
   TESTING: "TESTING",
   TESTS_PASSED: "TESTS_PASSED",
   TESTS_FAILED: "TESTS_FAILED",
+  VISUAL_TESTING: "VISUAL_TESTING", // Running visual tests with CUA
+  VISUAL_TESTS_PASSED: "VISUAL_TESTS_PASSED",
+  VISUAL_TESTS_FAILED: "VISUAL_TESTS_FAILED",
   FIXING: "FIXING",
   REFLECTING: "REFLECTING",
   REPLANNING: "REPLANNING",
@@ -76,7 +79,7 @@ export interface Task {
   definitionOfDone?: string[];
   plan?: string[];
   targetFiles?: string[];
-  multiFilePlan?: MultiFilePlan; // For M+ complexity coordination
+  multiFilePlan?: MultiFilePlan | null; // For M+ complexity coordination
   commands?: PlannerCommand[]; // Commands to execute
   commandOrder?: "before_diff" | "after_diff";
 
@@ -101,6 +104,10 @@ export interface Task {
   agenticLoopReplans?: number;
   agenticLoopConfidence?: number;
   agenticLoopDurationMs?: number;
+
+  // Visual testing (Issue #245)
+  visualTestConfig?: TaskVisualTestConfig;
+  visualTestRunId?: string;
 
   // Parent-child relationship (for orchestrated tasks)
   parentTaskId?: string | null;
@@ -360,7 +367,7 @@ export const PlannerOutputSchema = z.object({
   estimatedEffort: z.enum(["low", "medium", "high"]).optional(),
   risks: z.array(z.string()).optional(),
   // Multi-file coordination (optional, for M+ complexity)
-  multiFilePlan: MultiFilePlanSchema.optional(),
+  multiFilePlan: MultiFilePlanSchema.nullable().optional(),
   // Commands to execute (optional)
   commands: z.array(PlannerCommandSchema).optional(),
   commandOrder: z.enum(["before_diff", "after_diff"]).optional(),
@@ -398,6 +405,15 @@ export const ReviewerOutputSchema = z.object({
     }),
   ),
   suggestedChanges: z.array(z.string()).optional(),
+  dodVerification: z
+    .array(
+      z.object({
+        item: z.string(),
+        met: z.boolean(),
+        evidence: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 export type ReviewerOutput = z.infer<typeof ReviewerOutputSchema>;
@@ -499,7 +515,11 @@ export interface TaskEvent {
     | "CONSENSUS_DECISION" // Multi-agent selection decision
     | "AGENTIC_LOOP_COMPLETE" // Agentic loop finished (Issue #193)
     | "REFLECTION_COMPLETE" // Reflection analysis done (Issue #220)
-    | "REPLAN_TRIGGERED"; // Replanning triggered by reflection (Issue #220)
+    | "REPLAN_TRIGGERED" // Replanning triggered by reflection (Issue #220)
+    | "CONFLICT_DETECTED" // Merge conflict detected with other PRs (Issue #403)
+    | "VISUAL_TESTING_STARTED" // Visual tests started (Issue #245)
+    | "VISUAL_TESTING_COMPLETED" // Visual tests completed (Issue #245)
+    | "VISUAL_TESTING_ERROR"; // Visual testing error (Issue #245)
   agent?: string;
   inputSummary?: string;
   outputSummary?: string;
@@ -585,7 +605,7 @@ export interface AutoDevConfig {
 
 export const defaultConfig: AutoDevConfig = {
   maxAttempts: 3,
-  maxDiffLines: 400,
+  maxDiffLines: 700,
   allowedRepos: [],
   allowedPaths: ["src/", "lib/", "tests/", "test/"],
   blockedPaths: [".env", "secrets/", ".github/workflows/"],
@@ -606,14 +626,56 @@ export const defaultConfig: AutoDevConfig = {
 };
 
 // ============================================
+// Visual Testing Config (Issue #245)
+// ============================================
+
+export interface TaskVisualTestConfig {
+  /** Whether visual testing is enabled for this task */
+  enabled: boolean;
+  /** Application URL to test */
+  appUrl: string;
+  /** Visual test cases to run */
+  testCases: Array<{
+    id: string;
+    name: string;
+    goal: string;
+    expectedOutcome?: string;
+    maxActions?: number;
+    timeout?: number;
+  }>;
+  /** Allowed URLs for safety */
+  allowedUrls?: string[];
+  /** Run browsers in headless mode */
+  headless?: boolean;
+  /** Timeout per test in ms */
+  timeout?: number;
+  /** Maximum actions per test */
+  maxActions?: number;
+}
+
+// ============================================
 // Job Runner Config
 // ============================================
+
+export interface JobProgressEvent {
+  jobId: string;
+  total: number;
+  completed: number;
+  failed: number;
+  inProgress: number;
+  currentBatch: string[];
+  timestamp: Date;
+}
 
 export interface JobRunnerConfig {
   /** Maximum number of tasks to process in parallel */
   maxParallel: number;
   /** Whether to continue processing remaining tasks when one fails */
   continueOnError: boolean;
+  /** Optional callback for real-time progress updates */
+  onProgress?: (event: JobProgressEvent) => void;
+  /** Optional function to prioritize/reorder tasks before processing */
+  prioritize?: (tasks: Task[]) => Task[];
 }
 
 export const defaultJobRunnerConfig: JobRunnerConfig = {

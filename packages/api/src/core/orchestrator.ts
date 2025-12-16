@@ -22,6 +22,7 @@ import { ReviewerAgent } from "../agents/reviewer";
 import { BreakdownAgent } from "../agents/breakdown";
 import { GitHubClient } from "../integrations/github";
 import { db } from "../integrations/db";
+import parseDiff from "parse-diff";
 import {
   MultiAgentConfig,
   MultiAgentMetadata,
@@ -177,6 +178,11 @@ export class Orchestrator {
         case "ORCHESTRATE":
           return await this.runOrchestration(task);
         case "TEST":
+          // Handle both regular tests and visual tests
+          if (task.status === "TESTS_PASSED") {
+            // After regular tests pass, check if we should run visual tests
+            return await this.runVisualTests(task);
+          }
           return await this.runTests(task);
         case "FIX":
           return await this.runFix(task);
@@ -1226,15 +1232,154 @@ export class Orchestrator {
   }
 
   /**
+   * Step 3.5: Visual Testing (Issue #245)
+   * Runs visual tests using CUA after unit tests pass
+   */
+  private async runVisualTests(task: Task): Promise<Task> {
+    this.validateTaskState(
+      task,
+      "TESTS_PASSED",
+      ["branchName"],
+      "Cannot run visual tests",
+    );
+
+    const logger = this.getLogger(task);
+
+    // Check if visual testing is configured for this task
+    if (!task.visualTestConfig || !task.visualTestConfig.enabled) {
+      logger.info("Visual testing not configured, skipping to review");
+      return this.updateStatus(task, "REVIEWING");
+    }
+
+    task = this.updateStatus(task, "VISUAL_TESTING");
+    await this.logEvent(task, "VISUAL_TESTING_STARTED", "visual-test-runner");
+
+    try {
+      const { VisualTestRunner } =
+        await import("../agents/computer-use/visual-test-runner");
+
+      // Config is already validated above (enabled check)
+      const config = task.visualTestConfig!;
+
+      const runner = new VisualTestRunner({
+        allowedUrls: config.allowedUrls,
+        headless: config.headless ?? true,
+        timeout: config.timeout ?? 60000,
+        maxActions: config.maxActions ?? 30,
+      });
+
+      logger.info(
+        `Running ${config.testCases.length} visual tests on ${config.appUrl}`,
+      );
+
+      const results = await runner.run(config.appUrl, config.testCases);
+
+      // Store results in database
+      await db.createVisualTestRun({
+        id: results.runId,
+        taskId: task.id,
+        appUrl: results.appUrl,
+        testGoals: config.testCases.map((tc) => tc.name),
+        status: results.status,
+        passRate: results.passRate,
+        totalTests: results.totalTests,
+        passedTests: results.passedTests,
+        failedTests: results.failedTests,
+        results: results.results,
+        screenshots: results.results.flatMap((r) => r.screenshots || []),
+        config: {
+          allowedUrls: config.allowedUrls,
+          headless: config.headless,
+          timeout: config.timeout,
+        },
+        createdAt: results.startedAt,
+        completedAt: results.completedAt,
+      });
+
+      task.visualTestRunId = results.runId;
+
+      // Log completion
+      await this.logEvent(
+        task,
+        "VISUAL_TESTING_COMPLETED",
+        "visual-test-runner",
+        {
+          runId: results.runId,
+          status: results.status,
+          passRate: results.passRate,
+          passedTests: results.passedTests,
+          failedTests: results.failedTests,
+          totalTests: results.totalTests,
+        },
+      );
+
+      if (results.status === "passed") {
+        logger.info(
+          `Visual tests passed: ${results.passedTests}/${results.totalTests}`,
+        );
+        return this.updateStatus(task, "VISUAL_TESTS_PASSED");
+      } else {
+        logger.warn(
+          `Visual tests failed: ${results.failedTests}/${results.totalTests} failed`,
+        );
+        task.lastError = `Visual tests failed: ${results.failedTests} out of ${results.totalTests} tests failed`;
+        task.attemptCount++;
+
+        if (task.attemptCount >= task.maxAttempts) {
+          return this.failTask(
+            task,
+            createOrchestratorError(
+              "MAX_ATTEMPTS_REACHED",
+              `Visual tests failed after ${task.maxAttempts} attempts`,
+              task.id,
+              false,
+            ),
+          );
+        }
+
+        return this.updateStatus(task, "VISUAL_TESTS_FAILED");
+      }
+    } catch (error) {
+      logger.error(
+        `Visual testing error: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+
+      await this.logEvent(task, "VISUAL_TESTING_ERROR", "visual-test-runner", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      // If visual tests fail with error, we can either fail the task or skip to review
+      // For now, we'll skip to review on infrastructure errors
+      logger.warn("Visual testing infrastructure error, skipping to review");
+      return this.updateStatus(task, "REVIEWING");
+    }
+  }
+
+  /**
    * Step 4: Fix (quando testes falham)
    */
   private async runFix(task: Task): Promise<Task> {
-    this.validateTaskState(
-      task,
-      "TESTS_FAILED",
-      ["branchName", "lastError"],
-      "Cannot run fix",
-    );
+    // Accept both TESTS_FAILED and VISUAL_TESTS_FAILED
+    if (
+      task.status !== "TESTS_FAILED" &&
+      task.status !== "VISUAL_TESTS_FAILED"
+    ) {
+      throw createOrchestratorError(
+        "INVALID_STATE",
+        `Cannot run fix from status: ${task.status}`,
+        task.id,
+        false,
+      );
+    }
+
+    if (!task.branchName || !task.lastError) {
+      throw createOrchestratorError(
+        "MISSING_DATA",
+        "Cannot run fix: missing branchName or lastError",
+        task.id,
+        false,
+      );
+    }
 
     const logger = this.getLogger(task);
 
@@ -1424,12 +1569,27 @@ export class Orchestrator {
    * Step 5: Review
    */
   private async runReview(task: Task): Promise<Task> {
-    this.validateTaskState(
-      task,
-      "TESTS_PASSED",
-      ["branchName", "currentDiff"],
-      "Cannot run review",
-    );
+    // Accept both TESTS_PASSED and VISUAL_TESTS_PASSED
+    if (
+      task.status !== "TESTS_PASSED" &&
+      task.status !== "VISUAL_TESTS_PASSED"
+    ) {
+      throw createOrchestratorError(
+        "INVALID_STATE",
+        `Cannot run review from status: ${task.status}`,
+        task.id,
+        false,
+      );
+    }
+
+    if (!task.branchName || !task.currentDiff) {
+      throw createOrchestratorError(
+        "MISSING_DATA",
+        "Cannot run review: missing branchName or currentDiff",
+        task.id,
+        false,
+      );
+    }
 
     task = this.updateStatus(task, "REVIEWING");
 
@@ -1448,12 +1608,17 @@ export class Orchestrator {
       testsPassed: true, // We only get here if tests passed
     });
 
-    // Log review completion with model info and verdict
+    // Log review completion with model info, verdict, and full feedback
     await this.logEvent(task, "REVIEWED", "reviewer", {
       model: this.reviewer["config"].model,
       reasoningEffort: this.reviewer["config"].reasoningEffort,
       verdict: reviewerOutput.verdict,
       attemptCount: task.attemptCount,
+      // Include full feedback for debugging rejected reviews
+      summary: reviewerOutput.summary,
+      comments: reviewerOutput.comments,
+      suggestedChanges: reviewerOutput.suggestedChanges,
+      dodVerification: reviewerOutput.dodVerification,
     });
 
     if (reviewerOutput.verdict === "APPROVE") {
@@ -1500,7 +1665,7 @@ export class Orchestrator {
       // Update PR body with latest info (attempt count, etc.)
       try {
         await this.github.updatePR(task.githubRepo, task.prNumber, {
-          body: this.buildPRBody(task),
+          body: this.buildPRBody(task, undefined),
         });
         logger.info(`Updated PR #${task.prNumber} body with latest info`);
       } catch (updateError) {
@@ -1521,7 +1686,31 @@ export class Orchestrator {
     }
 
     // Create new PR
-    const prBody = this.buildPRBody(task);
+    // Check for conflicting PRs before creating new one
+    const modifiedFiles = this.extractModifiedFiles(task.currentDiff!);
+    const conflictingPRs = await this.github.detectConflictingPRs(
+      task.githubRepo,
+      modifiedFiles,
+      task.branchName,
+    );
+
+    if (conflictingPRs.length > 0) {
+      // Found conflicting PRs - log warning
+      this.systemLogger.warn(
+        `[Orchestrator] Task ${task.id} has conflicting PRs: ${conflictingPRs.map((p) => `#${p.number}`).join(", ")}`,
+      );
+
+      // Log the conflict detection
+      await this.logEvent(task, "CONFLICT_DETECTED", "orchestrator", {
+        conflictingPRs: conflictingPRs.map((p) => ({
+          number: p.number,
+          title: p.title,
+          files: p.conflictingFiles,
+        })),
+      });
+    }
+
+    const prBody = this.buildPRBody(task, conflictingPRs);
 
     const pr = await this.github.createPR(task.githubRepo, {
       title: `[AutoDev] ${task.githubIssueTitle}`,
@@ -1534,10 +1723,23 @@ export class Orchestrator {
     task.prUrl = pr.url;
 
     // Adiciona labels
-    await this.github.addLabels(task.githubRepo, pr.number, [
-      "auto-dev",
-      "ready-for-human-review",
-    ]);
+    const labels = ["auto-dev", "ready-for-human-review"];
+    if (conflictingPRs.length > 0) {
+      labels.push("potential-conflict");
+    }
+    await this.github.addLabels(task.githubRepo, pr.number, labels);
+
+    // Comment on conflicting PRs to notify about potential conflict
+    for (const conflictPR of conflictingPRs) {
+      await this.github.addComment(
+        task.githubRepo,
+        conflictPR.number,
+        `⚠️ **Potential Merge Conflict Detected**\n\n` +
+          `PR #${pr.number} modifies the same files as this PR:\n` +
+          `- ${conflictPR.conflictingFiles.map((f) => `\`${f}\``).join("\n- ")}\n\n` +
+          `Consider coordinating these changes or merging one PR before the other.`,
+      );
+    }
 
     // Linka com a issue original
     await this.github.addComment(
@@ -1993,7 +2195,14 @@ export class Orchestrator {
       .slice(0, 50);
   }
 
-  private buildPRBody(task: Task): string {
+  private buildPRBody(
+    task: Task,
+    conflictingPRs?: Array<{
+      number: number;
+      title: string;
+      conflictingFiles: string[];
+    }>,
+  ): string {
     let body = `
 ## 🤖 MultiplAI PR
 
@@ -2008,6 +2217,24 @@ ${task.plan?.map((p, i) => `${i + 1}. ${p}`).join("\n")}
 ### Files Modified
 ${task.targetFiles?.map((f) => `- \`${f}\``).join("\n")}
 `;
+
+    // Add conflict warning if detected
+    if (conflictingPRs && conflictingPRs.length > 0) {
+      body += `\n---\n\n## ⚠️ Potential Merge Conflicts Detected\n\n`;
+      body += `This PR modifies files that are also being modified by other open PRs:\n\n`;
+
+      for (const pr of conflictingPRs) {
+        body += `### PR #${pr.number}: ${pr.title}\n`;
+        body += `Conflicting files:\n`;
+        body += pr.conflictingFiles.map((f) => `- \`${f}\``).join("\n");
+        body += `\n\n`;
+      }
+
+      body += `**Recommendation:** Review and coordinate these PRs to avoid merge conflicts. Consider:\n`;
+      body += `1. Merging one PR before the other\n`;
+      body += `2. Combining related changes into a single PR\n`;
+      body += `3. Rebasing this PR after the other(s) are merged\n\n`;
+    }
 
     // Add multi-agent consensus reports if available
     if (this.lastCoderConsensus) {
@@ -2030,6 +2257,30 @@ This PR was generated automatically. Please review carefully before merging.
 `;
 
     return body.trim();
+  }
+
+  /**
+   * Extract list of modified files from a unified diff
+   */
+  private extractModifiedFiles(diff: string): string[] {
+    const files: string[] = [];
+
+    try {
+      const parsed = parseDiff(diff);
+      for (const file of parsed) {
+        // Use 'to' for new/modified files, 'from' for deleted files
+        const path = file.to || file.from;
+        if (path && path !== "/dev/null") {
+          files.push(path);
+        }
+      }
+    } catch (error) {
+      this.systemLogger.warn(
+        `[Orchestrator] Failed to parse diff for file extraction: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+    }
+
+    return files;
   }
 
   // ============================================

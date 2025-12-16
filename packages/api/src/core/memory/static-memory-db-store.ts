@@ -1,4 +1,5 @@
-import type { Sql } from "postgres";
+import type { SqlClient } from "../../integrations/db";
+type Sql = SqlClient;
 import {
   StaticMemory,
   StaticMemorySchema,
@@ -74,7 +75,7 @@ export class StaticMemoryDBStore {
     }
 
     // Load from database
-    const result = await this.sql<StaticMemoryRow[]>`
+    const result = await this.sql`
       SELECT config, context, constraints, created_at
       FROM static_memory
       WHERE owner = ${repo.owner} AND repo = ${repo.repo}
@@ -146,7 +147,7 @@ export class StaticMemoryDBStore {
    * Check if a repo has configuration
    */
   async exists(repo: RepoIdentifier): Promise<boolean> {
-    const result = await this.sql<{ exists: boolean }[]>`
+    const result = await this.sql`
       SELECT EXISTS(
         SELECT 1 FROM static_memory WHERE owner = ${repo.owner} AND repo = ${repo.repo}
       ) as exists
@@ -158,7 +159,7 @@ export class StaticMemoryDBStore {
    * List all configured repos
    */
   async listRepos(): Promise<RepoIdentifier[]> {
-    const result = await this.sql<{ owner: string; repo: string }[]>`
+    const result = await this.sql`
       SELECT owner, repo FROM static_memory ORDER BY owner, repo
     `;
     return result.map((row) => ({

@@ -70,40 +70,48 @@ export function JobsPage() {
         </div>
       ) : (
         <div className="space-y-4">
-          {jobs.map((job) => (
-            <div
-              key={job.id}
-              onClick={() => navigate(`/jobs/${job.id}`)}
-              className="bg-slate-900 border border-slate-800 rounded-xl p-5 hover:border-slate-700 cursor-pointer transition-colors"
-            >
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-white">{job.name}</h3>
-                <span
-                  className={`text-xs font-medium px-2 py-1 rounded-full ${getStatusColor(job.status)}`}
-                >
-                  {job.status.toUpperCase()}
-                </span>
-              </div>
+          {jobs.map((job) => {
+            // Handle both old format (name, total_tasks) and new format (githubRepo, summary)
+            const name = job.name || job.githubRepo || "Unnamed Job";
+            const total = job.total_tasks ?? job.summary?.total ?? 0;
+            const completed =
+              job.completed_tasks ?? job.summary?.completed ?? 0;
+            const failed = job.failed_tasks ?? job.summary?.failed ?? 0;
+            const progress = total > 0 ? (completed / total) * 100 : 0;
 
-              <div className="flex items-center gap-6 text-sm text-slate-400">
-                <span>Total: {job.total_tasks}</span>
-                <span className="text-emerald-400">
-                  Completed: {job.completed_tasks}
-                </span>
-                <span className="text-red-400">Failed: {job.failed_tasks}</span>
-              </div>
+            return (
+              <div
+                key={job.id}
+                onClick={() => navigate(`/jobs/${job.id}`)}
+                className="bg-slate-900 border border-slate-800 rounded-xl p-5 hover:border-slate-700 cursor-pointer transition-colors"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-semibold text-white">{name}</h3>
+                  <span
+                    className={`text-xs font-medium px-2 py-1 rounded-full ${getStatusColor(job.status)}`}
+                  >
+                    {job.status.toUpperCase()}
+                  </span>
+                </div>
 
-              {/* Progress bar */}
-              <div className="mt-4 h-2 bg-slate-800 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-emerald-500 transition-all duration-300"
-                  style={{
-                    width: `${job.total_tasks > 0 ? (job.completed_tasks / job.total_tasks) * 100 : 0}%`,
-                  }}
-                />
+                <div className="flex items-center gap-6 text-sm text-slate-400">
+                  <span>Total: {total}</span>
+                  <span className="text-emerald-400">
+                    Completed: {completed}
+                  </span>
+                  <span className="text-red-400">Failed: {failed}</span>
+                </div>
+
+                {/* Progress bar */}
+                <div className="mt-4 h-2 bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-500 transition-all duration-300"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

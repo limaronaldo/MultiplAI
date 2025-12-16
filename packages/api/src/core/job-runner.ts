@@ -59,8 +59,16 @@ export class JobRunner {
     // Update job status to running
     await dbJobs.updateJob(job.id, { status: "running" });
 
-    // Process tasks in parallel batches
-    const taskIds = [...job.taskIds];
+    // Apply task prioritization if configured
+    let taskIds = [...job.taskIds];
+    if (this.config.prioritize) {
+      console.log(`[JobRunner] Applying task prioritization for job ${job.id}`);
+      const tasks = await Promise.all(taskIds.map((id) => db.getTask(id)));
+      const validTasks = tasks.filter((t): t is Task => t !== null);
+      const prioritizedTasks = this.config.prioritize(validTasks);
+      taskIds = prioritizedTasks.map((t) => t.id);
+    }
+
     let cancelled = false;
 
     while (taskIds.length > 0 && !cancelled) {
@@ -78,6 +86,9 @@ export class JobRunner {
       console.log(
         `[JobRunner] Processing batch of ${batch.length} tasks for job ${job.id}`,
       );
+
+      // Emit progress event for batch start
+      this.emitProgress(job.id, results, batch);
 
       // Process batch in parallel using Promise.allSettled
       const batchPromises = batch.map((taskId) =>
@@ -274,5 +285,32 @@ export class JobRunner {
   ): Promise<void> {
     const summary = this.buildSummary(results);
     await dbJobs.updateJob(jobId, { summary });
+  }
+
+  /**
+   * Emit progress event if callback is configured
+   */
+  private emitProgress(
+    jobId: string,
+    completedResults: TaskResult[],
+    currentBatch: string[],
+  ): void {
+    if (!this.config.onProgress) {
+      return;
+    }
+
+    const total = completedResults.length + currentBatch.length;
+    const completed = completedResults.filter((r) => r.success).length;
+    const failed = completedResults.filter((r) => !r.success).length;
+
+    this.config.onProgress({
+      jobId,
+      total,
+      completed,
+      failed,
+      inProgress: currentBatch.length,
+      currentBatch,
+      timestamp: new Date(),
+    });
   }
 }

@@ -26,6 +26,9 @@ import {
 } from "./core/rate-limiter";
 import { generateOpenAPISpec, getOpenAPIJSON } from "./core/openapi";
 import { generateSwaggerHTML, generateReDocHTML } from "./core/swagger-ui";
+import { VisualTestRunner } from "./agents/computer-use/visual-test-runner";
+import { VisualTestCaseSchema } from "./agents/computer-use/types";
+import { z } from "zod";
 
 // Validation helpers
 const UUID_REGEX =
@@ -970,6 +973,36 @@ function jsonToYaml(obj: unknown, indent = 0): string {
 // API
 // ============================================
 
+// Simple ping endpoint for quick health checks (no external calls)
+route("GET", "/api/ping", async () => {
+  return Response.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// Database ping - test connection using statically imported db
+route("GET", "/api/db-ping", async () => {
+  const start = Date.now();
+  try {
+    // Use the statically imported db module's getDb
+    const { getDb } = await import("./integrations/db");
+    const sql = getDb();
+    const [result] = await sql`SELECT NOW() as time`;
+    return Response.json({
+      status: "ok",
+      latencyMs: Date.now() - start,
+      dbTime: result?.time,
+    });
+  } catch (error) {
+    return Response.json(
+      {
+        status: "error",
+        latencyMs: Date.now() - start,
+        error: String(error),
+      },
+      { status: 500 },
+    );
+  }
+});
+
 route("GET", "/api/health", async () => {
   const startTime = Date.now();
   const checks: Record<
@@ -983,22 +1016,37 @@ route("GET", "/api/health", async () => {
   > = {};
   let overallStatus: "ok" | "degraded" | "unhealthy" = "ok";
 
-  // 1. Database connectivity check
+  // Helper to run check with timeout
+  const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> => {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms),
+      ),
+    ]);
+  };
+
+  // 1. Database connectivity check (with 30s timeout for Neon cold start)
+  // Use the already-imported getDb to reuse connection pool
   try {
     const dbStart = Date.now();
-    const sql = (await import("./integrations/db")).getDb();
-    await sql`SELECT 1`;
+    const { getDb } = await import("./integrations/db");
+    const sql = getDb();
+    await withTimeout(sql`SELECT 1`, 30000);
     checks.database = { status: "ok", latencyMs: Date.now() - dbStart };
   } catch (error) {
     checks.database = { status: "error", message: String(error) };
     overallStatus = "unhealthy";
   }
 
-  // 2. GitHub API check (rate limit remaining)
+  // 2. GitHub API check (rate limit remaining) (with 5s timeout)
   try {
     const ghStart = Date.now();
     const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
-    const { data: rateLimit } = await octokit.rest.rateLimit.get();
+    const { data: rateLimit } = await withTimeout(
+      octokit.rest.rateLimit.get(),
+      5000,
+    );
     const remaining = rateLimit.rate.remaining;
     const limit = rateLimit.rate.limit;
     checks.github = {
@@ -1518,7 +1566,7 @@ route("GET", "/api/costs/export", async (req) => {
  * Available models for selection
  */
 const AVAILABLE_MODELS = [
-  // Anthropic (Opus 4.5: $5/$25 MTok, Sonnet 4.5: $3/$15 MTok, Haiku 4.5: $0.80/$4 MTok)
+  // Anthropic (Opus 4.5: $5/$25 MTok, Sonnet 4.5: $3/$15 MTok, Haiku 4.5: $1/$5 MTok)
   {
     id: "claude-opus-4-5-20251101",
     name: "Claude Opus 4.5",
@@ -1539,8 +1587,9 @@ const AVAILABLE_MODELS = [
     id: "claude-haiku-4-5-20251015",
     name: "Claude Haiku 4.5",
     provider: "anthropic" as const,
-    costPerTask: 0.03,
-    description: "Fast and cheap Claude model. Good for simple tasks.",
+    costPerTask: 0.006,
+    description:
+      "Fastest, most cost-effective Claude model. Good for simple tasks.",
     capabilities: ["coding", "analysis"],
   },
   // OpenAI GPT-5.1-Codex-Max (agentic coding, powers Codex CLI)
@@ -1635,15 +1684,7 @@ const AVAILABLE_MODELS = [
     description: "No reasoning, lowest latency. Default in 5.2.",
     capabilities: ["coding"],
   },
-  // OpenRouter - Kimi K2 ($0.60/$2.50 MTok)
-  {
-    id: "moonshotai/kimi-k2-thinking",
-    name: "Kimi K2 Thinking",
-    provider: "openrouter" as const,
-    costPerTask: 0.02,
-    description: "Agentic reasoning model. 262K context, multi-step tool use.",
-    capabilities: ["reasoning", "agentic", "coding"],
-  },
+  // Removed Kimi K2 - replaced with Claude Haiku 4.5
   // OpenRouter - DeepSeek V3 ($0.14/$0.28 MTok - ultra cheap)
   {
     id: "deepseek/deepseek-v3.2-speciale",
@@ -1668,7 +1709,7 @@ const AVAILABLE_MODELS = [
  * Default model assignments per position
  */
 const DEFAULT_MODEL_CONFIG: Record<string, string> = {
-  planner: "moonshotai/kimi-k2-thinking",
+  planner: "claude-haiku-4-5-20250514",
   coder_xs_low: "deepseek/deepseek-v3.2-speciale",
   coder_xs_medium: "gpt-5.2-medium",
   coder_xs_high: "gpt-5.2-high",
@@ -1678,9 +1719,9 @@ const DEFAULT_MODEL_CONFIG: Record<string, string> = {
   coder_m_low: "gpt-5.2-medium",
   coder_m_medium: "gpt-5.2-high",
   coder_m_high: "claude-opus-4-5-20251101",
-  fixer: "moonshotai/kimi-k2-thinking",
+  fixer: "claude-haiku-4-5-20250514",
   reviewer: "deepseek/deepseek-v3.2-speciale",
-  escalation_1: "moonshotai/kimi-k2-thinking",
+  escalation_1: "claude-haiku-4-5-20250514",
   escalation_2: "claude-opus-4-5-20251101",
 };
 
@@ -2838,10 +2879,11 @@ route("POST", "/api/jobs/:id/cancel", async (req) => {
 const TOKEN_COSTS: Record<string, { input: number; output: number }> = {
   "claude-opus-4-5-20251101": { input: 5, output: 25 },
   "claude-sonnet-4-5-20250929": { input: 3, output: 15 },
-  "claude-haiku-4-5-20251015": { input: 0.8, output: 4 },
+  "claude-haiku-4-5-20251015": { input: 1, output: 5 }, // Fixed: was 0.8/4, correct is 1/5
+  "claude-haiku-4-5-20250514": { input: 1, output: 5 }, // Added: same pricing as newer version
   "claude-sonnet-4-20250514": { input: 3, output: 15 },
   "claude-3-5-sonnet-20241022": { input: 3, output: 15 },
-  "claude-3-5-haiku-20241022": { input: 0.8, output: 4 },
+  "claude-3-5-haiku-20241022": { input: 1, output: 5 }, // Fixed: was 0.8/4, correct is 1/5
   "gpt-4o": { input: 2.5, output: 10 },
   "gpt-4o-mini": { input: 0.15, output: 0.6 },
 };
@@ -4641,6 +4683,508 @@ route("POST", "/api/webhooks/cleanup", async (req) => {
     message: `Deleted ${count} completed webhook events older than ${days} days`,
     count,
   });
+});
+
+// ============================================
+// Repositories API
+// ============================================
+
+const github = new GitHubClient();
+
+/**
+ * GET /api/repositories - List all linked repositories
+ */
+route("GET", "/api/repositories", async () => {
+  try {
+    const repositories = await db.getRepositories();
+    return Response.json({ repositories, count: repositories.length });
+  } catch (error) {
+    console.error("[API] Failed to get repositories:", error);
+    return Response.json(
+      { error: "Failed to fetch repositories" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/repositories - Link a new repository
+ * Body: { fullName: string } (format: "owner/repo")
+ */
+route("POST", "/api/repositories", async (req) => {
+  try {
+    const body = await req.json();
+    const { fullName } = body as { fullName: string };
+
+    if (!fullName || !isValidRepo(fullName)) {
+      return Response.json(
+        { error: "Invalid repository format. Expected: owner/repo" },
+        { status: 400 },
+      );
+    }
+
+    // Validate repository exists on GitHub
+    const repoData = await github.validateRepository(fullName);
+    if (!repoData) {
+      return Response.json(
+        { error: "Repository not found or not accessible" },
+        { status: 404 },
+      );
+    }
+
+    // Check if already linked
+    const existing = await db.getRepositoryByName(
+      repoData.owner,
+      repoData.repo,
+    );
+    if (existing) {
+      return Response.json(
+        { error: "Repository already linked", repository: existing },
+        { status: 409 },
+      );
+    }
+
+    // Create repository record
+    const repository = await db.createRepository(
+      repoData.owner,
+      repoData.repo,
+      repoData.description || undefined,
+      repoData.html_url,
+      repoData.private,
+    );
+
+    console.log(`[API] Linked repository: ${fullName}`);
+
+    return Response.json({
+      ok: true,
+      message: `Repository ${fullName} linked successfully`,
+      repository,
+    });
+  } catch (error) {
+    console.error("[API] Failed to create repository:", error);
+    return Response.json(
+      { error: "Failed to link repository", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/repositories/:id - Get a specific repository
+ */
+route("GET", "/api/repositories/:id", async (req) => {
+  const url = new URL(req.url);
+  const id = url.pathname.split("/").pop()!;
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid repository ID" }, { status: 400 });
+  }
+
+  try {
+    const repository = await db.getRepository(id);
+    if (!repository) {
+      return Response.json({ error: "Repository not found" }, { status: 404 });
+    }
+    return Response.json({ repository });
+  } catch (error) {
+    console.error("[API] Failed to get repository:", error);
+    return Response.json(
+      { error: "Failed to fetch repository" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * DELETE /api/repositories/:id - Remove a linked repository
+ */
+route("DELETE", "/api/repositories/:id", async (req) => {
+  const url = new URL(req.url);
+  const id = url.pathname.split("/").pop()!;
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid repository ID" }, { status: 400 });
+  }
+
+  try {
+    const repository = await db.getRepository(id);
+    if (!repository) {
+      return Response.json({ error: "Repository not found" }, { status: 404 });
+    }
+
+    await db.deleteRepository(id);
+
+    console.log(`[API] Unlinked repository: ${repository.full_name}`);
+
+    return Response.json({
+      ok: true,
+      message: `Repository ${repository.full_name} unlinked successfully`,
+    });
+  } catch (error) {
+    console.error("[API] Failed to delete repository:", error);
+    return Response.json(
+      { error: "Failed to unlink repository", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/repositories/sync - Sync repositories from existing tasks
+ */
+route("POST", "/api/repositories/sync", async () => {
+  try {
+    const count = await db.syncRepositoriesFromTasks();
+    console.log(`[API] Synced ${count} repositories from tasks`);
+
+    return Response.json({
+      ok: true,
+      synced: count,
+      message:
+        count > 0
+          ? `Added ${count} repositories from existing tasks`
+          : "All repositories already synced",
+    });
+  } catch (error) {
+    console.error("[API] Failed to sync repositories:", error);
+    return Response.json(
+      { error: "Failed to sync repositories", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/issues - Create a GitHub issue and optionally trigger AutoDev
+ */
+route("POST", "/api/issues", async (req) => {
+  try {
+    const body = await req.json();
+    const {
+      repo,
+      title,
+      body: issueBody,
+      labels = [],
+      autoProcess = true,
+    } = body;
+
+    if (!repo || !title) {
+      return Response.json(
+        { error: "Missing required fields: repo, title" },
+        { status: 400 },
+      );
+    }
+
+    // Validate repo format
+    if (!repo.includes("/")) {
+      return Response.json(
+        { error: "Invalid repo format. Use owner/repo" },
+        { status: 400 },
+      );
+    }
+
+    const [owner, repoName] = repo.split("/");
+
+    // Create GitHub issue
+    const issue = await github.createIssue(owner, repoName, {
+      title,
+      body: issueBody || "",
+      labels: autoProcess ? [...labels, "auto-dev"] : labels,
+    });
+
+    console.log(`[API] Created GitHub issue #${issue.number} in ${repo}`);
+
+    // If autoProcess is true and auto-dev label is added, create a task
+    let task = null;
+    if (autoProcess) {
+      task = await db.createTask({
+        githubRepo: repo,
+        githubIssueNumber: issue.number,
+        githubIssueTitle: title,
+        githubIssueBody: issueBody || "",
+        status: "NEW",
+        attemptCount: 0,
+        maxAttempts: 3,
+        isOrchestrated: false,
+      });
+      console.log(`[API] Created task ${task.id} for issue #${issue.number}`);
+    }
+
+    return Response.json({
+      ok: true,
+      issue: {
+        number: issue.number,
+        url: issue.html_url,
+        title: issue.title,
+      },
+      task: task ? { id: task.id, status: task.status } : null,
+    });
+  } catch (error) {
+    console.error("[API] Failed to create issue:", error);
+    return Response.json(
+      { error: "Failed to create issue", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/issues/:repo - List GitHub issues for a repo
+ */
+route("GET", "/api/issues/:owner/:repo", async (req) => {
+  const url = new URL(req.url);
+  // Extract repo from path: /api/issues/owner/repo -> owner/repo
+  const pathParts = url.pathname.replace("/api/issues/", "").split("/");
+
+  if (pathParts.length < 2) {
+    return Response.json(
+      { error: "Invalid repo format. Use /api/issues/owner/repo" },
+      { status: 400 },
+    );
+  }
+
+  const owner = pathParts[0];
+  const repo = pathParts[1];
+  const state = url.searchParams.get("state") || "open";
+  const labels = url.searchParams.get("labels") || undefined;
+
+  try {
+    const issues = await github.listIssues(owner, repo, {
+      state: state as "open" | "closed" | "all",
+      labels,
+    });
+
+    return Response.json({
+      issues: issues.map((issue: any) => ({
+        number: issue.number,
+        title: issue.title,
+        body: issue.body,
+        state: issue.state,
+        labels: issue.labels.map((l: any) => l.name),
+        url: issue.html_url,
+        created_at: issue.created_at,
+        updated_at: issue.updated_at,
+      })),
+      count: issues.length,
+    });
+  } catch (error) {
+    console.error("[API] Failed to list issues:", error);
+    return Response.json(
+      { error: "Failed to list issues", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/tasks/import - Import GitHub issues as tasks
+ */
+route("POST", "/api/tasks/import", async (req) => {
+  try {
+    const body = await req.json();
+    const { repo, issues } = body;
+
+    if (!repo || !issues || !Array.isArray(issues) || issues.length === 0) {
+      return Response.json(
+        {
+          error:
+            "Missing required fields: repo, issues (array of issue numbers)",
+        },
+        { status: 400 },
+      );
+    }
+
+    const [owner, repoName] = repo.split("/");
+    if (!owner || !repoName) {
+      return Response.json(
+        { error: "Invalid repo format. Use owner/repo" },
+        { status: 400 },
+      );
+    }
+
+    const results: { issue: number; taskId?: string; error?: string }[] = [];
+    let imported = 0;
+    let skipped = 0;
+
+    for (const issueNumber of issues) {
+      try {
+        // Check if task already exists for this issue
+        const existingTask = await db.getTaskByIssue(repo, issueNumber);
+        if (existingTask) {
+          results.push({
+            issue: issueNumber,
+            error: "Already imported",
+            taskId: existingTask.id,
+          });
+          skipped++;
+          continue;
+        }
+
+        // Fetch issue details from GitHub
+        const issueData = await github.getIssue(owner, repoName, issueNumber);
+
+        // Create task
+        const task = await db.createTask({
+          githubRepo: repo,
+          githubIssueNumber: issueNumber,
+          githubIssueTitle: issueData.title,
+          githubIssueBody: issueData.body || "",
+          status: "NEW",
+          attemptCount: 0,
+          maxAttempts: 3,
+          isOrchestrated: false,
+        });
+
+        results.push({ issue: issueNumber, taskId: task.id });
+        imported++;
+      } catch (e: any) {
+        results.push({
+          issue: issueNumber,
+          error: e.message || "Failed to import",
+        });
+      }
+    }
+
+    console.log(
+      `[API] Imported ${imported} issues, skipped ${skipped} from ${repo}`,
+    );
+
+    return Response.json({
+      ok: true,
+      imported,
+      skipped,
+      total: issues.length,
+      results,
+    });
+  } catch (error) {
+    console.error("[API] Failed to import issues:", error);
+    return Response.json(
+      { error: "Failed to import issues", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+// ============================================
+// Visual Tests (CUA)
+// ============================================
+
+route("POST", "/api/tasks/:id/run-visual-tests", async (req) => {
+  const url = new URL(req.url);
+  const id = url.pathname.split("/")[3];
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid task ID" }, { status: 400 });
+  }
+
+  try {
+    const body = await req.json();
+
+    // Validate input
+    const schema = z.object({
+      appUrl: z.string().url(),
+      testCases: z.array(VisualTestCaseSchema),
+    });
+
+    const input = schema.parse(body);
+
+    // Get task to verify it exists
+    const task = await db.getTask(id);
+    if (!task) {
+      return Response.json({ error: "Task not found" }, { status: 404 });
+    }
+
+    console.log(`[API] Running visual tests for task ${id} on ${input.appUrl}`);
+
+    // Run visual tests
+    const runner = new VisualTestRunner({
+      allowedUrls: [new URL(input.appUrl).hostname],
+    });
+
+    const results = await runner.run(input.appUrl, input.testCases);
+
+    // Store in database
+    await db.createVisualTestRun({
+      id: crypto.randomUUID(),
+      taskId: id,
+      appUrl: input.appUrl,
+      testGoals: input.testCases.map((tc) => tc.name),
+      status: results.status,
+      passRate: results.passRate,
+      totalTests: results.totalTests,
+      passedTests: results.passedTests,
+      failedTests: results.failedTests,
+      results: results.results,
+      screenshots: results.results.flatMap((r) => r.screenshots || []),
+      config: { allowedUrls: [new URL(input.appUrl).hostname] },
+      createdAt: results.startedAt,
+      completedAt: results.completedAt,
+    });
+
+    console.log(
+      `[API] Visual tests completed: ${results.passedTests}/${results.totalTests} passed`,
+    );
+
+    return Response.json(results);
+  } catch (error) {
+    console.error("[API] Failed to run visual tests:", error);
+    if (error instanceof z.ZodError) {
+      return Response.json(
+        { error: "Invalid input", details: error.errors },
+        { status: 400 },
+      );
+    }
+    return Response.json(
+      { error: "Failed to run visual tests", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+route("GET", "/api/tasks/:id/visual-tests", async (req) => {
+  const url = new URL(req.url);
+  const id = url.pathname.split("/")[3];
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid task ID" }, { status: 400 });
+  }
+
+  try {
+    const runs = await db.getVisualTestRunsForTask(id);
+    return Response.json({ runs });
+  } catch (error) {
+    console.error("[API] Failed to get visual test runs:", error);
+    return Response.json(
+      { error: "Failed to get visual test runs", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+route("GET", "/api/visual-tests/:runId", async (req) => {
+  const url = new URL(req.url);
+  const runId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(runId)) {
+    return Response.json({ error: "Invalid run ID" }, { status: 400 });
+  }
+
+  try {
+    const run = await db.getVisualTestRun(runId);
+    if (!run) {
+      return Response.json(
+        { error: "Visual test run not found" },
+        { status: 404 },
+      );
+    }
+    return Response.json(run);
+  } catch (error) {
+    console.error("[API] Failed to get visual test run:", error);
+    return Response.json(
+      { error: "Failed to get visual test run", details: String(error) },
+      { status: 500 },
+    );
+  }
 });
 
 // ============================================

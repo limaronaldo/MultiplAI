@@ -1,10 +1,17 @@
 /**
  * Browser Manager for Playwright Lifecycle
  * Issue #319 - Handles browser/page lifecycle for CUA
+ *
+ * NOTE: Playwright is loaded lazily to avoid crashes when it's not installed.
+ * This allows the API to run without CUA support in environments without browsers.
  */
 
-import { chromium, type Browser, type Page, type BrowserContext } from "playwright";
 import type { CUAConfig } from "./types";
+
+// Lazy-loaded playwright types (actual import happens in start())
+type Browser = import("playwright").Browser;
+type Page = import("playwright").Page;
+type BrowserContext = import("playwright").BrowserContext;
 
 export interface BrowserOptions {
   headless?: boolean;
@@ -26,6 +33,18 @@ export class BrowserManager {
    * Start the browser and navigate to URL
    */
   async start(url: string, options?: BrowserOptions): Promise<Page> {
+    // Lazy-load playwright to avoid crashes when it's not installed
+    let chromium: typeof import("playwright").chromium;
+    try {
+      const playwright = await import("playwright");
+      chromium = playwright.chromium;
+    } catch (error) {
+      throw new Error(
+        "Playwright is not installed. CUA features require playwright. " +
+          "Run: bun add playwright && bunx playwright install chromium",
+      );
+    }
+
     const headless =
       options?.headless ??
       this.config.headless ??

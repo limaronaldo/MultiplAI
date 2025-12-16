@@ -13,8 +13,16 @@ export async function handleAnalyze(
   try {
     const github = new GitHubClient();
 
+    // Parse repo into owner and name
+    const [owner, repo] = args.repo.split("/");
+    if (!owner || !repo) {
+      throw new Error(
+        `Invalid repo format: ${args.repo}. Expected: owner/repo`,
+      );
+    }
+
     // Fetch issue from GitHub
-    const issue = await github.getIssue(args.repo, args.issueNumber);
+    const issue = await github.getIssue(owner, repo, args.issueNumber);
 
     // Get repo context for planner
     const repoContext = await github.getRepoContext(args.repo, []);

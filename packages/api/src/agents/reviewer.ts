@@ -1,5 +1,6 @@
 import { BaseAgent } from "./base";
 import { ReviewerOutput, ReviewerOutputSchema } from "../core/types";
+import { AgentTools } from "../core/tool-generator";
 
 // Default reviewer model - can be overridden via env var
 // Reviewer uses DeepSeek Speciale for fast, cheap code review
@@ -67,10 +68,11 @@ export class ReviewerAgent extends BaseAgent<ReviewerInput, ReviewerOutput> {
   constructor() {
     // DeepSeek Speciale with high reasoning - fast and cheap reviews
     // reasoningEffort is resolved via REASONING_MODEL_CONFIGS in llm.ts
+    // Increased maxTokens from 2048 to 4096 to prevent truncation of detailed reviews
     super({
       model: DEFAULT_REVIEWER_MODEL,
       temperature: 0.1,
-      maxTokens: 2048,
+      maxTokens: 4096,
     });
   }
 
@@ -111,24 +113,16 @@ Review this implementation. Remember:
 - Only REQUEST_CHANGES for real bugs or missing DoD items
 `.trim();
 
-    const response = await this.complete(SYSTEM_PROMPT, userPrompt);
-
-    // Debug: Log response info
-    console.log(`[Reviewer] Response type: ${typeof response}`);
-    console.log(`[Reviewer] Response length: ${String(response).length}`);
-    console.log(
-      `[Reviewer] Response preview: ${String(response).slice(0, 300)}...`,
+    // Use structured output with tool calls - guarantees valid JSON
+    const result = await this.completeStructured<ReviewerOutput>(
+      SYSTEM_PROMPT,
+      userPrompt,
+      AgentTools.reviewerOutput,
     );
 
-    const parsed = this.parseJSON<ReviewerOutput>(response);
-
-    // Debug: Log parsed keys
     console.log(
-      `[Reviewer] Parsed keys: ${Object.keys(parsed || {}).join(", ")}`,
+      `[Reviewer] Structured output verdict: ${result.verdict}, comments: ${result.comments?.length || 0}`,
     );
-
-    // Post-process: downgrade REQUEST_CHANGES to APPROVE if only minor issues
-    const result = ReviewerOutputSchema.parse(parsed);
 
     if (result.verdict === "REQUEST_CHANGES" && input.testsPassed) {
       const hasCriticalIssues = result.comments?.some(

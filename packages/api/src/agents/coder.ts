@@ -16,7 +16,7 @@ interface CoderInput {
   previousDiff?: string;
   lastError?: string;
   // Multi-file coordination (optional)
-  multiFilePlan?: MultiFilePlan;
+  multiFilePlan?: MultiFilePlan | null;
   sharedTypes?: SharedType[];
   // RAG context (optional)
   repoFullName?: string;

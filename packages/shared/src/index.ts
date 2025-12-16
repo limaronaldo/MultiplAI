@@ -132,13 +132,24 @@ export type JobStatus = (typeof JobStatus)[keyof typeof JobStatus];
 
 export interface JobSummary {
   id: string;
-  name: string;
+  name?: string;
+  githubRepo?: string;
   status: JobStatus;
-  total_tasks: number;
-  completed_tasks: number;
-  failed_tasks: number;
-  created_at: string;
-  updated_at: string;
+  total_tasks?: number;
+  completed_tasks?: number;
+  failed_tasks?: number;
+  // New API format
+  summary?: {
+    total: number;
+    completed: number;
+    failed: number;
+    inProgress: number;
+    prsCreated: string[];
+  };
+  created_at?: string;
+  createdAt?: string;
+  updated_at?: string;
+  updatedAt?: string;
 }
 
 export interface JobDetail extends JobSummary {
@@ -200,4 +211,20 @@ export interface CostBreakdown {
   by_model: Record<string, number>;
   by_agent: Record<string, number>;
   task_count: number;
+}
+
+// ============================================
+// Repository Types
+// ============================================
+
+export interface Repository {
+  id: string;
+  owner: string;
+  repo: string;
+  full_name: string; // "owner/repo"
+  description?: string;
+  github_url: string;
+  is_private: boolean;
+  created_at: string;
+  updated_at: string;
 }

@@ -24,8 +24,7 @@ const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   "gpt-5.1-codex-max": { input: 20, output: 80 },
   "gpt-5.1-codex-mini": { input: 5, output: 20 },
 
-  // OpenRouter models
-  "moonshotai/kimi-k2-thinking": { input: 0.6, output: 2.4 },
+  // OpenRouter models (removed Kimi K2, replaced with Claude Haiku 4.5)
   "deepseek/deepseek-v3.2-speciale": { input: 0.27, output: 1.1 },
   "x-ai/grok-code-fast-1": { input: 0.5, output: 2 },
 
@@ -275,7 +274,11 @@ export async function getDailyCosts(
     const inputTokens = parseInt(row.input_tokens) || 0;
     const outputTokens = parseInt(row.output_tokens) || 0;
     const calls = parseInt(row.calls) || 0;
-    const cost = calculateCost(row.model || "default", inputTokens, outputTokens);
+    const cost = calculateCost(
+      row.model || "default",
+      inputTokens,
+      outputTokens,
+    );
 
     if (!dailyMap.has(dateStr)) {
       dailyMap.set(dateStr, {
@@ -331,7 +334,11 @@ export async function getTaskCost(taskId: string): Promise<{
   for (const row of results) {
     const inputTokens = row.input_tokens || 0;
     const outputTokens = row.output_tokens || 0;
-    const cost = calculateCost(row.model || "default", inputTokens, outputTokens);
+    const cost = calculateCost(
+      row.model || "default",
+      inputTokens,
+      outputTokens,
+    );
 
     totalCostUsd += cost;
     totalTokens += inputTokens + outputTokens;
@@ -460,7 +467,8 @@ export async function getCostOptimizations(): Promise<
   `;
 
   const retryRate =
-    parseInt(retryStats.retried_tasks) / parseInt(retryStats.total_tasks || "1");
+    parseInt(retryStats.retried_tasks) /
+    parseInt(retryStats.total_tasks || "1");
   if (retryRate > 0.3) {
     suggestions.push({
       type: "retry-reduction",
@@ -516,7 +524,11 @@ export async function exportCostsCSV(
   const rows = results.map((row: any) => {
     const inputTokens = row.input_tokens || 0;
     const outputTokens = row.output_tokens || 0;
-    const cost = calculateCost(row.model || "default", inputTokens, outputTokens);
+    const cost = calculateCost(
+      row.model || "default",
+      inputTokens,
+      outputTokens,
+    );
 
     return [
       row.created_at.toISOString(),

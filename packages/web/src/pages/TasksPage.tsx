@@ -1,9 +1,17 @@
 import { useEffect, useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
-import { RefreshCw, RotateCcw, Play, XCircle } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import {
+  RefreshCw,
+  RotateCcw,
+  Play,
+  XCircle,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
+  Plus,
+  X,
+} from "lucide-react";
 import type { TaskSummary, TaskStatus } from "@autodev/shared";
-import { FilterBar } from "@/components/tasks/FilterBar";
-import { useTaskFilters } from "@/hooks/useTaskFilters";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { ToastContainer, useToast } from "@/components/common/Toast";
 
@@ -44,6 +52,9 @@ function getStatusColor(status: TaskStatus): string {
 }
 
 type ActionType = "retry" | "rerun" | "cancel";
+type SortField = "issue" | "status" | "title" | "attempts" | "created";
+type SortDirection = "asc" | "desc";
+type StatusFilter = "all" | "active" | "completed" | "failed";
 
 interface PendingAction {
   type: ActionType;
@@ -51,25 +62,45 @@ interface PendingAction {
   taskTitle: string;
 }
 
+interface Repository {
+  id: string;
+  owner: string;
+  repo: string;
+  full_name: string;
+}
+
 export function TasksPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
+  const [repositories, setRepositories] = useState<Repository[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(
     null,
   );
+  const [search, setSearch] = useState("");
+  const [sortField, setSortField] = useState<SortField>("issue");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newIssue, setNewIssue] = useState({
+    repo: "",
+    title: "",
+    body: "",
+    autoProcess: true,
+  });
   const toast = useToast();
 
-  const { filters, setFilters, clearFilters, activeFilterCount } =
-    useTaskFilters();
+  // Get selected repo from URL params
+  const selectedRepo = searchParams.get("repo") || "all";
 
   const fetchTasks = () => {
     setLoading(true);
     fetch("/api/tasks")
       .then((res) => res.json())
       .then((data) => {
-        // API returns { tasks: [...] } wrapper with camelCase keys
         const rawTasks = Array.isArray(data) ? data : data.tasks || [];
         setTasks(rawTasks.map(normalizeTask));
         setLoading(false);
@@ -77,16 +108,61 @@ export function TasksPage() {
       .catch(() => setLoading(false));
   };
 
+  const fetchRepositories = () => {
+    fetch("/api/repositories")
+      .then((res) => res.json())
+      .then((data) => {
+        setRepositories(data.repositories || []);
+      })
+      .catch(() => {});
+  };
+
   useEffect(() => {
     fetchTasks();
+    fetchRepositories();
     const interval = setInterval(fetchTasks, 10000);
     return () => clearInterval(interval);
   }, []);
 
-  // Get unique repos for filter dropdown
-  const repos = useMemo(() => {
-    const repoSet = new Set(tasks.map((t) => t.github_repo));
-    return Array.from(repoSet).sort();
+  // Get unique repos with task counts
+  const repoTabs = useMemo(() => {
+    const repoCounts: Record<string, number> = {};
+    tasks.forEach((t) => {
+      const repo = t.github_repo;
+      repoCounts[repo] = (repoCounts[repo] || 0) + 1;
+    });
+
+    return Object.entries(repoCounts)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([repo, count]) => ({
+        repo,
+        name: repo.split("/")[1] || repo,
+        count,
+      }));
+  }, [tasks]);
+
+  // Status filter counts
+  const statusCounts = useMemo(() => {
+    const counts = { all: 0, active: 0, completed: 0, failed: 0 };
+    tasks.forEach((t) => {
+      counts.all++;
+      if (
+        t.status === "COMPLETED" ||
+        t.status === "PR_CREATED" ||
+        t.status === "WAITING_HUMAN"
+      ) {
+        counts.completed++;
+      } else if (
+        t.status === "FAILED" ||
+        t.status === "TESTS_FAILED" ||
+        t.status === "REVIEW_REJECTED"
+      ) {
+        counts.failed++;
+      } else {
+        counts.active++;
+      }
+    });
+    return counts;
   }, [tasks]);
 
   // Action handlers
@@ -151,6 +227,44 @@ export function TasksPage() {
     }
   };
 
+  const handleCreateIssue = async () => {
+    if (!newIssue.repo || !newIssue.title) {
+      toast.error("Missing fields", "Please select a repo and enter a title");
+      return;
+    }
+
+    setCreating(true);
+    try {
+      const response = await fetch("/api/issues", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newIssue),
+      });
+
+      if (!response.ok) {
+        const error = await response
+          .json()
+          .catch(() => ({ error: "Unknown error" }));
+        throw new Error(error.error || "Failed to create issue");
+      }
+
+      const data = await response.json();
+      toast.success(
+        "Issue created",
+        `#${data.issue.number}: ${data.issue.title.substring(0, 30)}...`,
+      );
+
+      setShowCreateModal(false);
+      setNewIssue({ repo: "", title: "", body: "", autoProcess: true });
+      fetchTasks();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      toast.error("Failed to create issue", message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
   const getConfirmConfig = (type: ActionType) => {
     switch (type) {
       case "retry":
@@ -178,68 +292,210 @@ export function TasksPage() {
     }
   };
 
-  // Apply filters
+  // Handle sorting
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("desc");
+    }
+  };
+
+  const SortIcon = ({ field }: { field: SortField }) => {
+    if (sortField !== field) {
+      return <ChevronsUpDown className="w-3 h-3 opacity-40" />;
+    }
+    return sortDirection === "asc" ? (
+      <ChevronUp className="w-3 h-3" />
+    ) : (
+      <ChevronDown className="w-3 h-3" />
+    );
+  };
+
+  // Filter and sort tasks
   const filteredTasks = useMemo(() => {
-    return tasks.filter((task) => {
-      // Search filter
-      if (filters.search) {
-        const search = filters.search.toLowerCase();
+    let result = tasks;
+
+    // Filter by repo tab
+    if (selectedRepo !== "all") {
+      result = result.filter((t) => t.github_repo === selectedRepo);
+    }
+
+    // Filter by status
+    if (statusFilter !== "all") {
+      result = result.filter((t) => {
+        if (statusFilter === "completed") {
+          return (
+            t.status === "COMPLETED" ||
+            t.status === "PR_CREATED" ||
+            t.status === "WAITING_HUMAN"
+          );
+        } else if (statusFilter === "failed") {
+          return (
+            t.status === "FAILED" ||
+            t.status === "TESTS_FAILED" ||
+            t.status === "REVIEW_REJECTED"
+          );
+        } else if (statusFilter === "active") {
+          return ![
+            "COMPLETED",
+            "FAILED",
+            "TESTS_FAILED",
+            "REVIEW_REJECTED",
+            "PR_CREATED",
+            "WAITING_HUMAN",
+          ].includes(t.status);
+        }
+        return true;
+      });
+    }
+
+    // Search filter
+    if (search) {
+      const searchLower = search.toLowerCase();
+      result = result.filter((task) => {
         const matchesTitle = task.github_issue_title
           .toLowerCase()
-          .includes(search);
-        const matchesRepo = task.github_repo.toLowerCase().includes(search);
+          .includes(searchLower);
+        const matchesRepo = task.github_repo
+          .toLowerCase()
+          .includes(searchLower);
         const matchesIssue = `#${task.github_issue_number}`.includes(search);
-        if (!matchesTitle && !matchesRepo && !matchesIssue) return false;
-      }
+        return matchesTitle || matchesRepo || matchesIssue;
+      });
+    }
 
-      // Status filter
-      if (filters.status.length > 0 && !filters.status.includes(task.status)) {
-        return false;
+    // Sort
+    result = [...result].sort((a, b) => {
+      let comparison = 0;
+      switch (sortField) {
+        case "issue":
+          comparison = a.github_issue_number - b.github_issue_number;
+          break;
+        case "status":
+          comparison = a.status.localeCompare(b.status);
+          break;
+        case "title":
+          comparison = a.github_issue_title.localeCompare(b.github_issue_title);
+          break;
+        case "attempts":
+          comparison = a.attempt_count - b.attempt_count;
+          break;
+        case "created":
+          comparison =
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+          break;
       }
-
-      // Repo filter
-      if (filters.repo && task.github_repo !== filters.repo) {
-        return false;
-      }
-
-      // Date filters
-      if (filters.dateFrom) {
-        const taskDate = new Date(task.created_at);
-        const fromDate = new Date(filters.dateFrom);
-        if (taskDate < fromDate) return false;
-      }
-
-      if (filters.dateTo) {
-        const taskDate = new Date(task.created_at);
-        const toDate = new Date(filters.dateTo);
-        toDate.setHours(23, 59, 59, 999);
-        if (taskDate > toDate) return false;
-      }
-
-      return true;
+      return sortDirection === "asc" ? comparison : -comparison;
     });
-  }, [tasks, filters]);
+
+    return result;
+  }, [tasks, selectedRepo, statusFilter, search, sortField, sortDirection]);
+
+  const setSelectedRepo = (repo: string) => {
+    if (repo === "all") {
+      searchParams.delete("repo");
+    } else {
+      searchParams.set("repo", repo);
+    }
+    setSearchParams(searchParams);
+  };
 
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-white">Tasks</h1>
-        <button
-          onClick={fetchTasks}
-          className="flex items-center gap-2 px-3 py-2 text-sm text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            New Issue
+          </button>
+          <button
+            onClick={fetchTasks}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
-      <FilterBar
-        filters={filters}
-        onFiltersChange={setFilters}
-        onClearFilters={clearFilters}
-        activeFilterCount={activeFilterCount}
-        repos={repos}
-      />
+      {/* Repository Tabs */}
+      <div className="flex items-center gap-1 mb-4 overflow-x-auto pb-2 border-b border-slate-800">
+        <button
+          onClick={() => setSelectedRepo("all")}
+          className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors whitespace-nowrap ${
+            selectedRepo === "all"
+              ? "bg-slate-800 text-white border-b-2 border-blue-500"
+              : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+          }`}
+        >
+          All Repos
+          <span className="text-xs bg-slate-700 px-1.5 py-0.5 rounded-full">
+            {tasks.length}
+          </span>
+        </button>
+        {repoTabs.map(({ repo, name, count }) => (
+          <button
+            key={repo}
+            onClick={() => setSelectedRepo(repo)}
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors whitespace-nowrap ${
+              selectedRepo === repo
+                ? "bg-slate-800 text-white border-b-2 border-blue-500"
+                : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+            }`}
+          >
+            {name}
+            <span className="text-xs bg-slate-700 px-1.5 py-0.5 rounded-full">
+              {count}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Status Filter + Search */}
+      <div className="flex items-center gap-4 mb-4">
+        {/* Status pills */}
+        <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-1">
+          {(["all", "active", "completed", "failed"] as StatusFilter[]).map(
+            (status) => (
+              <button
+                key={status}
+                onClick={() => setStatusFilter(status)}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                  statusFilter === status
+                    ? status === "completed"
+                      ? "bg-emerald-500/20 text-emerald-400"
+                      : status === "failed"
+                        ? "bg-red-500/20 text-red-400"
+                        : status === "active"
+                          ? "bg-blue-500/20 text-blue-400"
+                          : "bg-slate-700 text-white"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                {status.charAt(0).toUpperCase() + status.slice(1)}
+                <span className="ml-1.5 text-xs opacity-70">
+                  {statusCounts[status]}
+                </span>
+              </button>
+            ),
+          )}
+        </div>
+
+        {/* Search */}
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by title, repo, or issue #..."
+          className="flex-1 max-w-md px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+        />
+      </div>
 
       {loading && tasks.length === 0 ? (
         <div className="animate-pulse space-y-2">
@@ -252,20 +508,19 @@ export function TasksPage() {
           {tasks.length === 0 ? (
             <>
               <p className="text-lg">No tasks yet</p>
-              <p className="text-sm mt-2">
-                Tasks will appear when issues are processed
-              </p>
+              <p className="text-sm mt-2">Create an issue to get started</p>
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="mt-4 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+              >
+                <Plus className="w-4 h-4 inline mr-2" />
+                New Issue
+              </button>
             </>
           ) : (
             <>
               <p className="text-lg">No matching tasks</p>
               <p className="text-sm mt-2">Try adjusting your filters</p>
-              <button
-                onClick={clearFilters}
-                className="mt-4 px-4 py-2 text-sm text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 rounded-lg transition-colors"
-              >
-                Clear all filters
-              </button>
             </>
           )}
         </div>
@@ -278,11 +533,41 @@ export function TasksPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-slate-800 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                  <th className="px-4 py-3">Issue</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Title</th>
-                  <th className="px-4 py-3">Repo</th>
-                  <th className="px-4 py-3 text-center">Attempts</th>
+                  <th className="px-4 py-3">
+                    <button
+                      onClick={() => handleSort("issue")}
+                      className="flex items-center gap-1 hover:text-white transition-colors"
+                    >
+                      Issue <SortIcon field="issue" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3">
+                    <button
+                      onClick={() => handleSort("status")}
+                      className="flex items-center gap-1 hover:text-white transition-colors"
+                    >
+                      Status <SortIcon field="status" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3">
+                    <button
+                      onClick={() => handleSort("title")}
+                      className="flex items-center gap-1 hover:text-white transition-colors"
+                    >
+                      Title <SortIcon field="title" />
+                    </button>
+                  </th>
+                  {selectedRepo === "all" && (
+                    <th className="px-4 py-3">Repo</th>
+                  )}
+                  <th className="px-4 py-3 text-center">
+                    <button
+                      onClick={() => handleSort("attempts")}
+                      className="flex items-center gap-1 hover:text-white transition-colors mx-auto"
+                    >
+                      Attempts <SortIcon field="attempts" />
+                    </button>
+                  </th>
                   <th className="px-4 py-3">PR</th>
                   <th className="px-4 py-3">Actions</th>
                 </tr>
@@ -309,9 +594,11 @@ export function TasksPage() {
                     <td className="px-4 py-3 text-sm text-slate-200 max-w-md truncate">
                       {task.github_issue_title}
                     </td>
-                    <td className="px-4 py-3 text-sm text-slate-400 font-mono">
-                      {task.github_repo.split("/")[1] || task.github_repo}
-                    </td>
+                    {selectedRepo === "all" && (
+                      <td className="px-4 py-3 text-sm text-slate-400 font-mono">
+                        {task.github_repo.split("/")[1] || task.github_repo}
+                      </td>
+                    )}
                     <td className="px-4 py-3 text-sm text-slate-400 text-center">
                       {task.attempt_count}/{task.max_attempts}
                     </td>
@@ -394,6 +681,122 @@ export function TasksPage() {
             </table>
           </div>
         </>
+      )}
+
+      {/* Create Issue Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-lg mx-4 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-white">
+                Create New Issue
+              </h2>
+              <button
+                onClick={() => setShowCreateModal(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Repository select */}
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">
+                  Repository
+                </label>
+                <select
+                  value={newIssue.repo}
+                  onChange={(e) =>
+                    setNewIssue({ ...newIssue, repo: e.target.value })
+                  }
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">Select a repository...</option>
+                  {repositories.map((repo) => (
+                    <option key={repo.id} value={repo.full_name}>
+                      {repo.full_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Title */}
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">
+                  Title
+                </label>
+                <input
+                  type="text"
+                  value={newIssue.title}
+                  onChange={(e) =>
+                    setNewIssue({ ...newIssue, title: e.target.value })
+                  }
+                  placeholder="feat: add new feature..."
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              {/* Body */}
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">
+                  Description (optional)
+                </label>
+                <textarea
+                  value={newIssue.body}
+                  onChange={(e) =>
+                    setNewIssue({ ...newIssue, body: e.target.value })
+                  }
+                  placeholder="Describe what needs to be done..."
+                  rows={4}
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 resize-none"
+                />
+              </div>
+
+              {/* Auto-process toggle */}
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={newIssue.autoProcess}
+                  onChange={(e) =>
+                    setNewIssue({ ...newIssue, autoProcess: e.target.checked })
+                  }
+                  className="w-4 h-4 rounded border-slate-600 text-blue-600 focus:ring-blue-500 focus:ring-offset-slate-900"
+                />
+                <span className="text-sm text-slate-300">
+                  Auto-process with AutoDev (adds{" "}
+                  <code className="text-blue-400">auto-dev</code> label)
+                </span>
+              </label>
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setShowCreateModal(false)}
+                className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateIssue}
+                disabled={creating || !newIssue.repo || !newIssue.title}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
+              >
+                {creating ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Creating...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4" />
+                    Create Issue
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Confirm Dialog */}

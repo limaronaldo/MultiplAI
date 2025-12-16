@@ -26,6 +26,13 @@ COPY packages/api/prompts ./packages/api/prompts
 # Production stage - use bun for runtime
 FROM oven/bun:1-slim
 
+# Install Node.js and npm for validation commands (npx tsc)
+RUN apt-get update && apt-get install -y \
+    nodejs \
+    npm \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copy from builder

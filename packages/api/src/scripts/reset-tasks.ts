@@ -26,7 +26,6 @@ async function resetTasks() {
   `;
 
   console.log("Reset tasks:", result);
-  await sql.end();
 }
 
 resetTasks();

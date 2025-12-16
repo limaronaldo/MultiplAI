@@ -21,8 +21,11 @@ export const validTransitions: StatusTransitions = {
   CODING: ["CODING_DONE", "FAILED"],
   CODING_DONE: ["TESTING", "FAILED"],
   TESTING: ["TESTS_PASSED", "TESTS_FAILED", "FAILED"],
-  TESTS_PASSED: ["REVIEWING", "FAILED"],
+  TESTS_PASSED: ["VISUAL_TESTING", "REVIEWING", "FAILED"], // Can go to visual tests or skip to review
   TESTS_FAILED: ["FIXING", "REFLECTING", "FAILED"],
+  VISUAL_TESTING: ["VISUAL_TESTS_PASSED", "VISUAL_TESTS_FAILED", "FAILED"],
+  VISUAL_TESTS_PASSED: ["REVIEWING", "FAILED"],
+  VISUAL_TESTS_FAILED: ["FIXING", "REFLECTING", "FAILED"], // Can fix and retry or reflect
   REFLECTING: ["REPLANNING", "FIXING", "FAILED"],
   REPLANNING: ["CODING", "FAILED"],
   FIXING: ["CODING_DONE", "FAILED"],
@@ -88,8 +91,12 @@ export function getNextAction(status: TaskStatus): TaskAction {
     case "CODING_DONE":
       return "TEST";
     case "TESTS_PASSED":
-      return "REVIEW";
+      return "TEST"; // Will check if visual tests should run
     case "TESTS_FAILED":
+      return "FIX";
+    case "VISUAL_TESTS_PASSED":
+      return "REVIEW";
+    case "VISUAL_TESTS_FAILED":
       return "FIX";
     case "REFLECTING":
     case "REPLANNING":
@@ -125,6 +132,7 @@ export function isWaiting(status: TaskStatus): boolean {
   return (
     status === "WAITING_HUMAN" ||
     status === "TESTING" ||
+    status === "VISUAL_TESTING" ||
     status === "PLANNING" ||
     status === "CODING" ||
     status === "FIXING" ||
