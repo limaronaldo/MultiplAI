@@ -1403,8 +1403,8 @@ New page at `/tasks/:taskId` showing full task details:
 3. **Monitor Dashboard** - Verify widgets loading correctly in production
 
 ### Short-term (This Week)
-4. **Complete Dashboard Charts** - Implement tasks-chart and cost-chart widgets
-5. **Add JobDetailPage** - Similar to TaskDetailPage but for batch jobs
+4. ~~**Complete Dashboard Charts** - Implement tasks-chart and cost-chart widgets~~ ✅ Done
+5. ~~**Add JobDetailPage** - Similar to TaskDetailPage but for batch jobs~~ ✅ Done
 6. **Review PRs** - 68+ PRs still awaiting human review
 
 ### Medium-term (PMVP Phase 2)
@@ -1431,4 +1431,122 @@ cd packages/web && pnpm dev
 
 ---
 
-_Last updated: 2025-12-16 16:00 UTC_
+## Session Update: 2025-12-16 (Continuation)
+
+### Completed This Session
+
+#### 1. Schema Validation Fixes ✅
+
+**Problem:** Tasks failing with "Expected object, received null" at path `["multiFilePlan"]`
+
+**Root Cause:** LLMs return `null` for optional fields instead of omitting them. Zod's `.optional()` only handles `undefined`, not `null`.
+
+**Solution:** Added `.nullable()` to all optional fields in `PlannerOutputSchema`:
+```typescript
+// packages/api/src/core/types.ts
+risks: z.array(z.string()).nullable().optional(),
+multiFilePlan: MultiFilePlanSchema.nullable().optional(),
+commands: z.array(PlannerCommandSchema).nullable().optional(),
+commandOrder: z.enum(["before_diff", "after_diff"]).nullable().optional(),
+```
+
+**Tests Added:** `packages/api/src/core/__tests__/schema-null.test.ts`
+- Tests for individual null fields
+- Test for all nullable fields set to null simultaneously
+
+**Commit:** `f10c255 fix: add nullable() to PlannerOutput optional fields`
+
+**Status:** ✅ Deployed, verified working (tasks #205, #217 passed planning)
+
+---
+
+#### 2. Dashboard Charts ✅
+
+**TasksChartWidget** (`packages/web/src/components/dashboard/widgets/TasksChartWidget.tsx`)
+- Recharts AreaChart showing daily completed/failed tasks
+- Fetches from `/api/stats` endpoint
+- Shows trend indicator (up/down vs yesterday)
+- Gradient fill with emerald (completed) and red (failed) areas
+
+**CostChartWidget** (`packages/web/src/components/dashboard/widgets/CostChartWidget.tsx`)
+- Recharts PieChart showing cost breakdown by model
+- Fetches from `/api/costs/by-model` endpoint
+- Displays total cost prominently
+- Legend showing top 5 models with costs
+
+**Updated Files:**
+- `packages/web/src/components/dashboard/widgets/index.ts` - Added exports
+- `packages/web/src/pages/DashboardPage.tsx` - Integrated widgets
+
+**Commit:** `668217d feat(dashboard): add TasksChartWidget and CostChartWidget`
+
+**Status:** ✅ Deployed to production
+
+---
+
+#### 3. JobDetailPage ✅
+
+**New File:** `packages/web/src/pages/JobDetailPage.tsx`
+
+**Features:**
+- Header with job repo, status badge, task count
+- Progress bar with visual percentage
+- Summary cards: Total, Completed, Failed, In Progress
+- PRs Created section with links
+- Tasks list with status badges, clickable to task detail
+- Event timeline (collapsible) showing all job events
+- Actions: Run (pending), Cancel (running), Refresh
+- Auto-refresh every 5s while job is running
+- Meta info: created/updated timestamps
+
+**Updated Files:**
+- `packages/web/src/App.tsx` - Added import, updated route `/jobs/:jobId`
+
+**Commit:** `4208708 feat(dashboard): add JobDetailPage for job details view`
+
+**Status:** ✅ Deployed to production
+
+---
+
+### Dashboard File Reference
+
+| Widget/Page | File | Description |
+|-------------|------|-------------|
+| TasksChartWidget | `widgets/TasksChartWidget.tsx` | Daily tasks area chart |
+| CostChartWidget | `widgets/CostChartWidget.tsx` | Cost pie chart by model |
+| RecentTasksWidget | `widgets/RecentTasksWidget.tsx` | Last 5 tasks |
+| ActiveJobsWidget | `widgets/ActiveJobsWidget.tsx` | Running batch jobs |
+| PendingReviewWidget | `widgets/PendingReviewWidget.tsx` | Tasks awaiting review |
+| DashboardPage | `pages/DashboardPage.tsx` | Main dashboard with widgets |
+| TaskDetailPage | `pages/TaskDetailPage.tsx` | Individual task view |
+| JobDetailPage | `pages/JobDetailPage.tsx` | Individual job view |
+| JobsPage | `pages/JobsPage.tsx` | Jobs list |
+| TasksPage | `pages/TasksPage.tsx` | Tasks list with filters |
+
+---
+
+### Current System Status (2025-12-16 EOD)
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| API | ✅ Healthy | multiplai.fly.dev |
+| Database | ✅ OK | Neon PostgreSQL (ep-solitary-breeze) |
+| Dashboard | ✅ Complete | Charts + JobDetailPage deployed |
+| Schema | ✅ Fixed | Nullable fields working |
+
+### All Tasks Completed This Session
+
+1. ✅ Fix syntax validation bug - context-aware hunk alignment
+2. ✅ Deploy fixes to production
+3. ✅ Fix reviewer using hardcoded model instead of DB config
+4. ✅ Fix branch reset for retry tasks
+5. ✅ Test Batch Merge - duplicate code issue fixed
+6. ✅ Fix multiFilePlan null validation
+7. ✅ Fix commandOrder/commands/risks null validation
+8. ✅ Retry failed tasks with schema fixes - confirmed working
+9. ✅ Complete Dashboard Charts (TasksChartWidget, CostChartWidget)
+10. ✅ Add JobDetailPage
+
+---
+
+_Last updated: 2025-12-16 18:30 UTC_
