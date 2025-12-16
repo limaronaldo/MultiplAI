@@ -1293,4 +1293,142 @@ tail -100 /tmp/autodev-api.log | grep -E "ERROR|error"
 
 ---
 
-_Last updated: 2025-12-15 22:00 UTC_
+## Session Update: 2025-12-16 16:00 UTC
+
+### Completed This Session
+
+#### 1. Issue #403 - Batch Merge Detection ✅
+Implemented full batch merge detection system to prevent merge conflicts when multiple tasks modify same files.
+
+**New Files:**
+- `packages/api/src/services/batch-detector.ts` - Detects when tasks should be batched
+- `packages/api/src/core/diff-combiner.ts` - Combines multiple diffs into unified diff
+- `packages/api/src/lib/migrations/010_batches.sql` - Database tables (batches, task_batches)
+
+**Modified Files:**
+- `packages/api/src/core/types.ts` - Added `WAITING_BATCH` status, `BATCH_PR_CREATED` event
+- `packages/api/src/core/state-machine.ts` - Updated transitions for batch flow
+- `packages/api/src/core/orchestrator.ts` - Integrated batch merge logic
+- `packages/api/src/integrations/db.ts` - Added batch-related database functions
+- `packages/api/src/integrations/github.ts` - Added `createBranchFromMain` method
+
+**How It Works:**
+1. When task approved for PR, orchestrator checks if other approved tasks target same files
+2. If overlap detected, task enters `WAITING_BATCH` status
+3. Once all related tasks ready, diffs combined into single unified diff
+4. Single PR created closing all related issues
+
+**Status:** ✅ Deployed to production (PR #417 merged)
+
+---
+
+#### 2. Dashboard Improvements ✅
+
+**A. Fixed CreateIssuesButton (Plans Feature)**
+- Removed fake progress simulation (was a TODO)
+- Now uses real API response for success/failure feedback
+- Added proper error handling and dark mode support
+- File: `packages/web/src/components/plans/CreateIssuesButton.tsx`
+
+**B. Integrated Dashboard Widgets System**
+Connected existing `DashboardCustomization` infrastructure to `DashboardPage`:
+
+| Widget | Status | Description |
+|--------|--------|-------------|
+| stats-summary | ✅ Active | Total, completed, failed, in-progress counts |
+| success-rate | ✅ Active | Progress bar with percentage |
+| recent-tasks | ✅ Active | Last 5 tasks with status |
+| active-jobs | ✅ Active | Running/recent batch jobs |
+| pending-review | ✅ Active | Tasks awaiting human review |
+| tasks-chart | 🔲 Placeholder | Tasks over time (coming soon) |
+| cost-chart | 🔲 Placeholder | Cost breakdown (coming soon) |
+| model-comparison | 🔲 Placeholder | Model performance (coming soon) |
+| top-repos | 🔲 Placeholder | Most active repos (coming soon) |
+| processing-time | 🔲 Placeholder | Avg task duration (coming soon) |
+
+**New Files:**
+- `packages/web/src/components/dashboard/widgets/RecentTasksWidget.tsx`
+- `packages/web/src/components/dashboard/widgets/ActiveJobsWidget.tsx`
+- `packages/web/src/components/dashboard/widgets/PendingReviewWidget.tsx`
+- `packages/web/src/components/dashboard/widgets/index.ts`
+
+**Features:**
+- Customize button to toggle widget visibility/size
+- Auto-refresh with configurable interval (10s/30s/1m/5m)
+- Compact mode option
+- Settings persisted to localStorage
+
+**C. Added TaskDetailPage**
+New page at `/tasks/:taskId` showing full task details:
+
+- Issue description
+- Implementation plan (numbered steps)
+- Definition of Done checklist
+- Generated diff (collapsible with syntax highlighting)
+- Error details if failed
+- Task metadata (complexity, effort, attempts, branch, target files)
+- Event timeline with timestamps and duration
+
+**Actions:**
+- Retry button for failed tasks
+- Link to PR if created
+- Refresh button
+
+**File:** `packages/web/src/pages/TaskDetailPage.tsx`
+
+**D. Other Fixes**
+- Added `vite/client` types to `tsconfig.json` for `import.meta.env` support
+- Added `DashboardCustomizationProvider` to `main.tsx`
+
+**Status:** ✅ All deployed to production
+
+---
+
+### Current System Status (2025-12-16)
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| API | ✅ Healthy | multiplai.fly.dev |
+| Database | ✅ OK | Neon PostgreSQL, batches table created |
+| Dashboard | ✅ Enhanced | 10 widgets, task detail page |
+| Batch Merge | ✅ Ready | Awaiting real-world test |
+
+---
+
+## What's Next
+
+### Immediate Priority
+1. **Test Batch Merge Feature** - Create 2+ tasks targeting same file to verify detection
+2. **Process Pending Tasks** - Check for NEW/stuck tasks in queue
+3. **Monitor Dashboard** - Verify widgets loading correctly in production
+
+### Short-term (This Week)
+4. **Complete Dashboard Charts** - Implement tasks-chart and cost-chart widgets
+5. **Add JobDetailPage** - Similar to TaskDetailPage but for batch jobs
+6. **Review PRs** - 68+ PRs still awaiting human review
+
+### Medium-term (PMVP Phase 2)
+7. **AI Super Review Setup** - Enable Copilot, Codex, Jules for PR reviews
+8. **Real-time Updates** - WebSocket integration for live status
+9. **Export Functionality** - CSV/JSON export of tasks/jobs
+10. **Advanced Filtering** - Date range, model, tags filters
+
+### Commands to Continue
+
+```bash
+# Check current task stats
+curl -s https://multiplai.fly.dev/api/stats | jq
+
+# View recent tasks
+curl -s "https://multiplai.fly.dev/api/tasks?limit=10" | jq '.tasks[] | {id, status, title: .github_issue_title}'
+
+# Test batch merge (create 2 issues targeting same file)
+# Then watch for WAITING_BATCH status
+
+# Start local dashboard
+cd packages/web && pnpm dev
+```
+
+---
+
+_Last updated: 2025-12-16 16:00 UTC_
