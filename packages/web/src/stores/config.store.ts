@@ -1,17 +1,7 @@
 import { makeAutoObservable, runInAction } from "mobx";
+import type { ModelConfig, AvailableModel } from "@autodev/shared";
 
-export interface ModelConfig {
-  position: string;
-  modelId: string;
-  updatedAt: string;
-}
-
-export interface AvailableModel {
-  id: string;
-  name: string;
-  provider: string;
-  description?: string;
-}
+export type { ModelConfig, AvailableModel };
 
 export interface AIReviewConfig {
   copilotEnabled: boolean;
@@ -58,7 +48,7 @@ export class ConfigStore {
     try {
       localStorage.setItem(
         AI_REVIEW_STORAGE_KEY,
-        JSON.stringify(this.aiReviewConfig)
+        JSON.stringify(this.aiReviewConfig),
       );
     } catch {
       // Ignore storage errors
@@ -118,7 +108,7 @@ export class ConfigStore {
 
   async updateModelConfig(
     position: string,
-    modelId: string
+    modelId: string,
   ): Promise<{ success: boolean; error?: string }> {
     this.saving = true;
     this.error = null;

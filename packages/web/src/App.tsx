@@ -7,7 +7,7 @@ import { TasksPageMobX as TasksPage } from "@/pages/TasksPageMobX";
 import { TaskDetailPage } from "@/pages/TaskDetailPage";
 import { JobsPage } from "@/pages/JobsPage";
 import { JobDetailPage } from "@/pages/JobDetailPage";
-import { SettingsPage } from "@/pages/SettingsPage";
+import { SettingsPageMobX as SettingsPage } from "@/pages/SettingsPageMobX";
 import { RepositoriesPage } from "@/pages/RepositoriesPage";
 import { ImportPage } from "@/pages/ImportPage";
 import { PlansPage } from "@/pages/PlansPage";
