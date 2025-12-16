@@ -1571,10 +1571,11 @@ export class Orchestrator {
    * Step 5: Review
    */
   private async runReview(task: Task): Promise<Task> {
-    // Accept both TESTS_PASSED and VISUAL_TESTS_PASSED
+    // Accept TESTS_PASSED, VISUAL_TESTS_PASSED, or REVIEWING (for resume)
     if (
       task.status !== "TESTS_PASSED" &&
-      task.status !== "VISUAL_TESTS_PASSED"
+      task.status !== "VISUAL_TESTS_PASSED" &&
+      task.status !== "REVIEWING"
     ) {
       throw createOrchestratorError(
         "INVALID_STATE",
