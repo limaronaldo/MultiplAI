@@ -16,6 +16,7 @@ import type { TaskStatus } from "@autodev/shared";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { ToastContainer, useToast } from "@/components/common/Toast";
 import { AdvancedFilters } from "@/components/filters/AdvancedFilters";
+import { LiveActivityFeed } from "@/components/live";
 import { useTaskStore, type SortField, type StatusFilter } from "@/stores";
 
 function getStatusColor(status: TaskStatus): string {
@@ -50,7 +51,9 @@ export const TasksPageMobX = observer(function TasksPageMobX() {
   const toast = useToast();
 
   // Local UI state
-  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(
+    null,
+  );
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newIssue, setNewIssue] = useState({
@@ -89,7 +92,7 @@ export const TasksPageMobX = observer(function TasksPageMobX() {
     if (result.success) {
       toast.success(
         `Task ${type} initiated`,
-        `#${taskTitle.substring(0, 30)}${taskTitle.length > 30 ? "..." : ""}`
+        `#${taskTitle.substring(0, 30)}${taskTitle.length > 30 ? "..." : ""}`,
       );
     } else {
       toast.error(`Failed to ${type} task`, result.error || "Unknown error");
@@ -108,7 +111,7 @@ export const TasksPageMobX = observer(function TasksPageMobX() {
     if (result.success && result.data) {
       toast.success(
         "Issue created",
-        `#${result.data.number}: ${result.data.title.substring(0, 30)}...`
+        `#${result.data.number}: ${result.data.title.substring(0, 30)}...`,
       );
       setShowCreateModal(false);
       setNewIssue({ repo: "", title: "", body: "", autoProcess: true });
@@ -130,7 +133,8 @@ export const TasksPageMobX = observer(function TasksPageMobX() {
       case "rerun":
         return {
           title: "Rerun Task",
-          message: "This will process the task again from the beginning. Continue?",
+          message:
+            "This will process the task again from the beginning. Continue?",
           confirmLabel: "Rerun",
           variant: "warning" as const,
         };
@@ -191,6 +195,9 @@ export const TasksPageMobX = observer(function TasksPageMobX() {
         </div>
       </div>
 
+      {/* Live Activity Feed */}
+      <LiveActivityFeed maxEvents={5} className="mb-6" />
+
       {/* Repository Tabs */}
       <div className="flex items-center gap-1 mb-4 overflow-x-auto pb-2 border-b border-slate-800">
         <button
@@ -250,7 +257,7 @@ export const TasksPageMobX = observer(function TasksPageMobX() {
                   {statusCounts[status]}
                 </span>
               </button>
-            )
+            ),
           )}
         </div>
 

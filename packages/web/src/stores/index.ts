@@ -5,6 +5,7 @@ export type {
   StatusFilter,
   FilterState,
   Repository,
+  LiveEvent,
 } from "./task.store";
 export { defaultFilterState } from "./task.store";
 

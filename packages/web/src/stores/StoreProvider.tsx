@@ -13,11 +13,12 @@ export function StoreProvider({ children }: StoreProviderProps) {
       setInitialized(true);
     });
 
-    // Start polling for tasks
-    rootStore.taskStore.startPolling();
+    // SSE is started in initialize(), no need to start polling
+    // Polling is available as fallback if needed
 
     return () => {
-      rootStore.taskStore.stopPolling();
+      // Cleanup SSE and polling on unmount
+      rootStore.taskStore.dispose();
     };
   }, []);
 

@@ -1,5 +1,6 @@
 import { makeAutoObservable, runInAction } from "mobx";
 import type { TaskSummary, TaskStatus } from "@autodev/shared";
+import { sseService, type SSEEvent } from "@/services/sse.service";
 
 // Normalize API response from camelCase to snake_case
 function normalizeTask(task: Record<string, unknown>): TaskSummary {
@@ -49,6 +50,16 @@ export interface Repository {
   full_name: string;
 }
 
+export interface LiveEvent {
+  id: string;
+  taskId: string;
+  eventType: string;
+  agent?: string;
+  message: string;
+  timestamp: string;
+  level: "info" | "warn" | "error" | "success";
+}
+
 export class TaskStore {
   // Observable state
   tasks: TaskSummary[] = [];
@@ -56,6 +67,12 @@ export class TaskStore {
   availableModels: string[] = [];
   loading = false;
   actionLoading: string | null = null;
+
+  // SSE / Live updates
+  liveEvents: LiveEvent[] = [];
+  sseConnected = false;
+  private sseUnsubscribe: (() => void) | null = null;
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Filters
   selectedRepo = "all";
@@ -65,7 +82,7 @@ export class TaskStore {
   sortDirection: SortDirection = "desc";
   advancedFilters: FilterState = defaultFilterState;
 
-  // Polling
+  // Polling (fallback when SSE not available)
   private pollInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
@@ -152,19 +169,19 @@ export class TaskStore {
     // Advanced filters - Date Range
     if (this.advancedFilters.dateRange.start) {
       result = result.filter(
-        (t) => new Date(t.created_at) >= this.advancedFilters.dateRange.start!
+        (t) => new Date(t.created_at) >= this.advancedFilters.dateRange.start!,
       );
     }
     if (this.advancedFilters.dateRange.end) {
       result = result.filter(
-        (t) => new Date(t.created_at) <= this.advancedFilters.dateRange.end!
+        (t) => new Date(t.created_at) <= this.advancedFilters.dateRange.end!,
       );
     }
 
     // Advanced filters - Status tags (overrides quick filter if set)
     if (this.advancedFilters.statuses.length > 0) {
       result = result.filter((t) =>
-        this.advancedFilters.statuses.includes(t.status)
+        this.advancedFilters.statuses.includes(t.status),
       );
     }
 
@@ -178,7 +195,9 @@ export class TaskStore {
         const matchesRepo = task.github_repo
           .toLowerCase()
           .includes(searchLower);
-        const matchesIssue = `#${task.github_issue_number}`.includes(this.search);
+        const matchesIssue = `#${task.github_issue_number}`.includes(
+          this.search,
+        );
         return matchesTitle || matchesRepo || matchesIssue;
       });
     }
@@ -272,7 +291,7 @@ export class TaskStore {
       const data = await res.json();
       runInAction(() => {
         this.availableModels = (data.availableModels || []).map(
-          (m: { id: string }) => m.id
+          (m: { id: string }) => m.id,
         );
       });
     } catch {
@@ -282,7 +301,7 @@ export class TaskStore {
 
   async performAction(
     type: "retry" | "rerun" | "cancel",
-    taskId: string
+    taskId: string,
   ): Promise<{ success: boolean; error?: string }> {
     this.actionLoading = taskId;
 
@@ -336,7 +355,11 @@ export class TaskStore {
     title: string;
     body: string;
     autoProcess: boolean;
-  }): Promise<{ success: boolean; data?: { number: number; title: string }; error?: string }> {
+  }): Promise<{
+    success: boolean;
+    data?: { number: number; title: string };
+    error?: string;
+  }> {
     try {
       const response = await fetch("/api/issues", {
         method: "POST",
@@ -356,7 +379,7 @@ export class TaskStore {
 
       return {
         success: true,
-        data: { number: data.issue.number, title: data.issue.title }
+        data: { number: data.issue.number, title: data.issue.title },
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -364,7 +387,76 @@ export class TaskStore {
     }
   }
 
-  // Polling management
+  // SSE Live updates
+  connectSSE(taskId?: string) {
+    this.disconnectSSE();
+
+    this.sseUnsubscribe = sseService.subscribe((event: SSEEvent) => {
+      this.handleSSEEvent(event);
+    });
+
+    sseService.connect(taskId);
+    runInAction(() => {
+      this.sseConnected = true;
+    });
+  }
+
+  disconnectSSE() {
+    if (this.sseUnsubscribe) {
+      this.sseUnsubscribe();
+      this.sseUnsubscribe = null;
+    }
+    sseService.disconnect();
+    runInAction(() => {
+      this.sseConnected = false;
+    });
+  }
+
+  private handleSSEEvent(event: SSEEvent) {
+    if (event.type === "connected") {
+      runInAction(() => {
+        this.sseConnected = true;
+      });
+      return;
+    }
+
+    if (event.type === "event" && event.id && event.taskId) {
+      // Add to live events (keep last 100)
+      runInAction(() => {
+        this.liveEvents = [
+          {
+            id: event.id!,
+            taskId: event.taskId!,
+            eventType: event.eventType || "unknown",
+            agent: event.agent,
+            message: event.message || event.eventType || "Event",
+            timestamp: event.timestamp || new Date().toISOString(),
+            level: event.level || "info",
+          },
+          ...this.liveEvents,
+        ].slice(0, 100);
+      });
+
+      // Debounce task refresh (avoid hammering API on rapid events)
+      this.debouncedRefresh();
+    }
+  }
+
+  private debouncedRefresh() {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+    this.debounceTimer = setTimeout(() => {
+      this.fetchTasks();
+      this.debounceTimer = null;
+    }, 500);
+  }
+
+  clearLiveEvents() {
+    this.liveEvents = [];
+  }
+
+  // Polling management (fallback when SSE not available)
   startPolling(intervalMs = 10000) {
     this.stopPolling();
     this.fetchTasks();
@@ -378,13 +470,25 @@ export class TaskStore {
     }
   }
 
-  // Initialize all data
+  // Initialize all data with SSE
   async initialize() {
     await Promise.all([
       this.fetchTasks(),
       this.fetchRepositories(),
       this.fetchModels(),
     ]);
+
+    // Start SSE for live updates (replaces polling for real-time)
+    this.connectSSE();
+  }
+
+  // Cleanup
+  dispose() {
+    this.stopPolling();
+    this.disconnectSSE();
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
   }
 
   // Helpers
