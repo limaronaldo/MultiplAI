@@ -263,8 +263,9 @@ export class GitHubClient {
   }
 
   /**
-   * Ensures a branch exists, creating it from main if it doesn't.
-   * This handles the case where tasks are reset but branches were deleted.
+   * Ensures a branch exists and is synced with main.
+   * If the branch exists, it's reset to main to ensure a clean slate.
+   * This handles the case where tasks are reset and need fresh branches.
    */
   async ensureBranchExists(
     fullName: string,
@@ -272,13 +273,36 @@ export class GitHubClient {
   ): Promise<void> {
     const { owner, repo } = this.parseRepo(fullName);
 
+    // Get main branch SHA
+    const mainRef = await this.octokit.rest.git.getRef({
+      owner,
+      repo,
+      ref: "heads/main",
+    });
+    const mainSha = mainRef.data.object.sha;
+
     try {
-      await this.octokit.rest.git.getRef({
+      // Check if branch exists
+      const branchRef = await this.octokit.rest.git.getRef({
         owner,
         repo,
         ref: `heads/${branchName}`,
       });
-      // Branch exists
+
+      // Branch exists - reset it to main for a clean slate
+      if (branchRef.data.object.sha !== mainSha) {
+        console.log(
+          `[GitHub] Branch ${branchName} exists but diverged from main, resetting...`,
+        );
+        await this.octokit.rest.git.updateRef({
+          owner,
+          repo,
+          ref: `heads/${branchName}`,
+          sha: mainSha,
+          force: true,
+        });
+        console.log(`[GitHub] Branch ${branchName} reset to main`);
+      }
     } catch (e: any) {
       if (e.status === 404) {
         // Branch doesn't exist, create it from main
