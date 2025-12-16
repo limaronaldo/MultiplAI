@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { NewPlanDialog } from "../components/plans/NewPlanDialog";
+import { PlanStatusBadge } from "../components/plans/PlanStatusBadge";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
@@ -25,18 +27,13 @@ const STATUS_LABELS: Record<PlanStatus, string> = {
   completed: "Completed",
 };
 
-const STATUS_COLORS: Record<string, string> = {
-  draft: "bg-gray-100 text-gray-700",
-  in_progress: "bg-blue-100 text-blue-700",
-  completed: "bg-green-100 text-green-700",
-};
-
 export const PlansPage: React.FC = () => {
   const navigate = useNavigate();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<PlanStatus>("all");
+  const [showNewDialog, setShowNewDialog] = useState(false);
 
   useEffect(() => {
     fetchPlans();
@@ -98,7 +95,10 @@ export const PlansPage: React.FC = () => {
                 Manage your feature implementation plans
               </p>
             </div>
-            <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">
+            <button
+              onClick={() => setShowNewDialog(true)}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+            >
               + New Plan
             </button>
           </div>
@@ -179,11 +179,7 @@ export const PlansPage: React.FC = () => {
               >
                 {/* Status Badge */}
                 <div className="flex items-center justify-between mb-3">
-                  <span
-                    className={`px-3 py-1 rounded-full text-xs font-medium ${STATUS_COLORS[plan.status] || "bg-gray-100 text-gray-700"}`}
-                  >
-                    {plan.status.replace("_", " ")}
-                  </span>
+                  <PlanStatusBadge status={plan.status} size="sm" />
                   <span className="text-xs text-gray-400 dark:text-slate-500">
                     {formatDate(plan.created_at)}
                   </span>
@@ -237,6 +233,16 @@ export const PlansPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* New Plan Dialog */}
+      <NewPlanDialog
+        isOpen={showNewDialog}
+        onClose={() => setShowNewDialog(false)}
+        onCreated={(planId) => {
+          setShowNewDialog(false);
+          navigate(`/plans/${planId}`);
+        }}
+      />
     </div>
   );
 };

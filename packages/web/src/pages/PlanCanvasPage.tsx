@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { MainFeatureCard } from "../components/plans/MainFeatureCard";
 import { IssueCard } from "../components/plans/IssueCard";
 import { CreateIssuesButton } from "../components/plans/CreateIssuesButton";
+import { PlanHeader } from "../components/plans/PlanHeader";
+import { CardEditModal } from "../components/plans/CardEditModal";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
@@ -38,6 +40,8 @@ export const PlanCanvasPage: React.FC<PlanCanvasPageProps> = ({ planId }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [editingCard, setEditingCard] = useState<Card | null>(null);
+  const [showCardModal, setShowCardModal] = useState(false);
 
   useEffect(() => {
     if (planId) {
@@ -110,42 +114,67 @@ export const PlanCanvasPage: React.FC<PlanCanvasPageProps> = ({ planId }) => {
     }
   };
 
-  const handleAddCard = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/api/plans/${planId}/cards`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: "New Issue",
-          description: "",
-          complexity: "M",
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to create card");
-      }
-
-      const data = await response.json();
-      const newCard: Card = {
-        id: data.card.id,
-        title: data.card.title,
-        description: data.card.description || "",
-        complexity: data.card.complexity || "M",
-        status: data.card.status || "draft",
-        estimatedCost: data.card.estimated_cost,
-        sort_order: data.card.sort_order,
-      };
-      setCards([...cards, newCard]);
-    } catch (err) {
-      console.error("Failed to create card:", err);
-      alert("Failed to create card. Please try again.");
-    }
+  const handleAddCard = () => {
+    setEditingCard(null);
+    setShowCardModal(true);
   };
 
   const handleEditCard = (cardId: string) => {
-    console.log("Edit card:", cardId);
-    // TODO: Open edit modal
+    const card = cards.find((c) => c.id === cardId);
+    if (card) {
+      setEditingCard(card);
+      setShowCardModal(true);
+    }
+  };
+
+  const handleCardSaved = (savedCard: {
+    id?: string;
+    title: string;
+    description: string;
+    complexity: "XS" | "S" | "M" | "L" | "XL";
+    estimatedCost?: number;
+  }) => {
+    setShowCardModal(false);
+    if (editingCard && savedCard.id) {
+      // Update existing card
+      setCards(
+        cards.map((c) => (c.id === savedCard.id ? { ...c, ...savedCard } : c)),
+      );
+    } else if (savedCard.id) {
+      // Add new card with default status
+      const newCard: Card = {
+        id: savedCard.id,
+        title: savedCard.title,
+        description: savedCard.description,
+        complexity: savedCard.complexity,
+        status: "draft",
+        estimatedCost: savedCard.estimatedCost,
+      };
+      setCards([...cards, newCard]);
+    }
+    setEditingCard(null);
+  };
+
+  const handleNameChange = async (name: string) => {
+    if (!plan) return;
+
+    try {
+      const response = await fetch(`${API_BASE}/api/plans/${planId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to update plan name");
+      }
+
+      const data = await response.json();
+      setPlan(data.plan);
+    } catch (err) {
+      console.error("Failed to update plan name:", err);
+      alert("Failed to update plan name. Please try again.");
+    }
   };
 
   const handleDeleteCard = async (cardId: string) => {
@@ -232,37 +261,15 @@ export const PlanCanvasPage: React.FC<PlanCanvasPageProps> = ({ planId }) => {
     <div className="flex h-screen bg-gray-50 dark:bg-slate-900">
       {/* Left Panel - Fixed Width */}
       <div className="w-96 bg-white dark:bg-slate-800 border-r border-gray-200 dark:border-slate-700 p-6 flex-shrink-0 overflow-y-auto">
-        {/* Plan Header */}
-        <div className="mb-6">
-          <button
-            onClick={() => navigate("/plans")}
-            className="text-sm text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 mb-2 flex items-center gap-1"
-          >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 19l-7-7 7-7"
-              />
-            </svg>
-            Back to Plans
-          </button>
-          <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
-            {plan.name}
-          </h1>
-          <div className="flex items-center gap-2 mt-2 text-xs text-gray-500 dark:text-slate-500">
-            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
-              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
-            </svg>
-            {plan.github_repo}
-          </div>
-        </div>
+        <PlanHeader
+          planId={planId}
+          name={plan.name}
+          githubRepo={plan.github_repo}
+          status={plan.status}
+          cardCount={cards.length}
+          completedCount={cards.filter((c) => c.status === "done").length}
+          onNameChange={handleNameChange}
+        />
 
         <MainFeatureCard
           description={plan.description || ""}
@@ -322,6 +329,18 @@ export const PlanCanvasPage: React.FC<PlanCanvasPageProps> = ({ planId }) => {
           </button>
         </div>
       </div>
+
+      {/* Card Edit Modal */}
+      <CardEditModal
+        isOpen={showCardModal}
+        planId={planId}
+        card={editingCard}
+        onClose={() => {
+          setShowCardModal(false);
+          setEditingCard(null);
+        }}
+        onSaved={handleCardSaved}
+      />
     </div>
   );
 };
