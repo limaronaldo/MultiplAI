@@ -65,12 +65,15 @@ export interface EvalSummary {
   totalCost: number;
 
   // Model usage
-  modelBreakdown: Record<string, {
-    tasks: number;
-    successRate: number;
-    avgTokens: number;
-    avgCost: number;
-  }>;
+  modelBreakdown: Record<
+    string,
+    {
+      tasks: number;
+      successRate: number;
+      avgTokens: number;
+      avgCost: number;
+    }
+  >;
 }
 
 // ============================================
@@ -159,7 +162,6 @@ export const TOKEN_COSTS: Record<string, { input: number; output: number }> = {
   "gpt-5.1-codex-max": { input: 10, output: 40 },
   "gpt-4o-mini": { input: 0.15, output: 0.6 },
   // OpenRouter
-  "moonshotai/kimi-k2-thinking": { input: 0.6, output: 2.4 },
   "deepseek/deepseek-v3.2-speciale": { input: 0.14, output: 0.28 },
   "x-ai/grok-code-fast-1": { input: 0.3, output: 1.2 },
 };
@@ -170,7 +172,7 @@ export const TOKEN_COSTS: Record<string, { input: number; output: number }> = {
 export function calculateCost(
   model: string,
   inputTokens: number,
-  outputTokens: number
+  outputTokens: number,
 ): number {
   const costs = TOKEN_COSTS[model] || { input: 3, output: 15 }; // Default to Sonnet
   return (inputTokens * costs.input + outputTokens * costs.output) / 1_000_000;

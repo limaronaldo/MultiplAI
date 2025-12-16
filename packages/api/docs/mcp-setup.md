@@ -65,6 +65,37 @@ Example configuration:
 }
 ```
 
+## Zed Editor Configuration
+
+1. Open Zed's settings file (Settings > Open Settings File).
+2. Add a `context_servers` section if it doesn't exist.
+3. Copy the contents from `examples/zed-mcp.json` and update the environment variables and path.
+4. Save and restart Zed.
+
+Example configuration:
+
+```json
+{
+  "context_servers": {
+    "autodev": {
+      "command": "bun",
+      "args": [
+        "run",
+        "/absolute/path/to/autodev/packages/api/src/mcp-server.ts"
+      ],
+      "env": {
+        "DATABASE_URL": "postgresql://...",
+        "GITHUB_TOKEN": "ghp_...",
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "OPENAI_API_KEY": "sk-..."
+      }
+    }
+  }
+}
+```
+
+**Note**: Replace `/absolute/path/to/autodev` with the actual path to your AutoDev installation.
+
 ## Environment Variables
 
 The following environment variables are required for MCP to function:

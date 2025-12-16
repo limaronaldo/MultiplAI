@@ -290,6 +290,98 @@ bun run build
 # Deploy dist/ folder
 ```
 
+### Docker with Visual Testing (CUA)
+
+AutoDev includes Docker support for running with Computer Use Agent (CUA) visual testing capabilities.
+
+#### Prerequisites
+
+- Docker and Docker Compose installed
+- Playwright browsers will be installed automatically in the container
+
+#### Quick Start
+
+```bash
+# 1. Copy environment file
+cp .env.example .env
+# Fill in required variables: GITHUB_TOKEN, ANTHROPIC_API_KEY, DATABASE_URL
+
+# 2. Start with Docker Compose
+docker-compose -f docker-compose.cua.yml up -d
+
+# 3. View logs
+docker-compose -f docker-compose.cua.yml logs -f
+
+# 4. Stop
+docker-compose -f docker-compose.cua.yml down
+```
+
+#### Build Custom Image
+
+```bash
+# Build the CUA-enabled image
+docker build -f Dockerfile.cua -t autodev-cua .
+
+# Run manually
+docker run -d \
+  --name autodev-cua \
+  --shm-size 2gb \
+  -p 3000:3000 \
+  -e DATABASE_URL="postgresql://..." \
+  -e GITHUB_TOKEN="ghp_xxx" \
+  -e ANTHROPIC_API_KEY="sk-ant-xxx" \
+  -v $(pwd)/screenshots:/app/screenshots \
+  autodev-cua
+```
+
+#### Visual Testing Configuration
+
+Enable visual testing in your `.env`:
+
+```env
+# Visual Testing (CUA)
+ENABLE_VISUAL_TESTING=true
+CUA_HEADLESS=true           # Run browsers in headless mode
+CUA_TIMEOUT=60000           # Test timeout in ms (default: 60s)
+CUA_MAX_ACTIONS=30          # Max actions per test (default: 30)
+```
+
+#### Docker Features
+
+- **Playwright Support**: Pre-installed Chromium, Firefox, and WebKit
+- **Shared Memory**: 2GB shm-size for stable browser execution
+- **Volume Mounts**:
+  - `./screenshots` - Visual test screenshots
+  - `./logs` - Application logs
+- **Health Checks**: Automatic health monitoring on `/api/health`
+- **Security**: Runs with seccomp:unconfined for Chrome compatibility
+
+#### Troubleshooting
+
+**Browser crashes:**
+```bash
+# Increase shared memory
+docker-compose -f docker-compose.cua.yml down
+# Edit docker-compose.cua.yml and increase shm_size to 4gb
+docker-compose -f docker-compose.cua.yml up -d
+```
+
+**Missing screenshots:**
+```bash
+# Check volume mount permissions
+ls -la screenshots/
+chmod 755 screenshots/
+```
+
+**Container health issues:**
+```bash
+# Check health status
+docker inspect autodev-cua | grep -A 10 Health
+
+# Check logs
+docker logs autodev-cua --tail 100
+```
+
 ## Tech Stack
 
 **Backend:**

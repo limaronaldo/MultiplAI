@@ -2,12 +2,18 @@ import { BaseAgent } from "./base";
 import { PlannerOutput, PlannerOutputSchema } from "../core/types";
 import { ragService } from "../services/rag";
 import type { CodeChunk } from "../services/rag";
+import { getModelForPositionSync } from "../core/model-selection";
 
-// Default planner model - can be overridden via env var
-// Planner uses Claude Haiku 4.5 for fast, cost-effective planning
-// Cost: ~$0.01/task vs ~$0.50 with gpt-5.1-codex-max (98% savings)
-const DEFAULT_PLANNER_MODEL =
-  process.env.PLANNER_MODEL || "claude-haiku-4-5-20250514";
+// Default planner model - reads from database config, falls back to env var or hardcoded default
+// The model can be configured via the Settings page in the dashboard
+function getPlannerModel(): string {
+  const dbModel = getModelForPositionSync("planner");
+  if (dbModel && dbModel !== "x-ai/grok-code-fast-1") {
+    // x-ai/grok-code-fast-1 is the fallback default in model-selection.ts
+    return dbModel;
+  }
+  return process.env.PLANNER_MODEL || "claude-haiku-4-5-20251001";
+}
 
 interface PlannerInput {
   issueTitle: string;
@@ -161,16 +167,20 @@ Complexity guide:
 
 export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
   constructor() {
-    // Kimi K2 Thinking - agentic reasoning model optimized for planning
-    // No reasoningEffort param needed - Kimi handles reasoning internally
+    // Use a placeholder model - actual model is set at runtime in run()
+    // This allows the DB config to be loaded before we read the model
     super({
-      model: DEFAULT_PLANNER_MODEL,
+      model: "claude-haiku-4-5-20251015", // placeholder, overridden in run()
       temperature: 0.3,
       maxTokens: 4096,
     });
   }
 
   async run(input: PlannerInput): Promise<PlannerOutput> {
+    // Get model from DB config at runtime (after initModelConfig has run)
+    const model = getPlannerModel();
+    this.config.model = model;
+    console.log(`[Planner] Using model: ${model}`);
     let ragSuggestedFiles: string[] = [];
     let ragSnippets = "";
 

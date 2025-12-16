@@ -78,8 +78,7 @@ IMPORTANT: Your entire response must be valid JSON wrapped in a code block. Neve
 
 export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
   constructor(modelOverride?: string) {
-    // Kimi K2 Thinking - agentic reasoning for debugging with tool use
-    // No reasoningEffort param needed - Kimi handles reasoning internally
+    // Claude Opus - best model for debugging complex issues
     super({
       model: modelOverride || DEFAULT_FIXER_MODEL,
       maxTokens: 8192,

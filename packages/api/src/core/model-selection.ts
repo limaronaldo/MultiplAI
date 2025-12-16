@@ -14,14 +14,14 @@
  * 2. Model naming conventions vary (OpenRouter uses "anthropic/...", direct API uses "claude-...")
  * 3. User has specific preferences for cost/quality tradeoffs
  *
- * HYBRID STRATEGY - Updated 2025-12-13:
+ * HYBRID STRATEGY - Updated 2025-12-15:
  * ─────────────────────────────────────────────────
  * Agent                │ Model                    │ Cost/Task │ Provider
  * ─────────────────────┼──────────────────────────┼───────────┼──────────────
- * Planner              │ kimi-k2-thinking         │ ~$0.15    │ OpenRouter (ZDR)
- * Fixer                │ kimi-k2-thinking         │ ~$0.10    │ OpenRouter (ZDR)
- * Reviewer             │ deepseek-speciale-high   │ ~$0.02    │ OpenRouter (ZDR)
- * Escalation 1         │ kimi-k2-thinking         │ ~$0.20    │ OpenRouter (ZDR)
+ * Planner              │ claude-haiku-4-5         │ ~$0.02    │ Anthropic
+ * Fixer                │ claude-opus-4-5          │ ~$0.50    │ Anthropic
+ * Reviewer             │ claude-sonnet-4-5        │ ~$0.10    │ Anthropic
+ * Escalation 1         │ claude-sonnet-4-5        │ ~$0.15    │ Anthropic
  * Escalation 2         │ claude-opus-4-5          │ ~$0.75    │ Anthropic
  *
  * CODER BY COMPLEXITY + EFFORT:
@@ -44,20 +44,16 @@
  * ZDR = Zero Data Retention (Parasail, Nebius, Baseten providers)
  *
  * Escalation Path:
- * - Attempt 0: Effort-based (DeepSeek for low/med, GPT-5.2 for high)
- * - Attempt 1: Kimi K2 Thinking (agentic recovery)
+ * - Attempt 0: Effort-based (DeepSeek/Grok for low/med, Claude for high)
+ * - Attempt 1: Claude Sonnet 4.5 (reliable recovery)
  * - Attempt 2+: Claude Opus 4.5 (final fallback)
- *
- * Cost Savings vs Previous Config:
- * - XS low task: $0.005 vs $0.03 (83% savings)
- * - XS medium task: $0.01 vs $0.08 (87% savings)
- * - Typical XS task: ~$0.30-0.35 vs ~$0.85 (59% savings)
  *
  * Available models:
  * - deepseek-speciale-*: Ultra-cheap reasoning (OpenRouter/Parasail)
- * - kimi-k2-thinking: Agentic reasoning, 262K context (OpenRouter/Nebius)
- * - gpt-5.2-high: Proven coding quality (OpenAI Direct)
- * - claude-opus-4-5: Final fallback (Anthropic Direct)
+ * - x-ai/grok-*: Fast coding models (OpenRouter)
+ * - claude-haiku-4-5: Fast, cheap planning (Anthropic)
+ * - claude-sonnet-4-5: Balanced quality (Anthropic)
+ * - claude-opus-4-5: Final fallback (Anthropic)
  *
  * ═══════════════════════════════════════════════════════════════════════════
  */
@@ -79,23 +75,27 @@ const CACHE_TTL_MS = 60_000; // Refresh every 60 seconds
  * Default model configuration (fallback)
  */
 export const DEFAULT_MODEL_CONFIG: Record<string, string> = {
-  planner: "claude-haiku-4-5-20250514",
-  fixer: "claude-haiku-4-5-20250514",
-  reviewer: "deepseek/deepseek-v3.2-speciale",
-  escalation_1: "claude-haiku-4-5-20250514",
+  // Core agents - all Anthropic Claude
+  planner: "claude-haiku-4-5-20251001",
+  fixer: "claude-opus-4-5-20251101",
+  reviewer: "claude-sonnet-4-5-20250929",
+  escalation_1: "claude-sonnet-4-5-20250929",
   escalation_2: "claude-opus-4-5-20251101",
+  // XS tasks - DeepSeek and Grok (cheap, fast)
   coder_xs_low: "deepseek/deepseek-v3.2-speciale",
-  coder_xs_medium: "gpt-5.2-medium",
-  coder_xs_high: "gpt-5.2-high",
-  coder_xs_default: "gpt-5.2-medium",
-  coder_s_low: "x-ai/grok-code-fast-1",
-  coder_s_medium: "gpt-5.2-low",
-  coder_s_high: "gpt-5.2-medium",
+  coder_xs_medium: "x-ai/grok-code-fast-1",
+  coder_xs_high: "x-ai/grok-3",
+  coder_xs_default: "x-ai/grok-code-fast-1",
+  // S tasks - Grok and Claude
+  coder_s_low: "deepseek/deepseek-v3.2-speciale",
+  coder_s_medium: "x-ai/grok-3",
+  coder_s_high: "anthropic/claude-sonnet-4",
   coder_s_default: "x-ai/grok-code-fast-1",
-  coder_m_low: "gpt-5.2-medium",
-  coder_m_medium: "gpt-5.2-high",
+  // M tasks - Grok and Claude
+  coder_m_low: "x-ai/grok-3",
+  coder_m_medium: "anthropic/claude-sonnet-4",
   coder_m_high: "claude-opus-4-5-20251101",
-  coder_m_default: "gpt-5.2-medium",
+  coder_m_default: "anthropic/claude-sonnet-4",
 };
 
 /**
@@ -316,29 +316,10 @@ export const GLM_CONFIGS = {
 export type GLMConfigName = keyof typeof GLM_CONFIGS;
 
 /**
- * MoonshotAI Kimi K2 Thinking Configuration
- *
- * Moonshot AI's most advanced open reasoning model. Trillion-parameter MoE
- * architecture (32B active per forward pass) optimized for agentic,
- * long-horizon reasoning with persistent step-by-step thought and tool use.
- *
- * Specs:
- * - Context: 262K tokens (256K usable)
- * - Max Output: 163-262K tokens
- * - Input: $0.45-0.60/M tokens
- * - Output: $2.35-2.50/M tokens
- * - Providers: Nebius Token Factory (NL), Baseten (US)
- * - Data Policy: Zero retention, no prompt training
- * - Latency: 0.37-0.49s, Throughput: 97-112tps
- *
- * Capabilities:
- * - Stable multi-agent behavior through 200-300 tool calls
- * - Benchmarks: HLE, BrowseComp, SWE-Multilingual, LiveCodeBench
- * - Autonomous research, coding, and writing without drift
- *
- * Ideal for: Complex agentic tasks, multi-step reasoning, tool-heavy workflows
- *
- * NOTE: Kimi K2 Thinking removed - replaced with Claude Haiku 4.5 for better performance and cost
+ * NOTE: Kimi K2 was removed on 2025-12-15 due to:
+ * - JSON parsing issues (truncated responses)
+ * - Unreliable output format
+ * - Replaced with Claude models for better reliability
  */
 
 /**
@@ -364,11 +345,11 @@ export type ReasoningModelConfigName = keyof typeof REASONING_MODEL_CONFIGS;
 /**
  * Model tiers from cheapest to most expensive
  *
- * Hybrid Strategy (Option C) - Optimized for cost/performance:
- * - XS low/medium: DeepSeek Speciale (ultra-cheap, ~$0.005-0.01)
- * - XS high, S, M: GPT-5.2 (proven quality, ~$0.15)
- * - Escalation 1: Kimi K2 Thinking (agentic recovery, ~$0.20)
- * - Escalation 2: Claude Opus 4.5 (final fallback, ~$0.75)
+ * Strategy - Anthropic + OpenRouter (no OpenAI):
+ * - XS low/medium: DeepSeek/Grok (ultra-cheap, ~$0.005-0.02)
+ * - XS high, S, M: Grok/Claude Sonnet (quality, ~$0.10-0.15)
+ * - Escalation 1: Claude Sonnet 4.5 (reliable recovery, ~$0.15)
+ * - Escalation 2: Claude Opus 4.5 (final fallback, ~$0.50)
  *
  * ⚠️ DO NOT MODIFY without user approval - see header comment
  */
@@ -381,34 +362,33 @@ export const MODEL_TIERS: ModelTier[] = [
   },
   {
     name: "fast",
-    models: ["deepseek-speciale-low"],
-    description: "DeepSeek Speciale (low). Quick with light reasoning.",
-    avgCostPerTask: 0.005,
-  },
-  {
-    name: "medium",
-    models: ["deepseek-speciale-medium"],
-    description: "DeepSeek Speciale (medium). Balanced speed/quality.",
+    models: ["x-ai/grok-code-fast-1"],
+    description: "Grok Code Fast. Quick coding with good quality.",
     avgCostPerTask: 0.01,
   },
   {
+    name: "medium",
+    models: ["x-ai/grok-3"],
+    description: "Grok 3. Balanced speed/quality for most tasks.",
+    avgCostPerTask: 0.05,
+  },
+  {
     name: "standard",
-    models: ["gpt-5.2-high"],
-    description: "GPT-5.2 (reasoning: high). Thorough reasoning for coding.",
-    avgCostPerTask: 0.15,
+    models: ["claude-sonnet-4-5-20250929"],
+    description: "Claude Sonnet 4.5. Reliable coding quality.",
+    avgCostPerTask: 0.1,
   },
   {
     name: "thinking",
-    models: ["kimi-k2-thinking"],
-    description:
-      "Kimi K2 Thinking. Agentic reasoning for failed task recovery.",
-    avgCostPerTask: 0.03,
+    models: ["claude-sonnet-4-5-20250929"],
+    description: "Claude Sonnet 4.5. Reliable recovery for failed tasks.",
+    avgCostPerTask: 0.15,
   },
   {
     name: "fallback",
     models: ["claude-opus-4-5-20251101"],
     description: "Claude Opus 4.5. Final fallback when all else fails.",
-    avgCostPerTask: 0.2,
+    avgCostPerTask: 0.5,
   },
 ];
 
@@ -445,7 +425,7 @@ export function selectModels(context: SelectionContext): ModelSelection {
     };
   }
 
-  // M tasks: effort-based → Kimi K2 → Claude Opus
+  // M tasks: effort-based → Claude Sonnet → Claude Opus
   if (complexity === "M") {
     if (attemptCount >= 2) {
       return {
@@ -458,15 +438,15 @@ export function selectModels(context: SelectionContext): ModelSelection {
     if (attemptCount >= 1) {
       return {
         tier: "thinking",
-        models: ["kimi-k2-thinking"],
+        models: ["claude-sonnet-4-5-20250929"],
         useMultiAgent: false,
-        reason: "M complexity with 1 failure → Kimi K2 (agentic recovery)",
+        reason: "M complexity with 1 failure → Claude Sonnet 4.5 (recovery)",
       };
     }
     return selectForM(effort);
   }
 
-  // S tasks: effort-based → Kimi K2 → Claude Opus
+  // S tasks: effort-based → Claude Sonnet → Claude Opus
   if (complexity === "S") {
     if (attemptCount >= 2) {
       return {
@@ -479,9 +459,9 @@ export function selectModels(context: SelectionContext): ModelSelection {
     if (attemptCount >= 1) {
       return {
         tier: "thinking",
-        models: ["kimi-k2-thinking"],
+        models: ["claude-sonnet-4-5-20250929"],
         useMultiAgent: false,
-        reason: "S complexity with 1 failure → Kimi K2 (agentic recovery)",
+        reason: "S complexity with 1 failure → Claude Sonnet 4.5 (recovery)",
       };
     }
     return selectForS(effort);

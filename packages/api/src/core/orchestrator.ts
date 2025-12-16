@@ -178,6 +178,11 @@ export class Orchestrator {
         case "ORCHESTRATE":
           return await this.runOrchestration(task);
         case "TEST":
+          // Handle both regular tests and visual tests
+          if (task.status === "TESTS_PASSED") {
+            // After regular tests pass, check if we should run visual tests
+            return await this.runVisualTests(task);
+          }
           return await this.runTests(task);
         case "FIX":
           return await this.runFix(task);
@@ -1227,15 +1232,154 @@ export class Orchestrator {
   }
 
   /**
+   * Step 3.5: Visual Testing (Issue #245)
+   * Runs visual tests using CUA after unit tests pass
+   */
+  private async runVisualTests(task: Task): Promise<Task> {
+    this.validateTaskState(
+      task,
+      "TESTS_PASSED",
+      ["branchName"],
+      "Cannot run visual tests",
+    );
+
+    const logger = this.getLogger(task);
+
+    // Check if visual testing is configured for this task
+    if (!task.visualTestConfig || !task.visualTestConfig.enabled) {
+      logger.info("Visual testing not configured, skipping to review");
+      return this.updateStatus(task, "REVIEWING");
+    }
+
+    task = this.updateStatus(task, "VISUAL_TESTING");
+    await this.logEvent(task, "VISUAL_TESTING_STARTED", "visual-test-runner");
+
+    try {
+      const { VisualTestRunner } =
+        await import("../agents/computer-use/visual-test-runner");
+
+      // Config is already validated above (enabled check)
+      const config = task.visualTestConfig!;
+
+      const runner = new VisualTestRunner({
+        allowedUrls: config.allowedUrls,
+        headless: config.headless ?? true,
+        timeout: config.timeout ?? 60000,
+        maxActions: config.maxActions ?? 30,
+      });
+
+      logger.info(
+        `Running ${config.testCases.length} visual tests on ${config.appUrl}`,
+      );
+
+      const results = await runner.run(config.appUrl, config.testCases);
+
+      // Store results in database
+      await db.createVisualTestRun({
+        id: results.runId,
+        taskId: task.id,
+        appUrl: results.appUrl,
+        testGoals: config.testCases.map((tc) => tc.name),
+        status: results.status,
+        passRate: results.passRate,
+        totalTests: results.totalTests,
+        passedTests: results.passedTests,
+        failedTests: results.failedTests,
+        results: results.results,
+        screenshots: results.results.flatMap((r) => r.screenshots || []),
+        config: {
+          allowedUrls: config.allowedUrls,
+          headless: config.headless,
+          timeout: config.timeout,
+        },
+        createdAt: results.startedAt,
+        completedAt: results.completedAt,
+      });
+
+      task.visualTestRunId = results.runId;
+
+      // Log completion
+      await this.logEvent(
+        task,
+        "VISUAL_TESTING_COMPLETED",
+        "visual-test-runner",
+        {
+          runId: results.runId,
+          status: results.status,
+          passRate: results.passRate,
+          passedTests: results.passedTests,
+          failedTests: results.failedTests,
+          totalTests: results.totalTests,
+        },
+      );
+
+      if (results.status === "passed") {
+        logger.info(
+          `Visual tests passed: ${results.passedTests}/${results.totalTests}`,
+        );
+        return this.updateStatus(task, "VISUAL_TESTS_PASSED");
+      } else {
+        logger.warn(
+          `Visual tests failed: ${results.failedTests}/${results.totalTests} failed`,
+        );
+        task.lastError = `Visual tests failed: ${results.failedTests} out of ${results.totalTests} tests failed`;
+        task.attemptCount++;
+
+        if (task.attemptCount >= task.maxAttempts) {
+          return this.failTask(
+            task,
+            createOrchestratorError(
+              "MAX_ATTEMPTS_REACHED",
+              `Visual tests failed after ${task.maxAttempts} attempts`,
+              task.id,
+              false,
+            ),
+          );
+        }
+
+        return this.updateStatus(task, "VISUAL_TESTS_FAILED");
+      }
+    } catch (error) {
+      logger.error(
+        `Visual testing error: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+
+      await this.logEvent(task, "VISUAL_TESTING_ERROR", "visual-test-runner", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      // If visual tests fail with error, we can either fail the task or skip to review
+      // For now, we'll skip to review on infrastructure errors
+      logger.warn("Visual testing infrastructure error, skipping to review");
+      return this.updateStatus(task, "REVIEWING");
+    }
+  }
+
+  /**
    * Step 4: Fix (quando testes falham)
    */
   private async runFix(task: Task): Promise<Task> {
-    this.validateTaskState(
-      task,
-      "TESTS_FAILED",
-      ["branchName", "lastError"],
-      "Cannot run fix",
-    );
+    // Accept both TESTS_FAILED and VISUAL_TESTS_FAILED
+    if (
+      task.status !== "TESTS_FAILED" &&
+      task.status !== "VISUAL_TESTS_FAILED"
+    ) {
+      throw createOrchestratorError(
+        "INVALID_STATE",
+        `Cannot run fix from status: ${task.status}`,
+        task.id,
+        false,
+      );
+    }
+
+    if (!task.branchName || !task.lastError) {
+      throw createOrchestratorError(
+        "MISSING_DATA",
+        "Cannot run fix: missing branchName or lastError",
+        task.id,
+        false,
+      );
+    }
 
     const logger = this.getLogger(task);
 
@@ -1425,12 +1569,27 @@ export class Orchestrator {
    * Step 5: Review
    */
   private async runReview(task: Task): Promise<Task> {
-    this.validateTaskState(
-      task,
-      "TESTS_PASSED",
-      ["branchName", "currentDiff"],
-      "Cannot run review",
-    );
+    // Accept both TESTS_PASSED and VISUAL_TESTS_PASSED
+    if (
+      task.status !== "TESTS_PASSED" &&
+      task.status !== "VISUAL_TESTS_PASSED"
+    ) {
+      throw createOrchestratorError(
+        "INVALID_STATE",
+        `Cannot run review from status: ${task.status}`,
+        task.id,
+        false,
+      );
+    }
+
+    if (!task.branchName || !task.currentDiff) {
+      throw createOrchestratorError(
+        "MISSING_DATA",
+        "Cannot run review: missing branchName or currentDiff",
+        task.id,
+        false,
+      );
+    }
 
     task = this.updateStatus(task, "REVIEWING");
 

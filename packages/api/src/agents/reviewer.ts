@@ -1,5 +1,6 @@
 import { BaseAgent } from "./base";
 import { ReviewerOutput, ReviewerOutputSchema } from "../core/types";
+import { AgentTools } from "../core/tool-generator";
 
 // Default reviewer model - can be overridden via env var
 // Reviewer uses DeepSeek Speciale for fast, cheap code review
@@ -112,115 +113,16 @@ Review this implementation. Remember:
 - Only REQUEST_CHANGES for real bugs or missing DoD items
 `.trim();
 
-    const response = await this.complete(SYSTEM_PROMPT, userPrompt);
-
-    // Debug: Log response info
-    console.log(`[Reviewer] Response type: ${typeof response}`);
-    console.log(`[Reviewer] Response length: ${String(response).length}`);
-    console.log(
-      `[Reviewer] Response preview: ${String(response).slice(0, 300)}...`,
+    // Use structured output with tool calls - guarantees valid JSON
+    const result = await this.completeStructured<ReviewerOutput>(
+      SYSTEM_PROMPT,
+      userPrompt,
+      AgentTools.reviewerOutput,
     );
 
-    let parsed: ReviewerOutput;
-
-    try {
-      parsed = this.parseJSON<ReviewerOutput>(response);
-
-      // Debug: Log parsed keys
-      console.log(
-        `[Reviewer] Parsed keys: ${Object.keys(parsed || {}).join(", ")}`,
-      );
-    } catch (parseError) {
-      // JSON parse failed - try to extract verdict from text
-      console.error(
-        "[Reviewer] JSON parse failed, attempting text extraction:",
-        parseError,
-      );
-      console.error(
-        "[Reviewer] Response preview:",
-        String(response).slice(0, 500),
-      );
-
-      const responseStr = String(response);
-      const verdictMatch = responseStr.match(
-        /"verdict"\s*:\s*"(APPROVE|REQUEST_CHANGES|NEEDS_DISCUSSION)"/i,
-      );
-
-      // Try to extract summary even if truncated
-      // Match: "summary": "..." where ... may be incomplete
-      let summaryMatch = responseStr.match(/"summary"\s*:\s*"([^"]*)/);
-      let extractedSummary = summaryMatch
-        ? summaryMatch[1]
-        : "Review completed (JSON parse failed)";
-
-      // If summary was truncated, add indicator
-      if (summaryMatch && !summaryMatch[1].endsWith('"')) {
-        extractedSummary += "... (truncated)";
-      }
-
-      if (verdictMatch) {
-        // We can at least extract the verdict - create a minimal valid response
-        const extractedVerdict = verdictMatch[1].toUpperCase() as
-          | "APPROVE"
-          | "REQUEST_CHANGES"
-          | "NEEDS_DISCUSSION";
-
-        console.log(
-          `[Reviewer] Extracted verdict: ${extractedVerdict}, summary: ${extractedSummary}`,
-        );
-
-        parsed = {
-          verdict: extractedVerdict,
-          summary: extractedSummary,
-          comments: [],
-        };
-
-        // If tests passed and we extracted APPROVE, trust it
-        if (extractedVerdict === "APPROVE" && input.testsPassed) {
-          console.log(
-            "[Reviewer] Using extracted APPROVE verdict (tests passed)",
-          );
-        } else if (
-          extractedVerdict === "REQUEST_CHANGES" &&
-          input.testsPassed
-        ) {
-          // Tests passed but reviewer wants changes - be pragmatic
-          // Since we have truncated response, we can't see the full reasoning
-          console.log(
-            "[Reviewer] Tests passed but REQUEST_CHANGES detected (truncated response) - overriding to APPROVE",
-          );
-          parsed.verdict = "APPROVE";
-          parsed.summary = `${extractedSummary} (Auto-approved: tests passed, review response was truncated)`;
-        } else if (input.testsPassed) {
-          // Tests passed but we're not sure about the verdict - be pragmatic
-          console.log(
-            "[Reviewer] Tests passed, defaulting to APPROVE despite parse failure",
-          );
-          parsed.verdict = "APPROVE";
-          parsed.summary = `${extractedSummary} (Auto-approved: tests passed, JSON parse failed)`;
-        }
-      } else {
-        // Complete parse failure and can't extract verdict
-        // If tests passed, default to APPROVE (pragmatic approach)
-        if (input.testsPassed) {
-          console.log(
-            "[Reviewer] Complete parse failure but tests passed - defaulting to APPROVE",
-          );
-          parsed = {
-            verdict: "APPROVE",
-            summary:
-              "Tests passed, code review JSON parse failed but no test failures detected",
-            comments: [],
-          };
-        } else {
-          // No tests and can't parse - throw the error
-          throw parseError;
-        }
-      }
-    }
-
-    // Post-process: downgrade REQUEST_CHANGES to APPROVE if only minor issues
-    const result = ReviewerOutputSchema.parse(parsed);
+    console.log(
+      `[Reviewer] Structured output verdict: ${result.verdict}, comments: ${result.comments?.length || 0}`,
+    );
 
     if (result.verdict === "REQUEST_CHANGES" && input.testsPassed) {
       const hasCriticalIssues = result.comments?.some(

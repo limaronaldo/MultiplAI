@@ -1,0 +1,51 @@
+# Dependencies
+node_modules
+npm-debug.log
+yarn-error.log
+pnpm-debug.log
+.pnpm-store
+
+# Build outputs
+dist
+build
+.next
+out
+
+# Development
+.git
+.gitignore
+.env.local
+.env.development
+.env.test
+*.log
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+tmp
+temp
+*.tmp
+
+# Test
+coverage
+.nyc_output
+
+# Docs
+*.md
+!README.md
+
+# Screenshots (will be generated in container)
+screenshots
+logs
+
+# Fly.io
+fly.toml

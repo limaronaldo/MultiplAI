@@ -42,11 +42,24 @@ export function broadcastTaskEvent(event: {
 async function main() {
   console.log("AutoDev server starting...");
 
-  // Load model configuration from database
-  await initModelConfig();
+  // Load model configuration from database (with timeout)
+  console.log("[Startup] Loading model config...");
+  try {
+    await Promise.race([
+      initModelConfig(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Model config load timeout")), 45000),
+      ),
+    ]);
+    console.log("[Startup] Model config loaded");
+  } catch (error) {
+    console.warn("[Startup] Model config failed, using defaults:", error);
+  }
 
   // Run stale task cleanup if enabled
+  console.log("[Startup] Running cleanup...");
   await runStartupCleanup();
+  console.log("[Startup] Cleanup done");
 
   const PORT = parseInt(process.env.PORT || "3000", 10);
 

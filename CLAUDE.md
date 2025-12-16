@@ -1075,4 +1075,127 @@ Imported and processed 14 UI feature issues (#51-#64) from `MbInteligen/MVP-TS-i
 
 ---
 
-_Last updated: 2025-12-15 18:45 UTC_
+## Session Update: 2025-12-15 22:00 UTC
+
+### Issues Fixed This Session
+
+#### 1. OpenAI Quota Exceeded (429 Errors)
+- **Problem:** All 14 tasks failing with `429 You exceeded your current quota`
+- **Root Cause:** OpenAI API quota exhausted for the `ibvi-tsecyr` organization
+- **Solution:** Migrated all OpenAI models to alternatives:
+
+| Position | Before | After |
+|----------|--------|-------|
+| planner | gpt-5.2-high | moonshotai/kimi-k2-thinking |
+| coder_xs_low | gpt-5.1-codex-mini-medium | deepseek/deepseek-v3.2-speciale |
+| coder_xs_medium | gpt-5.1-codex-mini-high | x-ai/grok-code-fast-1 |
+| coder_xs_high | gpt-5.1-codex-max-medium | x-ai/grok-3 |
+| coder_xs_default | gpt-5.2-medium | x-ai/grok-code-fast-1 |
+| coder_s_low | gpt-5.1-codex-mini-high | deepseek/deepseek-v3.2-speciale |
+| coder_s_medium | gpt-5.1-codex-max-medium | x-ai/grok-3 |
+| coder_s_high | gpt-5.1-codex-max-high | anthropic/claude-sonnet-4 |
+| coder_m_low | gpt-5.1-codex-max-medium | x-ai/grok-3 |
+| coder_m_medium | gpt-5.1-codex-max-high | anthropic/claude-sonnet-4 |
+| coder_m_default | gpt-5.2-medium | anthropic/claude-sonnet-4 |
+| escalation_1 | gpt-5.1-codex-max-xhigh | moonshotai/kimi-k2-thinking |
+
+- **Status:** ✅ Fixed - models updated in database
+
+#### 2. Planner Agent Not Using Database Config
+- **Problem:** Planner was using hardcoded `claude-haiku-4-5-20250514` instead of DB config
+- **Root Cause:** PlannerAgent constructor set model at import time, before `initModelConfig()` ran
+- **Solution:** Modified `planner.ts` to get model at runtime in `run()` method:
+  ```typescript
+  async run(input: PlannerInput): Promise<PlannerOutput> {
+    const model = getPlannerModel();  // Get from DB at runtime
+    this.config.model = model;
+    // ...
+  }
+  ```
+- **Files Changed:** `packages/api/src/agents/planner.ts`
+- **Status:** ✅ Fixed
+
+#### 3. Invalid Claude Haiku Model Version
+- **Problem:** `claude-haiku-4-5-20250514` returns 404 (model doesn't exist)
+- **Fix:** Updated fallback to `claude-haiku-4-5-20251015`
+- **Status:** ✅ Fixed
+
+### Current Issues (To Fix)
+
+#### JSON Parse Errors on Kimi K2 Responses
+- **Problem:** Kimi K2 returns valid JSON but sometimes truncated or with extra content
+- **Error:** `Failed to parse JSON from LLM response`
+- **Example:** Response starts with ` ```json\n{...` but gets truncated
+- **Affected Tasks:** #5 (FAILED)
+- **Status:** 🔴 Needs fix
+
+**Root Cause Analysis:**
+1. Kimi K2 Thinking model uses long-form reasoning that may exceed token limits
+2. Response gets cut off mid-JSON
+3. `parseJSON()` can't recover from incomplete response
+
+**Proposed Fixes:**
+1. Increase `maxTokens` for PlannerAgent (currently 4096)
+2. Improve `parseJSON()` to handle more truncation cases
+3. Consider using structured output (tool calls) instead of raw JSON
+
+### Current Task Status (14 tasks)
+
+| Status | Count | Notes |
+|--------|-------|-------|
+| NEW | 13 | Ready to process |
+| PLANNING_DONE | 1 | #321 - passed planning |
+| FAILED | 0 | (reset for retry) |
+
+### Model Configuration (Database: ep-solitary-breeze)
+
+```sql
+SELECT position, model_id FROM model_config ORDER BY position;
+```
+
+| Position | Model |
+|----------|-------|
+| planner | moonshotai/kimi-k2-thinking |
+| fixer | claude-opus-4-5-20251101 |
+| reviewer | claude-sonnet-4-5-20250929 |
+| escalation_1 | moonshotai/kimi-k2-thinking |
+| escalation_2 | claude-opus-4-5-20251101 |
+| coder_xs_* | deepseek/grok variants |
+| coder_s_* | deepseek/grok/claude variants |
+| coder_m_* | grok/claude variants |
+
+### Next Steps
+
+#### Immediate (Priority 1)
+1. **Fix JSON parsing for Kimi K2** - Increase maxTokens or improve parseJSON
+2. **Retry all 13 NEW tasks** - Should work with new model config
+3. **Monitor #321** - Already in PLANNING_DONE, needs to proceed to CODING
+
+#### Short-term (Priority 2)
+1. **Consider switching planner to Claude** - More reliable JSON output
+2. **Add structured output** - Use tool calls for planners to guarantee valid JSON
+3. **Improve error handling** - Retry on truncated responses
+
+#### Commands to Resume Work
+
+```bash
+# Start API
+cd /Users/ronaldo/Projects/DEVMAX/autodev/packages/api
+source .env
+bun run --watch src/index.ts
+
+# Check status
+psql "$DATABASE_URL" -c "SELECT status, COUNT(*) FROM tasks GROUP BY status"
+
+# Trigger all NEW tasks
+psql "$DATABASE_URL" -t -c "SELECT id FROM tasks WHERE status = 'NEW'" | while read id; do
+  curl -s -X POST "http://localhost:3000/api/tasks/$(echo $id | tr -d ' ')/process" &
+done
+
+# Check for errors
+tail -100 /tmp/autodev-api.log | grep -E "ERROR|error"
+```
+
+---
+
+_Last updated: 2025-12-15 22:00 UTC_
