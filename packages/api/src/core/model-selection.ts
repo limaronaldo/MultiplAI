@@ -73,6 +73,9 @@ const CACHE_TTL_MS = 60_000; // Refresh every 60 seconds
 
 /**
  * Default model configuration (fallback)
+ *
+ * ⚠️ NO OPENAI MODELS - OpenAI quota exhausted as of 2025-12-15
+ * All defaults use Claude (Anthropic), Grok (xAI), or DeepSeek (OpenRouter)
  */
 export const DEFAULT_MODEL_CONFIG: Record<string, string> = {
   // Core agents - all Anthropic Claude
@@ -122,6 +125,8 @@ async function loadModelConfig(): Promise<void> {
 
 /**
  * Get model for a specific position (with caching)
+ *
+ * Fallback chain: cache → defaults → claude-sonnet (never OpenAI)
  */
 export async function getModelForPosition(position: string): Promise<string> {
   // Check if cache needs refresh
@@ -137,19 +142,21 @@ export async function getModelForPosition(position: string): Promise<string> {
   return (
     modelConfigCache.get(position) ||
     DEFAULT_MODEL_CONFIG[position] ||
-    "gpt-5.2-medium"
+    "claude-sonnet-4-5-20250929" // Safe fallback (no OpenAI)
   );
 }
 
 /**
  * Get model synchronously (from cache only, no DB call)
  * Use this in hot paths where async is not acceptable
+ *
+ * Fallback chain: cache → defaults → claude-sonnet (never OpenAI)
  */
 export function getModelForPositionSync(position: string): string {
   return (
     modelConfigCache.get(position) ||
     DEFAULT_MODEL_CONFIG[position] ||
-    "gpt-5.2-medium"
+    "claude-sonnet-4-5-20250929" // Safe fallback (no OpenAI)
   );
 }
 

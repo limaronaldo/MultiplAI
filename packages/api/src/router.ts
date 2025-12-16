@@ -1707,21 +1707,25 @@ const AVAILABLE_MODELS = [
 
 /**
  * Default model assignments per position
+ * ⚠️ NO OPENAI MODELS - quota exhausted as of 2025-12-15
  */
 const DEFAULT_MODEL_CONFIG: Record<string, string> = {
-  planner: "claude-haiku-4-5-20250514",
+  planner: "claude-haiku-4-5-20251001",
   coder_xs_low: "deepseek/deepseek-v3.2-speciale",
-  coder_xs_medium: "gpt-5.2-medium",
-  coder_xs_high: "gpt-5.2-high",
-  coder_s_low: "x-ai/grok-code-fast-1",
-  coder_s_medium: "gpt-5.2-low",
-  coder_s_high: "gpt-5.2-medium",
-  coder_m_low: "gpt-5.2-medium",
-  coder_m_medium: "gpt-5.2-high",
+  coder_xs_medium: "x-ai/grok-code-fast-1",
+  coder_xs_high: "x-ai/grok-3",
+  coder_xs_default: "x-ai/grok-code-fast-1",
+  coder_s_low: "deepseek/deepseek-v3.2-speciale",
+  coder_s_medium: "x-ai/grok-3",
+  coder_s_high: "anthropic/claude-sonnet-4",
+  coder_s_default: "x-ai/grok-code-fast-1",
+  coder_m_low: "x-ai/grok-3",
+  coder_m_medium: "anthropic/claude-sonnet-4",
   coder_m_high: "claude-opus-4-5-20251101",
-  fixer: "claude-haiku-4-5-20250514",
-  reviewer: "deepseek/deepseek-v3.2-speciale",
-  escalation_1: "claude-haiku-4-5-20250514",
+  coder_m_default: "anthropic/claude-sonnet-4",
+  fixer: "claude-opus-4-5-20251101",
+  reviewer: "claude-sonnet-4-5-20250929",
+  escalation_1: "claude-sonnet-4-5-20250929",
   escalation_2: "claude-opus-4-5-20251101",
 };
 
