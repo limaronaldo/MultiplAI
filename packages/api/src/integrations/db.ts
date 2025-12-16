@@ -130,6 +130,16 @@ export const db = {
     return result ? this.mapTask(result) : null;
   },
 
+  async getTasksByStatus(status: string): Promise<Task[]> {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM tasks
+      WHERE status = ${status}
+      ORDER BY created_at DESC
+    `;
+    return results.map((r: any) => this.mapTask(r));
+  },
+
   async updateTask(id: string, updates: Partial<Task>): Promise<Task> {
     const sql = getDb();
 
@@ -241,16 +251,6 @@ export const db = {
       SELECT * FROM tasks
       WHERE github_repo = ${repo}
       AND status = ${status}
-      ORDER BY created_at ASC
-    `;
-    return results.map(this.mapTask);
-  },
-
-  async getTasksByStatus(status: TaskStatus): Promise<Task[]> {
-    const sql = getDb();
-    const results = await sql`
-      SELECT * FROM tasks
-      WHERE status = ${status}
       ORDER BY created_at ASC
     `;
     return results.map(this.mapTask);
@@ -1247,10 +1247,10 @@ export const db = {
   // Delete a plan (cascades to cards)
   async deletePlan(id: string): Promise<boolean> {
     const sql = getDb();
-    const result = await sql`
+    await sql`
       DELETE FROM plans WHERE id = ${id}
     `;
-    return result.count > 0;
+    return true;
   },
 
   // Create a new card
@@ -1334,10 +1334,10 @@ export const db = {
   // Delete a card
   async deletePlanCard(id: string): Promise<boolean> {
     const sql = getDb();
-    const result = await sql`
+    await sql`
       DELETE FROM plan_cards WHERE id = ${id}
     `;
-    return result.count > 0;
+    return true;
   },
 
   // Reorder cards within a plan
@@ -1354,5 +1354,188 @@ export const db = {
     }
 
     return true;
+  },
+
+  // ============================================
+  // Batches (for merge conflict prevention)
+  // ============================================
+
+  async createBatch(batch: {
+    repo: string;
+    baseBranch: string;
+    targetFiles: string[];
+    status: string;
+  }): Promise<{
+    id: string;
+    repo: string;
+    baseBranch: string;
+    targetFiles: string[];
+    status: string;
+    createdAt: Date;
+  }> {
+    const sql = getDb();
+    const [result] = await sql`
+      INSERT INTO batches (repo, base_branch, target_files, status)
+      VALUES (${batch.repo}, ${batch.baseBranch}, ${batch.targetFiles}, ${batch.status})
+      RETURNING *
+    `;
+    return {
+      id: result.id,
+      repo: result.repo,
+      baseBranch: result.base_branch,
+      targetFiles: result.target_files,
+      status: result.status,
+      createdAt: result.created_at,
+    };
+  },
+
+  async getBatch(id: string): Promise<{
+    id: string;
+    repo: string;
+    baseBranch: string;
+    targetFiles: string[];
+    status: string;
+    prNumber?: number;
+    prUrl?: string;
+    createdAt: Date;
+    processedAt?: Date;
+  } | null> {
+    const sql = getDb();
+    const [result] = await sql`
+      SELECT * FROM batches WHERE id = ${id}
+    `;
+    if (!result) return null;
+    return {
+      id: result.id,
+      repo: result.repo,
+      baseBranch: result.base_branch,
+      targetFiles: result.target_files,
+      status: result.status,
+      prNumber: result.pr_number,
+      prUrl: result.pr_url,
+      createdAt: result.created_at,
+      processedAt: result.processed_at,
+    };
+  },
+
+  async getPendingBatches(repo: string): Promise<
+    Array<{
+      id: string;
+      repo: string;
+      baseBranch: string;
+      targetFiles: string[];
+      status: string;
+      createdAt: Date;
+    }>
+  > {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM batches
+      WHERE repo = ${repo} AND status = 'pending'
+      ORDER BY created_at ASC
+    `;
+    return results.map((r: any) => ({
+      id: r.id,
+      repo: r.repo,
+      baseBranch: r.base_branch,
+      targetFiles: r.target_files,
+      status: r.status,
+      createdAt: r.created_at,
+    }));
+  },
+
+  async updateBatch(
+    id: string,
+    updates: {
+      status?: string;
+      prNumber?: number;
+      prUrl?: string;
+      processedAt?: Date;
+    },
+  ): Promise<boolean> {
+    const sql = getDb();
+    const setClauses: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    if (updates.status !== undefined) {
+      setClauses.push(`status = $${paramIndex++}`);
+      values.push(updates.status);
+    }
+    if (updates.prNumber !== undefined) {
+      setClauses.push(`pr_number = $${paramIndex++}`);
+      values.push(updates.prNumber);
+    }
+    if (updates.prUrl !== undefined) {
+      setClauses.push(`pr_url = $${paramIndex++}`);
+      values.push(updates.prUrl);
+    }
+    if (updates.processedAt !== undefined) {
+      setClauses.push(`processed_at = $${paramIndex++}`);
+      values.push(updates.processedAt);
+    }
+
+    if (setClauses.length === 0) return false;
+
+    values.push(id);
+    const query = `UPDATE batches SET ${setClauses.join(", ")} WHERE id = $${paramIndex}`;
+    await sql.unsafe(query, values);
+    return true;
+  },
+
+  async addTaskToBatch(taskId: string, batchId: string): Promise<boolean> {
+    const sql = getDb();
+    await sql`
+      INSERT INTO task_batches (task_id, batch_id)
+      VALUES (${taskId}, ${batchId})
+      ON CONFLICT (task_id, batch_id) DO NOTHING
+    `;
+    return true;
+  },
+
+  async removeTaskFromBatch(taskId: string, batchId: string): Promise<boolean> {
+    const sql = getDb();
+    await sql`
+      DELETE FROM task_batches
+      WHERE task_id = ${taskId} AND batch_id = ${batchId}
+    `;
+    return true;
+  },
+
+  async getTasksByBatch(batchId: string): Promise<Task[]> {
+    const sql = getDb();
+    const results = await sql`
+      SELECT t.* FROM tasks t
+      JOIN task_batches tb ON t.id = tb.task_id
+      WHERE tb.batch_id = ${batchId}
+      ORDER BY tb.added_at ASC
+    `;
+    return results.map((r: any) => this.mapTask(r));
+  },
+
+  async getBatchByTask(taskId: string): Promise<{
+    id: string;
+    repo: string;
+    baseBranch: string;
+    targetFiles: string[];
+    status: string;
+    createdAt: Date;
+  } | null> {
+    const sql = getDb();
+    const [result] = await sql`
+      SELECT b.* FROM batches b
+      JOIN task_batches tb ON b.id = tb.batch_id
+      WHERE tb.task_id = ${taskId} AND b.status IN ('pending', 'processing')
+      LIMIT 1
+    `;
+    if (!result) return null;
+    return {
+      id: result.id,
+      repo: result.repo,
+      baseBranch: result.base_branch,
+      targetFiles: result.target_files,
+      status: result.status,
+      createdAt: result.created_at,
+    };
   },
 };

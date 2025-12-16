@@ -747,6 +747,34 @@ export class GitHubClient {
   }
 
   /**
+   * Create a new branch from main
+   * Used for batch merge operations
+   */
+  async createBranchFromMain(
+    fullName: string,
+    branchName: string,
+  ): Promise<void> {
+    const { owner, repo } = this.parseRepo(fullName);
+
+    // Get the SHA of the main branch
+    const { data: mainRef } = await this.octokit.rest.git.getRef({
+      owner,
+      repo,
+      ref: "heads/main",
+    });
+
+    // Create the new branch
+    await this.octokit.rest.git.createRef({
+      owner,
+      repo,
+      ref: `refs/heads/${branchName}`,
+      sha: mainRef.object.sha,
+    });
+
+    console.log(`[GitHub] Created branch ${branchName} from main`);
+  }
+
+  /**
    * Cria um Pull Request
    */
   async createPR(fullName: string, params: CreatePRParams): Promise<PRResult> {

@@ -54,6 +54,8 @@ import {
 import { normalizePatch, detectPatchFormat } from "./patch-formats";
 import { ragRuntime } from "../services/rag/rag-runtime";
 import { KnowledgeGraphService } from "./knowledge-graph/knowledge-graph-service";
+import { batchDetector } from "../services/batch-detector";
+import { diffCombiner } from "./diff-combiner";
 import {
   AgenticLoopController,
   type LoopConfig,
@@ -1652,9 +1654,24 @@ export class Orchestrator {
   /**
    * Step 6: Open PR
    * If PR already exists (from previous attempt after review rejection), skip creation
+   * If batch merge is enabled, check if task should join a batch first
    */
   private async openPR(task: Task): Promise<Task> {
     const logger = this.getLogger(task);
+
+    // Check for batch merge (Issue #403)
+    const batchResult = await this.checkForBatchMerge(task);
+    if (batchResult.shouldBatch) {
+      logger.info(
+        `Task joining batch ${batchResult.batchId} for merge conflict prevention`,
+      );
+      return this.updateStatus(task, "WAITING_BATCH");
+    }
+
+    // If batch is ready, process it
+    if (batchResult.batchReady && batchResult.batchId) {
+      return await this.processBatchMerge(batchResult.batchId, task);
+    }
 
     // If PR already exists (e.g., after review rejection and re-coding), skip creation
     if (task.prNumber && task.prUrl) {
@@ -1742,6 +1759,273 @@ export class Orchestrator {
     }
 
     // Linka com a issue original
+    await this.github.addComment(
+      task.githubRepo,
+      task.githubIssueNumber,
+      `🤖 AutoDev criou um PR para esta issue: ${pr.url}\n\nAguardando revisão humana.`,
+    );
+
+    await this.logEvent(task, "PR_OPENED", "orchestrator");
+
+    task = this.updateStatus(task, "PR_CREATED");
+    return this.updateStatus(task, "WAITING_HUMAN");
+  }
+
+  // ============================================
+  // Batch Merge (Issue #403)
+  // ============================================
+
+  /**
+   * Check if task should join a batch for merge conflict prevention
+   */
+  private async checkForBatchMerge(task: Task): Promise<{
+    shouldBatch: boolean;
+    batchReady: boolean;
+    batchId?: string;
+  }> {
+    if (!batchDetector.isEnabled()) {
+      return { shouldBatch: false, batchReady: false };
+    }
+
+    const logger = this.getLogger(task);
+
+    try {
+      // Check if task is already in a batch
+      const existingBatch = await db.getBatchByTask(task.id);
+      if (existingBatch) {
+        // Check if batch is ready to process
+        const isReady = await batchDetector.isBatchReady(existingBatch as any);
+        return {
+          shouldBatch: false,
+          batchReady: isReady,
+          batchId: existingBatch.id,
+        };
+      }
+
+      // Check if task should join an existing batch
+      const batch = await batchDetector.shouldJoinBatch(task);
+      if (batch) {
+        await db.addTaskToBatch(task.id, batch.id);
+        logger.info(`Task added to existing batch ${batch.id}`);
+
+        // Check if batch is now ready
+        const isReady = await batchDetector.isBatchReady(batch as any);
+        return {
+          shouldBatch: !isReady, // Only batch if not ready yet
+          batchReady: isReady,
+          batchId: batch.id,
+        };
+      }
+
+      // Check for other tasks that could form a new batch
+      const candidates = await batchDetector.findBatchCandidates(
+        task.githubRepo,
+      );
+      if (candidates.length >= 2) {
+        // Include current task
+        const allTasks = [task, ...candidates.filter((t) => t.id !== task.id)];
+        const newBatch = await batchDetector.detectBatch(allTasks);
+        if (newBatch) {
+          logger.info(
+            `Created new batch ${newBatch.id} with ${allTasks.length} tasks`,
+          );
+          return {
+            shouldBatch: true,
+            batchReady: false,
+            batchId: newBatch.id,
+          };
+        }
+      }
+
+      return { shouldBatch: false, batchReady: false };
+    } catch (error) {
+      logger.warn(
+        `Batch detection failed, proceeding with individual PR: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+      );
+      return { shouldBatch: false, batchReady: false };
+    }
+  }
+
+  /**
+   * Process a batch merge - combine diffs and create single PR
+   */
+  private async processBatchMerge(
+    batchId: string,
+    currentTask: Task,
+  ): Promise<Task> {
+    const logger = this.getLogger(currentTask);
+    logger.info(`Processing batch merge ${batchId}`);
+
+    try {
+      // Get all tasks in the batch
+      const batchTasks = await db.getTasksByBatch(batchId);
+      if (batchTasks.length === 0) {
+        logger.warn("Batch has no tasks, falling back to individual PR");
+        return await this.createIndividualPR(currentTask);
+      }
+
+      // Update batch status
+      await db.updateBatch(batchId, { status: "processing" });
+
+      // Combine diffs
+      const combined = await diffCombiner.combineDiffs(batchTasks);
+
+      if (combined.conflicts.length > 0) {
+        logger.warn(
+          `Batch has ${combined.conflicts.length} conflicts, falling back to individual PRs`,
+        );
+        await db.updateBatch(batchId, { status: "failed" });
+
+        // Create individual PRs for all tasks
+        for (const task of batchTasks) {
+          if (task.id !== currentTask.id) {
+            // Remove from batch and update status to trigger individual PR
+            await db.removeTaskFromBatch(task.id, batchId);
+            await db.updateTask(task.id, { status: "REVIEW_APPROVED" });
+          }
+        }
+        return await this.createIndividualPR(currentTask);
+      }
+
+      // Create combined branch with all changes
+      const branchName = `auto/batch-${batchId.slice(0, 8)}`;
+
+      // Use first task's branch as base, apply combined diff
+      const firstTask = batchTasks[0];
+      if (!firstTask.branchName) {
+        throw new Error("First task in batch has no branch");
+      }
+
+      // Apply combined diff to a new branch
+      await this.github.createBranchFromMain(
+        currentTask.githubRepo,
+        branchName,
+      );
+      await this.github.applyDiff(
+        currentTask.githubRepo,
+        branchName,
+        combined.unifiedDiff,
+        combined.commitMessage,
+      );
+
+      // Create PR
+      const pr = await this.github.createPR(currentTask.githubRepo, {
+        title: combined.prTitle,
+        body: combined.prBody,
+        head: branchName,
+        base: "main",
+      });
+
+      // Update batch with PR info
+      await db.updateBatch(batchId, {
+        status: "completed",
+        prNumber: pr.number,
+        prUrl: pr.url,
+        processedAt: new Date(),
+      });
+
+      // Update all tasks in batch
+      for (const task of batchTasks) {
+        await db.updateTask(task.id, {
+          status: "WAITING_HUMAN",
+          prNumber: pr.number,
+          prUrl: pr.url,
+          branchName,
+        });
+
+        // Log event for each task
+        await this.logEvent(task, "BATCH_PR_CREATED", "orchestrator", {
+          batchId,
+          prNumber: pr.number,
+          tasksInBatch: batchTasks.length,
+        });
+      }
+
+      // Add labels
+      await this.github.addLabels(currentTask.githubRepo, pr.number, [
+        "auto-dev",
+        "batch-merge",
+        "ready-for-human-review",
+      ]);
+
+      logger.info(
+        `Batch PR #${pr.number} created for ${batchTasks.length} tasks`,
+      );
+
+      currentTask.prNumber = pr.number;
+      currentTask.prUrl = pr.url;
+      currentTask.branchName = branchName;
+      currentTask = this.updateStatus(currentTask, "PR_CREATED");
+      return this.updateStatus(currentTask, "WAITING_HUMAN");
+    } catch (error) {
+      logger.error(
+        `Batch merge failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+      await db.updateBatch(batchId, { status: "failed" });
+
+      // Fall back to individual PR
+      return await this.createIndividualPR(currentTask);
+    }
+  }
+
+  /**
+   * Create individual PR (fallback when batch fails)
+   */
+  private async createIndividualPR(task: Task): Promise<Task> {
+    // This is essentially the original openPR logic for creating a new PR
+    const logger = this.getLogger(task);
+
+    const modifiedFiles = this.extractModifiedFiles(task.currentDiff!);
+    const conflictingPRs = await this.github.detectConflictingPRs(
+      task.githubRepo,
+      modifiedFiles,
+      task.branchName,
+    );
+
+    if (conflictingPRs.length > 0) {
+      this.systemLogger.warn(
+        `[Orchestrator] Task ${task.id} has conflicting PRs: ${conflictingPRs.map((p) => `#${p.number}`).join(", ")}`,
+      );
+      await this.logEvent(task, "CONFLICT_DETECTED", "orchestrator", {
+        conflictingPRs: conflictingPRs.map((p) => ({
+          number: p.number,
+          title: p.title,
+          files: p.conflictingFiles,
+        })),
+      });
+    }
+
+    const prBody = this.buildPRBody(task, conflictingPRs);
+
+    const pr = await this.github.createPR(task.githubRepo, {
+      title: `[AutoDev] ${task.githubIssueTitle}`,
+      body: prBody,
+      head: task.branchName!,
+      base: "main",
+    });
+
+    task.prNumber = pr.number;
+    task.prUrl = pr.url;
+
+    const labels = ["auto-dev", "ready-for-human-review"];
+    if (conflictingPRs.length > 0) {
+      labels.push("potential-conflict");
+    }
+    await this.github.addLabels(task.githubRepo, pr.number, labels);
+
+    for (const conflictPR of conflictingPRs) {
+      await this.github.addComment(
+        task.githubRepo,
+        conflictPR.number,
+        `⚠️ **Potential Merge Conflict Detected**\n\n` +
+          `PR #${pr.number} modifies the same files as this PR:\n` +
+          `- ${conflictPR.conflictingFiles.map((f) => `\`${f}\``).join("\n- ")}\n\n` +
+          `Consider coordinating these changes or merging one PR before the other.`,
+      );
+    }
+
     await this.github.addComment(
       task.githubRepo,
       task.githubIssueNumber,
