@@ -5733,32 +5733,55 @@ route("GET", "/api/visual-tests/:runId", async (req) => {
 // Router
 // ============================================
 
+// CORS headers for cross-origin requests
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
+
+function addCorsHeaders(response: Response): Response {
+  const newHeaders = new Headers(response.headers);
+  for (const [key, value] of Object.entries(CORS_HEADERS)) {
+    newHeaders.set(key, value);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: newHeaders,
+  });
+}
+
 export async function handleRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const method = req.method;
   const path = url.pathname;
 
+  // Handle CORS preflight requests
+  if (method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
   // Apply rate limiting
   const rateLimitResponse = rateLimitMiddleware(req);
   if (rateLimitResponse) {
-    return rateLimitResponse;
+    return addCorsHeaders(rateLimitResponse);
   }
 
   for (const route of routes) {
     if (route.method === method && route.pattern.test(path)) {
       try {
         const response = await route.handler(req);
-        // Add rate limit headers to successful responses
-        return addRateLimitHeaders(response, req);
+        // Add rate limit headers and CORS headers to successful responses
+        return addCorsHeaders(addRateLimitHeaders(response, req));
       } catch (error) {
         console.error(`[Router] Error handling ${method} ${path}:`, error);
-        return Response.json(
-          { error: "Internal server error" },
-          { status: 500 },
+        return addCorsHeaders(
+          Response.json({ error: "Internal server error" }, { status: 500 }),
         );
       }
     }
   }
 
-  return Response.json({ error: "Not found" }, { status: 404 });
+  return addCorsHeaders(Response.json({ error: "Not found" }, { status: 404 }));
 }
