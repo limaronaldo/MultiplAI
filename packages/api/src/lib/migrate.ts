@@ -1,13 +1,6 @@
-import postgres from "postgres";
+import { getDb } from "../integrations/db";
 
-const connectionString = process.env.DATABASE_URL;
-
-if (!connectionString) {
-  console.error("DATABASE_URL environment variable is required");
-  process.exit(1);
-}
-
-const sql = postgres(connectionString, { ssl: "require" });
+const sql = getDb();
 
 async function migrate() {
   console.log("🗄️  Running database migrations...\n");
@@ -938,8 +931,6 @@ async function migrate() {
   console.log("✅ Created repositories table");
 
   console.log("\n✨ Migrations complete!");
-
-  await sql.end();
 }
 
 migrate().catch((e) => {

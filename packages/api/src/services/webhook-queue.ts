@@ -34,18 +34,19 @@ export interface WebhookQueueStats {
 
 const DEFAULT_MAX_ATTEMPTS = 5;
 const RETRY_DELAYS_MS = [
-  1000,      // 1 second
-  5000,      // 5 seconds
-  30000,     // 30 seconds
-  300000,    // 5 minutes
-  1800000,   // 30 minutes
+  1000, // 1 second
+  5000, // 5 seconds
+  30000, // 30 seconds
+  300000, // 5 minutes
+  1800000, // 30 minutes
 ];
 
 /**
  * Calculate next retry time based on attempt number
  */
 function calculateNextRetry(attempt: number): Date {
-  const delayMs = RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
+  const delayMs =
+    RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
   return new Date(Date.now() + delayMs);
 }
 
@@ -141,7 +142,9 @@ export const webhookQueue = {
             next_retry_at = NULL
         WHERE id = ${id}
       `;
-      console.log(`[WebhookQueue] Event ${id} moved to dead letter after ${attempts} attempts`);
+      console.log(
+        `[WebhookQueue] Event ${id} moved to dead letter after ${attempts} attempts`,
+      );
     } else {
       // Schedule retry
       const nextRetry = calculateNextRetry(attempts);
@@ -153,7 +156,9 @@ export const webhookQueue = {
             updated_at = NOW()
         WHERE id = ${id}
       `;
-      console.log(`[WebhookQueue] Event ${id} scheduled for retry at ${nextRetry.toISOString()}`);
+      console.log(
+        `[WebhookQueue] Event ${id} scheduled for retry at ${nextRetry.toISOString()}`,
+      );
     }
   },
 
@@ -237,8 +242,9 @@ export const webhookQueue = {
       DELETE FROM webhook_events
       WHERE status = 'completed'
         AND completed_at < ${cutoff}
+      RETURNING id
     `;
-    return result.count;
+    return result.length;
   },
 
   /**
@@ -278,8 +284,9 @@ export const webhookQueue = {
           next_retry_at = NOW(),
           updated_at = NOW()
       WHERE status IN ('failed', 'dead')
+      RETURNING id
     `;
-    return result.count;
+    return result.length;
   },
 };
 
@@ -287,7 +294,8 @@ function mapWebhookEvent(row: any): WebhookEvent {
   return {
     id: row.id,
     eventType: row.event_type,
-    payload: typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload,
+    payload:
+      typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload,
     signature: row.signature,
     deliveryId: row.delivery_id,
     status: row.status,
@@ -321,14 +329,17 @@ export async function processWebhookQueue(
       await webhookQueue.markCompleted(event.id);
       processed++;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       await webhookQueue.markFailed(event.id, errorMessage);
       failed++;
     }
   }
 
   if (events.length > 0) {
-    console.log(`[WebhookQueue] Processed ${processed} events, ${failed} failed`);
+    console.log(
+      `[WebhookQueue] Processed ${processed} events, ${failed} failed`,
+    );
   }
 
   return { processed, failed };

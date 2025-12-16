@@ -26,6 +26,9 @@ import {
 } from "./core/rate-limiter";
 import { generateOpenAPISpec, getOpenAPIJSON } from "./core/openapi";
 import { generateSwaggerHTML, generateReDocHTML } from "./core/swagger-ui";
+import { VisualTestRunner } from "./agents/computer-use/visual-test-runner";
+import { VisualTestCaseSchema } from "./agents/computer-use/types";
+import { z } from "zod";
 
 // Validation helpers
 const UUID_REGEX =
@@ -970,6 +973,36 @@ function jsonToYaml(obj: unknown, indent = 0): string {
 // API
 // ============================================
 
+// Simple ping endpoint for quick health checks (no external calls)
+route("GET", "/api/ping", async () => {
+  return Response.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// Database ping - test connection using statically imported db
+route("GET", "/api/db-ping", async () => {
+  const start = Date.now();
+  try {
+    // Use the statically imported db module's getDb
+    const { getDb } = await import("./integrations/db");
+    const sql = getDb();
+    const [result] = await sql`SELECT NOW() as time`;
+    return Response.json({
+      status: "ok",
+      latencyMs: Date.now() - start,
+      dbTime: result?.time,
+    });
+  } catch (error) {
+    return Response.json(
+      {
+        status: "error",
+        latencyMs: Date.now() - start,
+        error: String(error),
+      },
+      { status: 500 },
+    );
+  }
+});
+
 route("GET", "/api/health", async () => {
   const startTime = Date.now();
   const checks: Record<
@@ -983,22 +1016,37 @@ route("GET", "/api/health", async () => {
   > = {};
   let overallStatus: "ok" | "degraded" | "unhealthy" = "ok";
 
-  // 1. Database connectivity check
+  // Helper to run check with timeout
+  const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> => {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms),
+      ),
+    ]);
+  };
+
+  // 1. Database connectivity check (with 30s timeout for Neon cold start)
+  // Use the already-imported getDb to reuse connection pool
   try {
     const dbStart = Date.now();
-    const sql = (await import("./integrations/db")).getDb();
-    await sql`SELECT 1`;
+    const { getDb } = await import("./integrations/db");
+    const sql = getDb();
+    await withTimeout(sql`SELECT 1`, 30000);
     checks.database = { status: "ok", latencyMs: Date.now() - dbStart };
   } catch (error) {
     checks.database = { status: "error", message: String(error) };
     overallStatus = "unhealthy";
   }
 
-  // 2. GitHub API check (rate limit remaining)
+  // 2. GitHub API check (rate limit remaining) (with 5s timeout)
   try {
     const ghStart = Date.now();
     const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
-    const { data: rateLimit } = await octokit.rest.rateLimit.get();
+    const { data: rateLimit } = await withTimeout(
+      octokit.rest.rateLimit.get(),
+      5000,
+    );
     const remaining = rateLimit.rate.remaining;
     const limit = rateLimit.rate.limit;
     checks.github = {
@@ -5012,6 +5060,128 @@ route("POST", "/api/tasks/import", async (req) => {
     console.error("[API] Failed to import issues:", error);
     return Response.json(
       { error: "Failed to import issues", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+// ============================================
+// Visual Tests (CUA)
+// ============================================
+
+route("POST", "/api/tasks/:id/run-visual-tests", async (req) => {
+  const url = new URL(req.url);
+  const id = url.pathname.split("/")[3];
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid task ID" }, { status: 400 });
+  }
+
+  try {
+    const body = await req.json();
+
+    // Validate input
+    const schema = z.object({
+      appUrl: z.string().url(),
+      testCases: z.array(VisualTestCaseSchema),
+    });
+
+    const input = schema.parse(body);
+
+    // Get task to verify it exists
+    const task = await db.getTask(id);
+    if (!task) {
+      return Response.json({ error: "Task not found" }, { status: 404 });
+    }
+
+    console.log(`[API] Running visual tests for task ${id} on ${input.appUrl}`);
+
+    // Run visual tests
+    const runner = new VisualTestRunner({
+      allowedUrls: [new URL(input.appUrl).hostname],
+    });
+
+    const results = await runner.run(input.appUrl, input.testCases);
+
+    // Store in database
+    await db.createVisualTestRun({
+      id: crypto.randomUUID(),
+      taskId: id,
+      appUrl: input.appUrl,
+      testGoals: input.testCases.map((tc) => tc.name),
+      status: results.status,
+      passRate: results.passRate,
+      totalTests: results.totalTests,
+      passedTests: results.passedTests,
+      failedTests: results.failedTests,
+      results: results.results,
+      screenshots: results.results.flatMap((r) => r.screenshots || []),
+      config: { allowedUrls: [new URL(input.appUrl).hostname] },
+      createdAt: results.startedAt,
+      completedAt: results.completedAt,
+    });
+
+    console.log(
+      `[API] Visual tests completed: ${results.passedTests}/${results.totalTests} passed`,
+    );
+
+    return Response.json(results);
+  } catch (error) {
+    console.error("[API] Failed to run visual tests:", error);
+    if (error instanceof z.ZodError) {
+      return Response.json(
+        { error: "Invalid input", details: error.errors },
+        { status: 400 },
+      );
+    }
+    return Response.json(
+      { error: "Failed to run visual tests", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+route("GET", "/api/tasks/:id/visual-tests", async (req) => {
+  const url = new URL(req.url);
+  const id = url.pathname.split("/")[3];
+
+  if (!isValidUUID(id)) {
+    return Response.json({ error: "Invalid task ID" }, { status: 400 });
+  }
+
+  try {
+    const runs = await db.getVisualTestRunsForTask(id);
+    return Response.json({ runs });
+  } catch (error) {
+    console.error("[API] Failed to get visual test runs:", error);
+    return Response.json(
+      { error: "Failed to get visual test runs", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+route("GET", "/api/visual-tests/:runId", async (req) => {
+  const url = new URL(req.url);
+  const runId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(runId)) {
+    return Response.json({ error: "Invalid run ID" }, { status: 400 });
+  }
+
+  try {
+    const run = await db.getVisualTestRun(runId);
+    if (!run) {
+      return Response.json(
+        { error: "Visual test run not found" },
+        { status: 404 },
+      );
+    }
+    return Response.json(run);
+  } catch (error) {
+    console.error("[API] Failed to get visual test run:", error);
+    return Response.json(
+      { error: "Failed to get visual test run", details: String(error) },
       { status: 500 },
     );
   }

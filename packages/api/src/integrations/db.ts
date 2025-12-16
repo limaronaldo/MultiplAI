@@ -1,4 +1,4 @@
-import postgres from "postgres";
+import { neon, neonConfig } from "@neondatabase/serverless";
 import {
   Task,
   TaskStatus,
@@ -9,21 +9,39 @@ import {
 
 const connectionString = process.env.DATABASE_URL;
 
-// Conexão lazy - só conecta quando necessário
-let sql: ReturnType<typeof postgres> | null = null;
+// Configure Neon for optimal performance
+neonConfig.fetchConnectionCache = true;
 
-export function getDb() {
-  if (!sql) {
+// Wrapper type that includes both tagged template and unsafe() method
+export type SqlClient = {
+  (strings: TemplateStringsArray, ...values: unknown[]): Promise<any[]>;
+  unsafe: (query: string, params?: unknown[]) => Promise<any[]>;
+};
+
+// Cached wrapper instance
+let sqlClient: SqlClient | null = null;
+
+export function getDb(): SqlClient {
+  if (!sqlClient) {
     if (!connectionString) {
       throw new Error("DATABASE_URL environment variable is required");
     }
-    sql = postgres(connectionString, {
-      ssl: "require",
-      max: 10,
-      idle_timeout: 20,
-    });
+    const neonClient = neon(connectionString);
+
+    // Create wrapper function that acts as tagged template
+    const wrapper = ((strings: TemplateStringsArray, ...values: unknown[]) => {
+      return neonClient(strings, ...values);
+    }) as unknown as SqlClient;
+
+    // Add unsafe() method for dynamic queries
+    wrapper.unsafe = async (query: string, params?: unknown[]) => {
+      const result = await neonClient.query(query, params || []);
+      return (result as any).rows || result;
+    };
+
+    sqlClient = wrapper;
   }
-  return sql;
+  return sqlClient;
 }
 
 export const db = {
@@ -414,6 +432,19 @@ export const db = {
   // Helpers
   // ============================================
 
+  // Safe JSON parse that returns undefined on error
+  safeJsonParse(value: string | null | undefined): any {
+    if (!value) return undefined;
+    // If already an object (Neon might return parsed JSON for jsonb columns)
+    if (typeof value === "object") return value;
+    try {
+      return JSON.parse(value);
+    } catch {
+      console.warn(`[DB] Failed to parse JSON: ${value.slice(0, 100)}...`);
+      return undefined;
+    }
+  },
+
   mapTask(row: any): Task {
     return {
       id: row.id,
@@ -423,10 +454,8 @@ export const db = {
       githubIssueBody: row.github_issue_body,
       linearIssueId: row.linear_issue_id,
       status: row.status as TaskStatus,
-      definitionOfDone: row.definition_of_done
-        ? JSON.parse(row.definition_of_done)
-        : undefined,
-      plan: row.plan ? JSON.parse(row.plan) : undefined,
+      definitionOfDone: this.safeJsonParse(row.definition_of_done),
+      plan: this.safeJsonParse(row.plan),
       targetFiles: row.target_files,
       branchName: row.branch_name,
       currentDiff: row.current_diff,
@@ -1065,5 +1094,34 @@ export const db = {
       created_at: row.created_at?.toISOString?.() || row.created_at,
       updated_at: row.updated_at?.toISOString?.() || row.updated_at,
     };
+  },
+
+  // ============================================
+  // Visual Test Runs
+  // ============================================
+
+  async createVisualTestRun(run: any): Promise<void> {
+    const sql = getDb();
+    await sql`
+      INSERT INTO visual_test_runs ${sql(run)}
+    `;
+  },
+
+  async getVisualTestRunsForTask(taskId: string): Promise<any[]> {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM visual_test_runs
+      WHERE task_id = ${taskId}
+      ORDER BY created_at DESC
+    `;
+    return results;
+  },
+
+  async getVisualTestRun(id: string): Promise<any> {
+    const sql = getDb();
+    const [result] = await sql`
+      SELECT * FROM visual_test_runs WHERE id = ${id}
+    `;
+    return result || null;
   },
 };
