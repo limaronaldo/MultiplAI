@@ -17,6 +17,8 @@ import {
   RecentTasksWidget,
   ActiveJobsWidget,
   PendingReviewWidget,
+  TasksChartWidget,
+  CostChartWidget,
 } from "../components/dashboard/widgets";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -198,18 +200,14 @@ export function DashboardPage() {
           <PendingReviewWidget />
         </DashboardWidget>
 
-        {/* Tasks Chart Placeholder */}
+        {/* Tasks Chart */}
         <DashboardWidget id="tasks-chart">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 h-64 flex items-center justify-center">
-            <p className="text-slate-500">Tasks over time chart coming soon</p>
-          </div>
+          <TasksChartWidget />
         </DashboardWidget>
 
-        {/* Cost Chart Placeholder */}
+        {/* Cost Chart */}
         <DashboardWidget id="cost-chart">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 h-64 flex items-center justify-center">
-            <p className="text-slate-500">Cost breakdown chart coming soon</p>
-          </div>
+          <CostChartWidget />
         </DashboardWidget>
 
         {/* Model Comparison Placeholder */}
