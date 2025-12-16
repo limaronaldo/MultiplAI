@@ -362,9 +362,30 @@ export class GitHubClient {
     const sortedChunks = [...chunks].sort((a, b) => b.oldStart - a.oldStart);
 
     for (const chunk of sortedChunks) {
-      const startIndex = chunk.oldStart - 1; // Convert to 0-indexed
+      // Get context lines from the chunk (lines that should match original)
+      const contextLines = chunk.changes
+        .filter((c) => c.type === "normal" || c.type === "del")
+        .map((c) => c.content.slice(1)); // Remove leading space or -
 
-      // Collect what this chunk produces
+      // Find the actual position in the original file by matching context
+      // LLMs often generate diffs with wrong line numbers
+      let startIndex = chunk.oldStart - 1; // Default: trust the hunk header
+
+      if (contextLines.length > 0) {
+        const alignedIndex = this.findContextMatch(
+          originalLines,
+          contextLines,
+          startIndex,
+        );
+        if (alignedIndex !== -1 && alignedIndex !== startIndex) {
+          console.log(
+            `[GitHub] Aligned hunk from line ${startIndex + 1} to ${alignedIndex + 1} (context match)`,
+          );
+          startIndex = alignedIndex;
+        }
+      }
+
+      // Collect what this chunk produces (only additions, not context)
       const newLines: string[] = [];
       let linesToRemove = 0;
 
@@ -376,17 +397,84 @@ export class GitHubClient {
           // Count lines to remove
           linesToRemove++;
         } else if (change.type === "normal") {
-          // Context line - remove leading space and include
-          newLines.push(change.content.slice(1));
+          // Context line - DON'T add to newLines, just count for removal
+          // The context is already in the original, we only need to insert new content
           linesToRemove++;
         }
       }
 
-      // Apply the chunk: remove old lines and insert new ones
-      resultLines.splice(startIndex, linesToRemove, ...newLines);
+      // For append-only hunks (context + additions, no deletions), don't replace context
+      const hasOnlyAdditions = chunk.changes.every(
+        (c) => c.type === "add" || c.type === "normal",
+      );
+
+      if (hasOnlyAdditions && linesToRemove > 0) {
+        // Insert additions AFTER the context lines, don't replace them
+        const insertPosition = startIndex + linesToRemove;
+        resultLines.splice(insertPosition, 0, ...newLines);
+      } else {
+        // Normal case: remove old lines and insert new ones
+        // For modifications, we need to include context in newLines
+        const allNewLines: string[] = [];
+        for (const change of chunk.changes) {
+          if (change.type === "add" || change.type === "normal") {
+            allNewLines.push(change.content.slice(1));
+          }
+        }
+        resultLines.splice(startIndex, linesToRemove, ...allNewLines);
+      }
     }
 
     return resultLines.join("\n");
+  }
+
+  /**
+   * Find where context lines actually match in the original file
+   * Returns the aligned start index, or -1 if no match found
+   */
+  private findContextMatch(
+    originalLines: string[],
+    contextLines: string[],
+    hintStart: number,
+  ): number {
+    if (contextLines.length === 0) return hintStart;
+
+    const firstContext = contextLines[0];
+
+    // Search around the hint position (within 10 lines)
+    const searchRadius = 10;
+    const searchStart = Math.max(0, hintStart - searchRadius);
+    const searchEnd = Math.min(
+      originalLines.length - contextLines.length,
+      hintStart + searchRadius,
+    );
+
+    for (let i = searchStart; i <= searchEnd; i++) {
+      // Check if all context lines match starting at position i
+      let allMatch = true;
+      for (
+        let j = 0;
+        j < contextLines.length && i + j < originalLines.length;
+        j++
+      ) {
+        if (originalLines[i + j] !== contextLines[j]) {
+          allMatch = false;
+          break;
+        }
+      }
+      if (allMatch) {
+        return i;
+      }
+    }
+
+    // If no exact match, try matching just the first context line
+    for (let i = searchStart; i <= searchEnd; i++) {
+      if (originalLines[i] === firstContext) {
+        return i;
+      }
+    }
+
+    return -1; // No match found, use original hint
   }
 
   /**
