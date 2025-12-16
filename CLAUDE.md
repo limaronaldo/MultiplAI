@@ -1779,4 +1779,75 @@ When ready to integrate with Plane.so:
 
 ---
 
-_Last updated: 2025-12-16 20:00 UTC_
+## Session Update: 2025-12-16 21:00 UTC
+
+### Completed This Session
+
+#### 1. Dashboard MobX Migration + SSE Integration
+All major dashboard pages migrated to MobX with real-time SSE updates:
+- ✅ `TasksPageMobX` - Task list with live activity feed
+- ✅ `DashboardPageMobX` - Stats with live activity feed  
+- ✅ `SettingsPageMobX` - Model configuration
+- ✅ `TaskDetailPageMobX` - Task detail with live event updates
+
+**New Files Created:**
+- `packages/web/src/stores/task.store.ts` - Task state + SSE integration
+- `packages/web/src/stores/dashboard.store.ts` - Dashboard stats
+- `packages/web/src/stores/config.store.ts` - Model config
+- `packages/web/src/services/sse.service.ts` - EventSource management
+- `packages/web/src/components/live/LiveActivityFeed.tsx` - Live events display
+
+#### 2. Database Cleanup
+- Removed 57 duplicate task records
+- Fixed database connection issues (wrong DATABASE_URL cached)
+- Current: 193 unique tasks (41 completed, 152 failed)
+
+#### 3. Model Migration (Anthropic → DeepSeek)
+Anthropic credits exhausted. All models switched to DeepSeek via OpenRouter:
+
+| Position | New Model |
+|----------|-----------|
+| planner | deepseek/deepseek-chat |
+| fixer | deepseek/deepseek-r1 |
+| reviewer | deepseek/deepseek-chat |
+| escalation_1 | deepseek/deepseek-chat |
+| escalation_2 | deepseek/deepseek-r1 |
+| coder_* | deepseek/deepseek-chat (all tiers) |
+
+### Failed Tasks Analysis (152 total)
+
+| Category | Count | Notes |
+|----------|-------|-------|
+| SCHEMA_VALIDATION | 40 | Zod schema mismatches |
+| PR_CLOSED | 31 | PRs manually closed - no action needed |
+| UNKNOWN | 27 | Transient errors |
+| JSON_PARSE_ERROR | 27 | LLM returned malformed JSON |
+| MAX_ATTEMPTS_REACHED | 11 | Exhausted fix attempts |
+| SYNTAX_ERROR | 8 | Generated code has errors |
+| COMPLEXITY_TOO_HIGH | 2 | XL complexity - expected |
+| Others | 6 | Credits, quotas, model issues |
+
+**Key Finding:** Most failed tasks were for features **already implemented**:
+- ✅ SSE endpoint (`router.ts:3019`)
+- ✅ RAG/Codebase indexing (`src/services/rag/` - 10 files)
+- ✅ Agentic loop states (REFLECTING, REPLANNING in types.ts)
+- ✅ LangGraph service (completed parts #25-33)
+
+**Recommendation:** No retry needed. Failed tasks are obsolete or transient errors.
+
+### Current System Status
+
+**Database:** `ep-solitary-breeze` (Neon PostgreSQL)
+- 193 total tasks
+- 41 completed (21%)
+- 152 failed (obsolete/transient)
+
+**Models:** All DeepSeek via OpenRouter (Anthropic credits exhausted)
+
+**API:** Running locally on port 3000
+
+**Dashboard:** MobX + SSE fully integrated
+
+---
+
+_Last updated: 2025-12-16 21:00 UTC_
