@@ -1,0 +1,17 @@
+{
+  "context_servers": {
+    "autodev": {
+      "command": "bun",
+      "args": [
+        "run",
+        "/absolute/path/to/autodev/packages/api/src/mcp-server.ts"
+      ],
+      "env": {
+        "DATABASE_URL": "postgresql://...",
+        "GITHUB_TOKEN": "ghp_...",
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "OPENAI_API_KEY": "sk-..."
+      }
+    }
+  }
+}

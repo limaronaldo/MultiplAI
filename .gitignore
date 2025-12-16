@@ -29,3 +29,6 @@ bun.lockb
 
 # Test
 coverage/
+
+# Turbo
+.turbo/
