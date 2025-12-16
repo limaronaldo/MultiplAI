@@ -5066,6 +5066,134 @@ route("POST", "/api/tasks/import", async (req) => {
 });
 
 // ============================================
+// Plans
+// ============================================
+
+/**
+ * POST /api/plans/:id/create-issues - Create GitHub issues from plan cards
+ */
+route("POST", "/api/plans/:id/create-issues", async (req) => {
+  const url = new URL(req.url);
+  const planId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(planId)) {
+    return Response.json({ error: "Invalid plan ID" }, { status: 400 });
+  }
+
+  try {
+    // Get plan details
+    const plan = await db.getPlan(planId);
+    if (!plan) {
+      return Response.json({ error: "Plan not found" }, { status: 404 });
+    }
+
+    // Get all cards for the plan
+    const cards = await db.getPlanCards(planId);
+    if (!cards || cards.length === 0) {
+      return Response.json(
+        { error: "No cards found for this plan" },
+        { status: 400 },
+      );
+    }
+
+    // Validate repo format
+    const repo = plan.github_repo;
+    if (!repo || !repo.includes("/")) {
+      return Response.json(
+        { error: "Invalid GitHub repository format in plan" },
+        { status: 400 },
+      );
+    }
+
+    const [owner, repoName] = repo.split("/");
+    const results: {
+      cardId: string;
+      title: string;
+      issueNumber?: number;
+      issueUrl?: string;
+      error?: string;
+    }[] = [];
+    let created = 0;
+    let failed = 0;
+
+    // Create GitHub issue for each card
+    for (const card of cards) {
+      try {
+        // Skip if issue already created
+        if (card.github_issue_number) {
+          results.push({
+            cardId: card.id,
+            title: card.title,
+            issueNumber: card.github_issue_number,
+            issueUrl: card.github_issue_url,
+            error: "Issue already exists",
+          });
+          continue;
+        }
+
+        // Create issue with complexity label
+        const labels = ["auto-dev"];
+        if (card.complexity) {
+          labels.push(`complexity-${card.complexity.toLowerCase()}`);
+        }
+
+        const issue = await github.createIssue(owner, repoName, {
+          title: card.title,
+          body: card.description || "",
+          labels,
+        });
+
+        // Update card with GitHub issue info
+        await db.updatePlanCard(card.id, {
+          github_issue_number: issue.number,
+          github_issue_url: issue.html_url,
+          status: "created",
+        });
+
+        results.push({
+          cardId: card.id,
+          title: card.title,
+          issueNumber: issue.number,
+          issueUrl: issue.html_url,
+        });
+
+        created++;
+
+        console.log(
+          `[API] Created issue #${issue.number} for card ${card.id}: ${card.title}`,
+        );
+      } catch (e: any) {
+        results.push({
+          cardId: card.id,
+          title: card.title,
+          error: e.message || "Failed to create issue",
+        });
+        failed++;
+        console.error(`[API] Failed to create issue for card ${card.id}:`, e);
+      }
+    }
+
+    console.log(
+      `[API] Created ${created} issues from plan ${planId}, ${failed} failed`,
+    );
+
+    return Response.json({
+      ok: true,
+      created,
+      failed,
+      total: cards.length,
+      results,
+    });
+  } catch (error) {
+    console.error("[API] Failed to create issues from plan:", error);
+    return Response.json(
+      { error: "Failed to create issues from plan", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+// ============================================
 // Visual Tests (CUA)
 // ============================================
 
