@@ -5070,6 +5070,420 @@ route("POST", "/api/tasks/import", async (req) => {
 // ============================================
 
 /**
+ * GET /api/plans - List all plans
+ * Query params:
+ *   - status: filter by status (draft, in_progress, completed)
+ *   - repo: filter by github_repo
+ */
+route("GET", "/api/plans", async (req) => {
+  const url = new URL(req.url);
+  const status = url.searchParams.get("status") || undefined;
+  const repo = url.searchParams.get("repo") || undefined;
+
+  try {
+    const plans = await db.getPlans({ status, github_repo: repo });
+
+    return Response.json({
+      plans,
+      count: plans.length,
+    });
+  } catch (error) {
+    console.error("[API] Failed to list plans:", error);
+    return Response.json(
+      { error: "Failed to list plans", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/plans - Create a new plan
+ */
+route("POST", "/api/plans", async (req) => {
+  try {
+    const body = await req.json();
+    const { name, description, github_repo, selected_model, status } = body;
+
+    if (!name || !github_repo) {
+      return Response.json(
+        { error: "Missing required fields: name, github_repo" },
+        { status: 400 },
+      );
+    }
+
+    // Validate repo format
+    if (!github_repo.includes("/")) {
+      return Response.json(
+        { error: "Invalid repo format. Use owner/repo" },
+        { status: 400 },
+      );
+    }
+
+    const plan = await db.createPlan({
+      name,
+      description,
+      github_repo,
+      selected_model,
+      status,
+    });
+
+    console.log(`[API] Created plan ${plan.id}: ${plan.name}`);
+
+    return Response.json({ plan }, { status: 201 });
+  } catch (error) {
+    console.error("[API] Failed to create plan:", error);
+    return Response.json(
+      { error: "Failed to create plan", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/plans/:id - Get plan details
+ */
+route("GET", "/api/plans/:id", async (req) => {
+  const url = new URL(req.url);
+  const planId = url.pathname.split("/")[3];
+
+  // Skip if this is a sub-route like /api/plans/:id/cards
+  if (
+    planId === "cards" ||
+    url.pathname.includes("/cards") ||
+    url.pathname.includes("/create-issues") ||
+    url.pathname.includes("/reorder")
+  ) {
+    return new Response(null, { status: 404 });
+  }
+
+  if (!isValidUUID(planId)) {
+    return Response.json({ error: "Invalid plan ID" }, { status: 400 });
+  }
+
+  try {
+    const plan = await db.getPlan(planId);
+    if (!plan) {
+      return Response.json({ error: "Plan not found" }, { status: 404 });
+    }
+
+    // Get cards with count
+    const cards = await db.getPlanCards(planId);
+    const completedCount = cards.filter((c: any) => c.status === "done").length;
+
+    return Response.json({
+      ...plan,
+      card_count: cards.length,
+      completed_count: completedCount,
+      cards,
+    });
+  } catch (error) {
+    console.error("[API] Failed to get plan:", error);
+    return Response.json(
+      { error: "Failed to get plan", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * PUT /api/plans/:id - Update plan
+ */
+route("PUT", "/api/plans/:id", async (req) => {
+  const url = new URL(req.url);
+  const planId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(planId)) {
+    return Response.json({ error: "Invalid plan ID" }, { status: 400 });
+  }
+
+  try {
+    const body = await req.json();
+    const { name, description, github_repo, selected_model, status } = body;
+
+    const plan = await db.updatePlan(planId, {
+      name,
+      description,
+      github_repo,
+      selected_model,
+      status,
+    });
+
+    if (!plan) {
+      return Response.json({ error: "Plan not found" }, { status: 404 });
+    }
+
+    console.log(`[API] Updated plan ${planId}`);
+
+    return Response.json({ plan });
+  } catch (error) {
+    console.error("[API] Failed to update plan:", error);
+    return Response.json(
+      { error: "Failed to update plan", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * DELETE /api/plans/:id - Delete plan (cascades to cards)
+ */
+route("DELETE", "/api/plans/:id", async (req) => {
+  const url = new URL(req.url);
+  const planId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(planId)) {
+    return Response.json({ error: "Invalid plan ID" }, { status: 400 });
+  }
+
+  try {
+    const deleted = await db.deletePlan(planId);
+
+    if (!deleted) {
+      return Response.json({ error: "Plan not found" }, { status: 404 });
+    }
+
+    console.log(`[API] Deleted plan ${planId}`);
+
+    return Response.json({ ok: true, message: "Plan deleted successfully" });
+  } catch (error) {
+    console.error("[API] Failed to delete plan:", error);
+    return Response.json(
+      { error: "Failed to delete plan", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/plans/:id/cards - Get all cards for a plan
+ */
+route("GET", "/api/plans/:id/cards", async (req) => {
+  const url = new URL(req.url);
+  const planId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(planId)) {
+    return Response.json({ error: "Invalid plan ID" }, { status: 400 });
+  }
+
+  try {
+    const plan = await db.getPlan(planId);
+    if (!plan) {
+      return Response.json({ error: "Plan not found" }, { status: 404 });
+    }
+
+    const cards = await db.getPlanCards(planId);
+
+    return Response.json({
+      cards,
+      count: cards.length,
+    });
+  } catch (error) {
+    console.error("[API] Failed to get plan cards:", error);
+    return Response.json(
+      { error: "Failed to get plan cards", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/plans/:id/cards - Create a new card in a plan
+ */
+route("POST", "/api/plans/:id/cards", async (req) => {
+  const url = new URL(req.url);
+  const planId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(planId)) {
+    return Response.json({ error: "Invalid plan ID" }, { status: 400 });
+  }
+
+  try {
+    const plan = await db.getPlan(planId);
+    if (!plan) {
+      return Response.json({ error: "Plan not found" }, { status: 404 });
+    }
+
+    const body = await req.json();
+    const { title, description, complexity, estimated_cost, sort_order } = body;
+
+    if (!title) {
+      return Response.json(
+        { error: "Missing required field: title" },
+        { status: 400 },
+      );
+    }
+
+    const card = await db.createPlanCard({
+      plan_id: planId,
+      title,
+      description,
+      complexity,
+      estimated_cost,
+      sort_order,
+    });
+
+    console.log(`[API] Created card ${card.id} in plan ${planId}`);
+
+    return Response.json({ card }, { status: 201 });
+  } catch (error) {
+    console.error("[API] Failed to create card:", error);
+    return Response.json(
+      { error: "Failed to create card", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/plans/:id/cards/reorder - Reorder cards in a plan
+ */
+route("POST", "/api/plans/:id/cards/reorder", async (req) => {
+  const url = new URL(req.url);
+  const planId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(planId)) {
+    return Response.json({ error: "Invalid plan ID" }, { status: 400 });
+  }
+
+  try {
+    const plan = await db.getPlan(planId);
+    if (!plan) {
+      return Response.json({ error: "Plan not found" }, { status: 404 });
+    }
+
+    const body = await req.json();
+    const { cardIds } = body;
+
+    if (!cardIds || !Array.isArray(cardIds)) {
+      return Response.json(
+        { error: "Missing required field: cardIds (array)" },
+        { status: 400 },
+      );
+    }
+
+    await db.reorderPlanCards(planId, cardIds);
+
+    console.log(`[API] Reordered ${cardIds.length} cards in plan ${planId}`);
+
+    return Response.json({ ok: true, message: "Cards reordered successfully" });
+  } catch (error) {
+    console.error("[API] Failed to reorder cards:", error);
+    return Response.json(
+      { error: "Failed to reorder cards", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/cards/:id - Get a single card
+ */
+route("GET", "/api/cards/:id", async (req) => {
+  const url = new URL(req.url);
+  const cardId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(cardId)) {
+    return Response.json({ error: "Invalid card ID" }, { status: 400 });
+  }
+
+  try {
+    const card = await db.getPlanCard(cardId);
+    if (!card) {
+      return Response.json({ error: "Card not found" }, { status: 404 });
+    }
+
+    return Response.json({ card });
+  } catch (error) {
+    console.error("[API] Failed to get card:", error);
+    return Response.json(
+      { error: "Failed to get card", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * PUT /api/cards/:id - Update a card
+ */
+route("PUT", "/api/cards/:id", async (req) => {
+  const url = new URL(req.url);
+  const cardId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(cardId)) {
+    return Response.json({ error: "Invalid card ID" }, { status: 400 });
+  }
+
+  try {
+    const body = await req.json();
+    const {
+      title,
+      description,
+      complexity,
+      status,
+      estimated_cost,
+      sort_order,
+      github_issue_number,
+      github_issue_url,
+    } = body;
+
+    const card = await db.updatePlanCardFull(cardId, {
+      title,
+      description,
+      complexity,
+      status,
+      estimated_cost,
+      sort_order,
+      github_issue_number,
+      github_issue_url,
+    });
+
+    if (!card) {
+      return Response.json({ error: "Card not found" }, { status: 404 });
+    }
+
+    console.log(`[API] Updated card ${cardId}`);
+
+    return Response.json({ card });
+  } catch (error) {
+    console.error("[API] Failed to update card:", error);
+    return Response.json(
+      { error: "Failed to update card", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * DELETE /api/cards/:id - Delete a card
+ */
+route("DELETE", "/api/cards/:id", async (req) => {
+  const url = new URL(req.url);
+  const cardId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(cardId)) {
+    return Response.json({ error: "Invalid card ID" }, { status: 400 });
+  }
+
+  try {
+    const deleted = await db.deletePlanCard(cardId);
+
+    if (!deleted) {
+      return Response.json({ error: "Card not found" }, { status: 404 });
+    }
+
+    console.log(`[API] Deleted card ${cardId}`);
+
+    return Response.json({ ok: true, message: "Card deleted successfully" });
+  } catch (error) {
+    console.error("[API] Failed to delete card:", error);
+    return Response.json(
+      { error: "Failed to delete card", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
  * POST /api/plans/:id/create-issues - Create GitHub issues from plan cards
  */
 route("POST", "/api/plans/:id/create-issues", async (req) => {

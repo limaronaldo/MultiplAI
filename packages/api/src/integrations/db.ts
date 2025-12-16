@@ -1168,4 +1168,191 @@ export const db = {
     `;
     return result || null;
   },
+
+  // List all plans with card counts
+  async getPlans(filters?: {
+    status?: string;
+    github_repo?: string;
+  }): Promise<any[]> {
+    const sql = getDb();
+    const { status, github_repo } = filters || {};
+
+    return await sql`
+      SELECT
+        p.*,
+        COUNT(pc.id)::int as card_count,
+        COUNT(pc.id) FILTER (WHERE pc.status = 'done')::int as completed_count
+      FROM plans p
+      LEFT JOIN plan_cards pc ON p.id = pc.plan_id
+      WHERE
+        (${status}::text IS NULL OR p.status = ${status})
+        AND (${github_repo}::text IS NULL OR p.github_repo = ${github_repo})
+      GROUP BY p.id
+      ORDER BY p.created_at DESC
+    `;
+  },
+
+  // Create a new plan
+  async createPlan(plan: {
+    name: string;
+    description?: string;
+    github_repo: string;
+    selected_model?: string;
+    status?: string;
+    created_by?: string;
+  }): Promise<any> {
+    const sql = getDb();
+    const [result] = await sql`
+      INSERT INTO plans (name, description, github_repo, selected_model, status, created_by)
+      VALUES (
+        ${plan.name},
+        ${plan.description || null},
+        ${plan.github_repo},
+        ${plan.selected_model || "gpt-4"},
+        ${plan.status || "draft"},
+        ${plan.created_by || null}
+      )
+      RETURNING *
+    `;
+    return result;
+  },
+
+  // Update a plan
+  async updatePlan(
+    id: string,
+    updates: {
+      name?: string;
+      description?: string;
+      github_repo?: string;
+      selected_model?: string;
+      status?: string;
+    },
+  ): Promise<any> {
+    const sql = getDb();
+    const [result] = await sql`
+      UPDATE plans
+      SET
+        name = COALESCE(${updates.name}, name),
+        description = COALESCE(${updates.description}, description),
+        github_repo = COALESCE(${updates.github_repo}, github_repo),
+        selected_model = COALESCE(${updates.selected_model}, selected_model),
+        status = COALESCE(${updates.status}, status),
+        updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING *
+    `;
+    return result || null;
+  },
+
+  // Delete a plan (cascades to cards)
+  async deletePlan(id: string): Promise<boolean> {
+    const sql = getDb();
+    const result = await sql`
+      DELETE FROM plans WHERE id = ${id}
+    `;
+    return result.count > 0;
+  },
+
+  // Create a new card
+  async createPlanCard(card: {
+    plan_id: string;
+    title: string;
+    description?: string;
+    complexity?: string;
+    estimated_cost?: number;
+    sort_order?: number;
+  }): Promise<any> {
+    const sql = getDb();
+
+    // Get next sort_order if not provided
+    let sortOrder = card.sort_order;
+    if (sortOrder === undefined) {
+      const [maxOrder] = await sql`
+        SELECT COALESCE(MAX(sort_order), -1) + 1 as next_order
+        FROM plan_cards WHERE plan_id = ${card.plan_id}
+      `;
+      sortOrder = maxOrder.next_order;
+    }
+
+    const [result] = await sql`
+      INSERT INTO plan_cards (plan_id, title, description, complexity, estimated_cost, sort_order)
+      VALUES (
+        ${card.plan_id},
+        ${card.title},
+        ${card.description || null},
+        ${card.complexity || "M"},
+        ${card.estimated_cost || null},
+        ${sortOrder}
+      )
+      RETURNING *
+    `;
+    return result;
+  },
+
+  // Get a single card
+  async getPlanCard(id: string): Promise<any> {
+    const sql = getDb();
+    const [result] = await sql`
+      SELECT * FROM plan_cards WHERE id = ${id}
+    `;
+    return result || null;
+  },
+
+  // Full update for a card (all fields)
+  async updatePlanCardFull(
+    id: string,
+    updates: {
+      title?: string;
+      description?: string;
+      complexity?: string;
+      status?: string;
+      estimated_cost?: number;
+      sort_order?: number;
+      github_issue_number?: number;
+      github_issue_url?: string;
+    },
+  ): Promise<any> {
+    const sql = getDb();
+    const [result] = await sql`
+      UPDATE plan_cards
+      SET
+        title = COALESCE(${updates.title}, title),
+        description = COALESCE(${updates.description}, description),
+        complexity = COALESCE(${updates.complexity}, complexity),
+        status = COALESCE(${updates.status}, status),
+        estimated_cost = COALESCE(${updates.estimated_cost}, estimated_cost),
+        sort_order = COALESCE(${updates.sort_order}, sort_order),
+        github_issue_number = COALESCE(${updates.github_issue_number}, github_issue_number),
+        github_issue_url = COALESCE(${updates.github_issue_url}, github_issue_url),
+        updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING *
+    `;
+    return result || null;
+  },
+
+  // Delete a card
+  async deletePlanCard(id: string): Promise<boolean> {
+    const sql = getDb();
+    const result = await sql`
+      DELETE FROM plan_cards WHERE id = ${id}
+    `;
+    return result.count > 0;
+  },
+
+  // Reorder cards within a plan
+  async reorderPlanCards(planId: string, cardIds: string[]): Promise<boolean> {
+    const sql = getDb();
+
+    // Update sort_order for each card based on array position
+    for (let i = 0; i < cardIds.length; i++) {
+      await sql`
+        UPDATE plan_cards
+        SET sort_order = ${i}, updated_at = NOW()
+        WHERE id = ${cardIds[i]} AND plan_id = ${planId}
+      `;
+    }
+
+    return true;
+  },
 };
