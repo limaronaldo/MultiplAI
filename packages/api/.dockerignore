@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Git
+.git/
+.gitignore
+
+# Environment
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Docs
+README.md
+docs/
+
+# Tests
+coverage/
+*.test.ts
+
+# Build artifacts
+dist/

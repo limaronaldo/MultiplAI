@@ -1,29 +1,51 @@
 # Dependencies
-node_modules/
+node_modules
+npm-debug.log
+yarn-error.log
+pnpm-debug.log
+.pnpm-store
 
-# Git
-.git/
+# Build outputs
+dist
+build
+.next
+out
+
+# Development
+.git
 .gitignore
-
-# Environment
-.env
-.env.*
+.env.local
+.env.development
+.env.test
+*.log
 
 # IDE
-.idea/
-.vscode/
+.vscode
+.idea
 *.swp
+*.swo
+*~
 
 # OS
 .DS_Store
+Thumbs.db
+
+# Temp
+tmp
+temp
+*.tmp
+
+# Test
+coverage
+.nyc_output
 
 # Docs
-README.md
-docs/
+*.md
+!README.md
 
-# Tests
-coverage/
-*.test.ts
+# Screenshots (will be generated in container)
+screenshots
+logs
 
-# Build artifacts
-dist/
+# Fly.io
+fly.toml

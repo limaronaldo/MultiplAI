@@ -1,0 +1,426 @@
+# AI Super Review - Multi-Agent PR Review Orchestration
+#
+# Triggers Copilot, Codex, and Jules to review PRs with:
+# - Idempotent triggers (one per SHA per agent)
+# - Single tracker comment (edited in place)
+# - Required Check Run for merge gating
+# - Manual rerun via `/ai rerun` comment
+#
+# Prerequisites:
+# 1. Copilot automatic review enabled in repo Settings → Rules → Rulesets
+# 2. Codex connected via codex.openai.com (optional)
+# 3. Jules connected via jules.google (optional)
+#
+# Key design decisions:
+# - Codex/Jules only trigger on ready_for_review (not synchronize) to save quota
+# - Copilot reruns on push via repo rules (separate from this workflow)
+# - Use `/ai rerun` comment to manually retrigger for latest commits
+
+name: AI Super Review
+
+on:
+  pull_request:
+    types: [ready_for_review]
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: ai-super-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  orchestrate:
+    name: Orchestrate AI Reviews
+    # Run for PRs in same repo (no forks) + either:
+    # (a) ready_for_review event, or
+    # (b) /ai rerun comment on a PR
+    if: >
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       !github.event.pull_request.draft)
+      ||
+      (github.event_name == 'issue_comment' &&
+       contains(github.event.comment.body, '/ai rerun') &&
+       github.event.issue.pull_request != null)
+
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+      checks: write
+
+    steps:
+      # Resolve PR number and SHA for both trigger types
+      - name: Resolve PR context
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.payload.pull_request?.number ?? context.payload.issue.number;
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            core.setOutput("number", pr.number.toString());
+            core.setOutput("sha", pr.head.sha);
+            core.setOutput("title", pr.title);
+            core.setOutput("author", pr.user.login);
+            core.setOutput("changed_files", pr.changed_files.toString());
+            core.setOutput("additions", pr.additions.toString());
+            core.setOutput("deletions", pr.deletions.toString());
+
+      # Create/update Check Run for branch protection integration
+      - name: Create AI Super Review Check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = '${{ steps.pr.outputs.sha }}';
+
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'AI Super Review',
+              head_sha: sha,
+              status: 'in_progress',
+              output: {
+                title: 'AI Super Review started',
+                summary: 'Waiting for Copilot, Codex, and Jules reviews...',
+                text: `## Review Status\n\n| Agent | Status |\n|-------|--------|\n| Copilot | ⏳ (via repo rules) |\n| Codex | ⏳ Triggered |\n| Jules | ⏳ Triggered |\n\n**SHA:** \`${sha}\`\n\nUse \`/ai rerun\` to retrigger reviews.\nUse \`/ai finalize\` to complete the check.`
+              }
+            });
+
+      # Upsert tracker comment (single pinned-style comment, edited in place)
+      - name: Upsert tracker comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = Number('${{ steps.pr.outputs.number }}');
+            const sha = '${{ steps.pr.outputs.sha }}';
+            const title = '${{ steps.pr.outputs.title }}';
+            const author = '${{ steps.pr.outputs.author }}';
+            const changedFiles = '${{ steps.pr.outputs.changed_files }}';
+            const additions = '${{ steps.pr.outputs.additions }}';
+            const deletions = '${{ steps.pr.outputs.deletions }}';
+            const marker = '<!-- AI_SUPER_REVIEW_TRACKER -->';
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              per_page: 100
+            });
+
+            const existing = comments.find(c => c.body?.includes(marker));
+
+            const body = `${marker}
+## 🤖 AI Super Review
+
+**PR:** #${prNumber} - ${title}
+**Author:** @${author}
+**Changes:** ${changedFiles} files (+${additions}/-${deletions})
+**SHA:** \`${sha}\`
+
+### Review Status
+
+| Agent | Status | Focus Area |
+|-------|--------|------------|
+| 🔷 Copilot | ⏳ (via repo rules) | Style, tests, edge cases, suggested fixes |
+| 🟢 Codex | ⏳ Triggered | Security, API contracts, downstream impact |
+| 🔴 Jules | ⏳ Triggered | Correctness, alternatives, improvements |
+
+### Commands
+
+- \`/ai rerun\` - Retrigger Codex + Jules for latest commits
+- \`/ai finalize\` - Complete the AI Super Review check
+
+### Merge Requirements
+
+- [ ] All consensus issues (2+ agents) addressed
+- [ ] Human approval received
+- [ ] CI checks passing
+- [ ] AI Super Review check passed
+
+---
+<details>
+<summary>📋 Review Guidelines (from AGENTS.md)</summary>
+
+**Priority Levels:**
+- P0: Security vulnerabilities, data loss, crashes
+- P1: Logic errors, missing validation, breaking changes
+- P2: Performance issues, missing tests
+- P3: Style issues (usually ignored)
+
+**Architecture Constraints:**
+- Parameterized database queries
+- Authentication required for non-public endpoints
+- Timeouts and retries for external calls
+
+</details>
+
+_Updated: ${new Date().toISOString()}_`;
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body
+              });
+              console.log('Updated existing tracker comment');
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body
+              });
+              console.log('Created new tracker comment');
+            }
+
+      # Trigger Codex review (idempotent - only once per SHA)
+      - name: Trigger Codex Review
+        uses: actions/github-script@v7
+        env:
+          CODEX_ENABLED: ${{ vars.CODEX_ENABLED || 'true' }}
+        with:
+          script: |
+            if (process.env.CODEX_ENABLED !== 'true') {
+              console.log('Codex review disabled via CODEX_ENABLED variable');
+              return;
+            }
+
+            const prNumber = Number('${{ steps.pr.outputs.number }}');
+            const sha = '${{ steps.pr.outputs.sha }}';
+            const marker = `<!-- CODEX_REVIEW_${sha} -->`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              per_page: 100
+            });
+
+            // Skip if already triggered for this SHA
+            if (comments.some(c => c.body?.includes(marker))) {
+              console.log(`Codex already triggered for SHA ${sha}`);
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: `${marker}
+@codex review for correctness, security, tests, and API contracts.
+
+Focus on P0/P1 issues only. See AGENTS.md for guidelines.`
+            });
+            console.log('Codex review triggered');
+
+      # Trigger Jules review (Reactive Mode - idempotent per SHA)
+      - name: Trigger Jules Review
+        uses: actions/github-script@v7
+        env:
+          JULES_ENABLED: ${{ vars.JULES_ENABLED || 'true' }}
+        with:
+          script: |
+            if (process.env.JULES_ENABLED !== 'true') {
+              console.log('Jules review disabled via JULES_ENABLED variable');
+              return;
+            }
+
+            const prNumber = Number('${{ steps.pr.outputs.number }}');
+            const sha = '${{ steps.pr.outputs.sha }}';
+            const marker = `<!-- JULES_REVIEW_${sha} -->`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              per_page: 100
+            });
+
+            // Skip if already triggered for this SHA
+            if (comments.some(c => c.body?.includes(marker))) {
+              console.log(`Jules already triggered for SHA ${sha}`);
+              return;
+            }
+
+            // Note: @Jules (capital J) for Reactive Mode
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: `${marker}
+@Jules Please review this PR focusing on:
+1. Correctness vs PR description
+2. Edge cases and error handling
+3. Suggested improvements or alternatives
+
+## Format
+### Correctness
+### Safety
+### Tests
+### Suggestions`
+            });
+            console.log('Jules review triggered (Reactive Mode)');
+
+  # Finalize the AI Super Review check
+  # Triggered by `/ai finalize` comment
+  finalize:
+    name: Finalize AI Super Review
+    if: >
+      github.event_name == 'issue_comment' &&
+      contains(github.event.comment.body, '/ai finalize') &&
+      github.event.issue.pull_request != null
+
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+      checks: write
+
+    steps:
+      - name: Resolve PR context
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.payload.issue.number;
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            core.setOutput("number", pr.number.toString());
+            core.setOutput("sha", pr.head.sha);
+
+      - name: Analyze reviews and update check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = Number('${{ steps.pr.outputs.number }}');
+            const sha = '${{ steps.pr.outputs.sha }}';
+
+            // Fetch all comments
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              per_page: 100
+            });
+
+            // Fetch PR reviews (for Copilot)
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+
+            // Detect agent responses
+            const codexMarker = `<!-- CODEX_REVIEW_${sha} -->`;
+            const julesMarker = `<!-- JULES_REVIEW_${sha} -->`;
+
+            const codexTrigger = comments.find(c => c.body?.includes(codexMarker));
+            const julesTrigger = comments.find(c => c.body?.includes(julesMarker));
+
+            // Look for Codex response (comment after trigger from codex bot)
+            const codexResponse = codexTrigger ? comments.find(c =>
+              c.user?.login?.toLowerCase().includes('codex') &&
+              new Date(c.created_at) > new Date(codexTrigger.created_at)
+            ) : null;
+
+            // Look for Jules response
+            const julesResponse = julesTrigger ? comments.find(c =>
+              c.user?.login?.toLowerCase().includes('jules') &&
+              new Date(c.created_at) > new Date(julesTrigger.created_at)
+            ) : null;
+
+            // Look for Copilot review
+            const copilotReview = reviews.find(r =>
+              r.user?.login === 'copilot[bot]' ||
+              r.user?.login === 'github-copilot[bot]'
+            );
+
+            // Build summary
+            const agentStatus = {
+              copilot: copilotReview ? '✅ Reviewed' : '⏳ Pending',
+              codex: codexResponse ? '✅ Reviewed' : (codexTrigger ? '⏳ Triggered' : '❌ Not triggered'),
+              jules: julesResponse ? '✅ Reviewed' : (julesTrigger ? '⏳ Triggered' : '❌ Not triggered')
+            };
+
+            const allReviewed = codexResponse && julesResponse;
+            const conclusion = allReviewed ? 'success' : 'neutral';
+
+            const summaryText = `## AI Super Review Summary
+
+| Agent | Status |
+|-------|--------|
+| Copilot | ${agentStatus.copilot} |
+| Codex | ${agentStatus.codex} |
+| Jules | ${agentStatus.jules} |
+
+### Conclusion
+${allReviewed ? '✅ All AI reviews complete. Ready for human review.' : '⚠️ Some AI reviews pending. Use `/ai rerun` if needed.'}
+
+---
+_Finalized at ${new Date().toISOString()}_`;
+
+            // Update the check run
+            const { data: checkRuns } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: sha
+            });
+
+            const superReviewCheck = checkRuns.check_runs.find(c => c.name === 'AI Super Review');
+
+            if (superReviewCheck) {
+              await github.rest.checks.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                check_run_id: superReviewCheck.id,
+                status: 'completed',
+                conclusion: conclusion,
+                output: {
+                  title: allReviewed ? 'AI Reviews Complete' : 'AI Reviews Pending',
+                  summary: summaryText
+                }
+              });
+              console.log(`Check run updated with conclusion: ${conclusion}`);
+            }
+
+            // Update tracker comment
+            const trackerMarker = '<!-- AI_SUPER_REVIEW_TRACKER -->';
+            const trackerComment = comments.find(c => c.body?.includes(trackerMarker));
+
+            if (trackerComment) {
+              const updatedBody = trackerComment.body.replace(
+                /### Review Status[\s\S]*?(?=### Commands|### Merge|---)/,
+                `### Review Status
+
+| Agent | Status | Focus Area |
+|-------|--------|------------|
+| 🔷 Copilot | ${agentStatus.copilot} | Style, tests, edge cases |
+| 🟢 Codex | ${agentStatus.codex} | Security, API contracts |
+| 🔴 Jules | ${agentStatus.jules} | Correctness, alternatives |
+
+`
+              );
+
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: trackerComment.id,
+                body: updatedBody
+              });
+            }
+
+            // Post summary as new comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: summaryText
+            });
