@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Save, RotateCcw, Check, AlertCircle } from "lucide-react";
 import type { AvailableModel, ModelConfig } from "@autodev/shared";
+import { AIReviewSettings } from "@/components/settings/AIReviewSettings";
 
 interface ModelConfigResponse {
   configs: ModelConfig[];
@@ -355,6 +356,11 @@ export function SettingsPage() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* AI Super Review Settings */}
+      <div className="mt-8">
+        <AIReviewSettings />
       </div>
 
       {/* Model legend */}

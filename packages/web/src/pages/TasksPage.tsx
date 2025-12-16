@@ -14,6 +14,11 @@ import {
 import type { TaskSummary, TaskStatus } from "@autodev/shared";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { ToastContainer, useToast } from "@/components/common/Toast";
+import {
+  AdvancedFilters,
+  FilterState,
+  defaultFilterState,
+} from "@/components/filters/AdvancedFilters";
 
 // Normalize API response from camelCase to snake_case
 function normalizeTask(task: Record<string, unknown>): TaskSummary {
@@ -83,6 +88,9 @@ export function TasksPage() {
   const [sortField, setSortField] = useState<SortField>("issue");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [advancedFilters, setAdvancedFilters] =
+    useState<FilterState>(defaultFilterState);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newIssue, setNewIssue] = useState({
@@ -117,9 +125,22 @@ export function TasksPage() {
       .catch(() => {});
   };
 
+  const fetchModels = () => {
+    fetch("/api/config/models")
+      .then((res) => res.json())
+      .then((data) => {
+        const models = (data.availableModels || []).map(
+          (m: { id: string }) => m.id,
+        );
+        setAvailableModels(models);
+      })
+      .catch(() => {});
+  };
+
   useEffect(() => {
     fetchTasks();
     fetchRepositories();
+    fetchModels();
     const interval = setInterval(fetchTasks, 10000);
     return () => clearInterval(interval);
   }, []);
@@ -322,7 +343,7 @@ export function TasksPage() {
       result = result.filter((t) => t.github_repo === selectedRepo);
     }
 
-    // Filter by status
+    // Filter by status (quick filter)
     if (statusFilter !== "all") {
       result = result.filter((t) => {
         if (statusFilter === "completed") {
@@ -350,6 +371,33 @@ export function TasksPage() {
         return true;
       });
     }
+
+    // Advanced filters - Date Range
+    if (advancedFilters.dateRange.start) {
+      result = result.filter(
+        (t) => new Date(t.created_at) >= advancedFilters.dateRange.start!,
+      );
+    }
+    if (advancedFilters.dateRange.end) {
+      result = result.filter(
+        (t) => new Date(t.created_at) <= advancedFilters.dateRange.end!,
+      );
+    }
+
+    // Advanced filters - Status tags (overrides quick filter if set)
+    if (advancedFilters.statuses.length > 0) {
+      result = result.filter((t) =>
+        advancedFilters.statuses.includes(t.status),
+      );
+    }
+
+    // Advanced filters - Complexity (requires extended task data)
+    // Note: This would need API to return estimated_complexity field
+    // if (advancedFilters.complexity.length > 0) {
+    //   result = result.filter((t) =>
+    //     advancedFilters.complexity.includes(t.estimated_complexity || "")
+    //   );
+    // }
 
     // Search filter
     if (search) {
@@ -391,7 +439,15 @@ export function TasksPage() {
     });
 
     return result;
-  }, [tasks, selectedRepo, statusFilter, search, sortField, sortDirection]);
+  }, [
+    tasks,
+    selectedRepo,
+    statusFilter,
+    search,
+    sortField,
+    sortDirection,
+    advancedFilters,
+  ]);
 
   const setSelectedRepo = (repo: string) => {
     if (repo === "all") {
@@ -496,6 +552,14 @@ export function TasksPage() {
           className="flex-1 max-w-md px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
         />
       </div>
+
+      {/* Advanced Filters */}
+      <AdvancedFilters
+        filters={advancedFilters}
+        onChange={setAdvancedFilters}
+        availableModels={availableModels}
+        className="mb-4"
+      />
 
       {loading && tasks.length === 0 ? (
         <div className="animate-pulse space-y-2">
