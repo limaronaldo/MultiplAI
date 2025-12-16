@@ -52,6 +52,7 @@ export const TaskStatus = {
   REVIEWING: "REVIEWING",
   REVIEW_APPROVED: "REVIEW_APPROVED",
   REVIEW_REJECTED: "REVIEW_REJECTED",
+  WAITING_BATCH: "WAITING_BATCH", // Waiting for batch merge (prevents conflicts)
   PR_CREATED: "PR_CREATED",
   WAITING_HUMAN: "WAITING_HUMAN",
   COMPLETED: "COMPLETED",
@@ -517,6 +518,7 @@ export interface TaskEvent {
     | "REFLECTION_COMPLETE" // Reflection analysis done (Issue #220)
     | "REPLAN_TRIGGERED" // Replanning triggered by reflection (Issue #220)
     | "CONFLICT_DETECTED" // Merge conflict detected with other PRs (Issue #403)
+    | "BATCH_PR_CREATED" // Batch merge PR created (Issue #403)
     | "VISUAL_TESTING_STARTED" // Visual tests started (Issue #245)
     | "VISUAL_TESTING_COMPLETED" // Visual tests completed (Issue #245)
     | "VISUAL_TESTING_ERROR"; // Visual testing error (Issue #245)
