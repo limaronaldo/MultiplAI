@@ -2134,6 +2134,12 @@ export class Orchestrator {
     logger: Logger,
     options: { applyToGitHub: boolean },
   ): Promise<{ success: boolean; task: Task }> {
+    // Reset branch to main before validation to ensure clean state
+    // This prevents duplicate code when tasks are retried
+    if (task.branchName) {
+      await this.github.ensureBranchExists(task.githubRepo, task.branchName);
+    }
+
     // Quick validation first (no network, fast)
     const quickResult = quickValidateDiff(diff);
 
