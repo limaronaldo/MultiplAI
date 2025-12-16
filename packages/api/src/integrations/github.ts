@@ -263,6 +263,36 @@ export class GitHubClient {
   }
 
   /**
+   * Ensures a branch exists, creating it from main if it doesn't.
+   * This handles the case where tasks are reset but branches were deleted.
+   */
+  async ensureBranchExists(
+    fullName: string,
+    branchName: string,
+  ): Promise<void> {
+    const { owner, repo } = this.parseRepo(fullName);
+
+    try {
+      await this.octokit.rest.git.getRef({
+        owner,
+        repo,
+        ref: `heads/${branchName}`,
+      });
+      // Branch exists
+    } catch (e: any) {
+      if (e.status === 404) {
+        // Branch doesn't exist, create it from main
+        console.log(
+          `[GitHub] Branch ${branchName} not found, creating from main...`,
+        );
+        await this.createBranch(fullName, branchName);
+      } else {
+        throw e;
+      }
+    }
+  }
+
+  /**
    * Aplica um diff no repositório
    * Parses the unified diff and applies changes to files via GitHub API.
    */
@@ -273,6 +303,9 @@ export class GitHubClient {
     commitMessage: string,
   ): Promise<string> {
     const { owner, repo } = this.parseRepo(fullName);
+
+    // Ensure branch exists before applying diff
+    await this.ensureBranchExists(fullName, branch);
 
     // Parse diff and get final file contents
     const fileChanges = await this.parseDiffWithContent(fullName, branch, diff);
