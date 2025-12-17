@@ -1,18 +1,13 @@
-# fly.toml - Fly.io config for MultiplAI API with CUA Support
+# fly.toml - Fly.io config for MultiplAI API
 app = "multiplai"
 primary_region = "gru"
 
 [build]
-  dockerfile = "Dockerfile.cua"
+  dockerfile = "Dockerfile"
 
 [env]
   NODE_ENV = "production"
   PORT = "3000"
-  # Visual Testing (CUA)
-  ENABLE_VISUAL_TESTING = "true"
-  CUA_HEADLESS = "true"
-  CUA_TIMEOUT = "60000"
-  CUA_MAX_ACTIONS = "30"
 
 [http_service]
   internal_port = 3000
