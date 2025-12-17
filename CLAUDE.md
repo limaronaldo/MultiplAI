@@ -2207,4 +2207,128 @@ Chat tables already exist (ran previously). Verified:
 
 ---
 
-_Last updated: 2025-12-17 02:15 UTC_
+## Session Update: 2025-12-17 03:30 UTC
+
+### Completed This Session
+
+#### 1. Production Deployment ✅
+
+Successfully deployed all changes to Fly.io after resolving multiple issues.
+
+**Deployment Issues Resolved:**
+
+| Issue | Solution |
+|-------|----------|
+| `fly.toml` referenced deleted `Dockerfile.cua` | Updated to use `Dockerfile` |
+| `Dockerfile` missing from repo root | Copied from `packages/api/Dockerfile` |
+| `pnpm-lock.yaml` outdated (react-markdown) | Ran `pnpm install` to regenerate |
+| Fly.io remote builder hanging | Set up GitHub Actions CI/CD |
+
+**Final Deployment:**
+- **Version:** v222
+- **Image:** `deployment-01KCN5EGAGS4RN50F39X3BZ0A8`
+- **Status:** ✅ Healthy
+
+#### 2. GitHub Actions CI/CD ✅
+
+Created automated deployment workflow for Fly.io.
+
+**New File:** `.github/workflows/deploy.yml`
+- Triggers on push to `main` branch
+- Manual trigger via `workflow_dispatch`
+- Uses `superfly/flyctl-actions` for deployment
+- Verifies health endpoint after deploy
+- Generates deployment summary
+
+**Secret Added:** `FLY_API_TOKEN` (deploy-scoped token)
+
+#### 3. All Commits Pushed (11 total)
+
+| Commit | Description |
+|--------|-------------|
+| `886c367` | feat(chat): conversational AI chat |
+| `8b0b3d9` | refactor(dashboard): simplify UI |
+| `8955cf7` | fix(ui): widget/theme fixes |
+| `963cc05` | chore: organize docs folder |
+| `b610b6b` | chore: remove unused files |
+| `04d4f47` | docs: update CLAUDE.md |
+| `c0da5d8` | docs: session summary |
+| `3e7eee9` | fix: fly.toml Dockerfile path |
+| `7b85cf5` | ci: GitHub Actions deploy workflow |
+| `a1340a3` | fix: add Dockerfile to root |
+| `3a93fa7` | fix: pnpm lockfile for react-markdown |
+
+### Current System Status
+
+| Component | Status | Details |
+|-----------|--------|---------|
+| **API (Fly.io)** | ✅ v222 | https://multiplai.fly.dev |
+| **Dashboard** | 🏠 Local | http://localhost:5173 |
+| **Database** | ✅ OK | Neon PostgreSQL |
+| **CI/CD** | ✅ Active | GitHub Actions → Fly.io |
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    GitHub Actions                        │
+│                                                         │
+│  push to main ──► deploy.yml ──► fly deploy ──► Fly.io │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────┐         ┌─────────────────────┐
+│   Dashboard (web)   │ ──API──►│   API (Fly.io)      │
+│   localhost:5173    │         │   multiplai.fly.dev │
+│   React + Vite      │         │   Bun + TypeScript  │
+└─────────────────────┘         └─────────────────────┘
+                                         │
+                    ┌────────────────────┼────────────────────┐
+                    ▼                    ▼                    ▼
+            ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+            │   Neon DB   │      │  GitHub API │      │  LLM APIs   │
+            │  PostgreSQL │      │   (Octokit) │      │ Claude/GPT  │
+            └─────────────┘      └─────────────┘      └─────────────┘
+```
+
+### Features Now Live in Production
+
+1. **Chat Feature** - Talk to AI about tasks, approve/reject/retry via natural language
+2. **Dashboard Simplification** - Removed redundant pages, external links to GitHub/Linear
+3. **UI Fixes** - Dark theme, widget crash fixes
+4. **Auto-Deploy** - Push to main triggers Fly.io deployment
+
+### Quick Commands
+
+```bash
+# Start local dashboard
+cd /Users/ronaldo/Projects/DEVMAX/autodev/packages/web
+bun run dev
+# Open http://localhost:5173
+
+# Check production health
+curl -s https://multiplai.fly.dev/api/health | jq
+
+# View deploy logs
+fly logs -a multiplai
+
+# Manual deploy (if needed)
+fly deploy -a multiplai
+
+# Check GitHub Actions
+gh run list --workflow=deploy.yml
+```
+
+### URLs
+
+| Resource | URL |
+|----------|-----|
+| **API** | https://multiplai.fly.dev |
+| **Health Check** | https://multiplai.fly.dev/api/health |
+| **Dashboard** | http://localhost:5173 (local) |
+| **GitHub Repo** | https://github.com/limaronaldo/MultiplAI |
+| **GitHub Actions** | https://github.com/limaronaldo/MultiplAI/actions |
+| **Fly.io Console** | https://fly.io/apps/multiplai |
+
+---
+
+_Last updated: 2025-12-17 03:30 UTC_
