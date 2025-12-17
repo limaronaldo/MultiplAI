@@ -11,6 +11,7 @@ import {
   ChevronsUpDown,
   Plus,
   X,
+  ExternalLink,
 } from "lucide-react";
 import type { TaskStatus } from "@autodev/shared";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
@@ -176,8 +177,22 @@ export const TasksPageMobX = observer(function TasksPageMobX() {
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-white">Tasks</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-white">Queue</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            AI processing status for your issues
+          </p>
+        </div>
         <div className="flex items-center gap-2">
+          <a
+            href="https://github.com/issues?q=is%3Aopen+label%3Aauto-dev"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-3 py-2 text-sm text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+          >
+            <ExternalLink className="w-4 h-4" />
+            All Issues
+          </a>
           <button
             onClick={() => setShowCreateModal(true)}
             className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
@@ -190,7 +205,6 @@ export const TasksPageMobX = observer(function TasksPageMobX() {
             className="flex items-center gap-2 px-3 py-2 text-sm text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-            Refresh
           </button>
         </div>
       </div>

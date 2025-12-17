@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   RefreshCw,
@@ -56,7 +56,7 @@ function getStatusColor(status: TaskStatus): string {
   }
 }
 
-type ActionType = "retry" | "rerun" | "cancel";
+type ActionType = "retry" | "rerun" | "cancel" | "start";
 type SortField = "issue" | "status" | "title" | "attempts" | "created";
 type SortDirection = "asc" | "desc";
 type StatusFilter = "all" | "active" | "completed" | "failed";
@@ -74,9 +74,51 @@ interface Repository {
   full_name: string;
 }
 
+// Storage key for persisting UI state
+const TASKS_UI_STATE_KEY = "autodev-tasks-ui-state";
+
+interface PersistedUIState {
+  scrollPosition: number;
+  search: string;
+  statusFilter: StatusFilter;
+  sortField: SortField;
+  sortDirection: SortDirection;
+  advancedFilters: FilterState;
+}
+
+function loadPersistedState(): Partial<PersistedUIState> {
+  try {
+    const stored = sessionStorage.getItem(TASKS_UI_STATE_KEY);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  return {};
+}
+
+function savePersistedState(state: Partial<PersistedUIState>) {
+  try {
+    const existing = loadPersistedState();
+    sessionStorage.setItem(
+      TASKS_UI_STATE_KEY,
+      JSON.stringify({ ...existing, ...state }),
+    );
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 export function TasksPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const hasRestoredScroll = useRef(false);
+
+  // Load persisted state on mount
+  const persistedState = useMemo(() => loadPersistedState(), []);
+
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,12 +126,19 @@ export function TasksPage() {
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(
     null,
   );
-  const [search, setSearch] = useState("");
-  const [sortField, setSortField] = useState<SortField>("issue");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [advancedFilters, setAdvancedFilters] =
-    useState<FilterState>(defaultFilterState);
+  const [search, setSearch] = useState(persistedState.search || "");
+  const [sortField, setSortField] = useState<SortField>(
+    persistedState.sortField || "issue",
+  );
+  const [sortDirection, setSortDirection] = useState<SortDirection>(
+    persistedState.sortDirection || "desc",
+  );
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(
+    persistedState.statusFilter || "all",
+  );
+  const [advancedFilters, setAdvancedFilters] = useState<FilterState>(
+    persistedState.advancedFilters || defaultFilterState,
+  );
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -100,6 +149,42 @@ export function TasksPage() {
     autoProcess: true,
   });
   const toast = useToast();
+
+  // Persist UI state changes
+  const persistState = useCallback(() => {
+    const scrollPosition = containerRef.current?.scrollTop || window.scrollY;
+    savePersistedState({
+      scrollPosition,
+      search,
+      statusFilter,
+      sortField,
+      sortDirection,
+      advancedFilters,
+    });
+  }, [search, statusFilter, sortField, sortDirection, advancedFilters]);
+
+  // Save state when navigating away
+  useEffect(() => {
+    return () => {
+      persistState();
+    };
+  }, [persistState]);
+
+  // Restore scroll position after tasks load
+  useEffect(() => {
+    if (
+      !loading &&
+      tasks.length > 0 &&
+      !hasRestoredScroll.current &&
+      persistedState.scrollPosition
+    ) {
+      hasRestoredScroll.current = true;
+      // Use requestAnimationFrame to ensure DOM is ready
+      requestAnimationFrame(() => {
+        window.scrollTo(0, persistedState.scrollPosition);
+      });
+    }
+  }, [loading, tasks.length, persistedState.scrollPosition]);
 
   // Get selected repo from URL params
   const selectedRepo = searchParams.get("repo") || "all";
@@ -187,6 +272,8 @@ export function TasksPage() {
   }, [tasks]);
 
   // Action handlers
+  const canStart = (status: TaskStatus) => status === "NEW";
+
   const canRetry = (status: TaskStatus) =>
     status === "FAILED" ||
     status === "TESTS_FAILED" ||
@@ -198,7 +285,7 @@ export function TasksPage() {
     status === "WAITING_HUMAN";
 
   const canCancel = (status: TaskStatus) =>
-    !["COMPLETED", "FAILED", "WAITING_HUMAN"].includes(status);
+    !["COMPLETED", "FAILED", "WAITING_HUMAN", "NEW"].includes(status);
 
   const handleAction = async () => {
     if (!pendingAction) return;
@@ -212,6 +299,7 @@ export function TasksPage() {
       let body: Record<string, unknown> | undefined;
 
       switch (type) {
+        case "start":
         case "retry":
         case "rerun":
           endpoint = `/api/tasks/${taskId}/process`;
@@ -288,6 +376,14 @@ export function TasksPage() {
 
   const getConfirmConfig = (type: ActionType) => {
     switch (type) {
+      case "start":
+        return {
+          title: "Start Task",
+          message:
+            "This will begin processing the task with AutoDev. Continue?",
+          confirmLabel: "Start",
+          variant: "default" as const,
+        };
       case "retry":
         return {
           title: "Retry Task",
@@ -690,6 +786,21 @@ export function TasksPage() {
                           <RefreshCw className="w-4 h-4 animate-spin text-slate-400" />
                         ) : (
                           <>
+                            {canStart(task.status) && (
+                              <button
+                                onClick={() =>
+                                  setPendingAction({
+                                    type: "start",
+                                    taskId: task.id,
+                                    taskTitle: task.github_issue_title,
+                                  })
+                                }
+                                className="p-1.5 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 rounded transition-colors"
+                                title="Start"
+                              >
+                                <Play className="w-4 h-4" />
+                              </button>
+                            )}
                             {canRetry(task.status) && (
                               <button
                                 onClick={() =>

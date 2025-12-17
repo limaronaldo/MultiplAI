@@ -2,11 +2,10 @@ import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard,
   ListTodo,
-  Layers,
   Keyboard,
   Settings,
-  Github,
   FileText,
+  ExternalLink,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ShortcutsModal } from "@/components/ShortcutsModal";
@@ -15,11 +14,30 @@ import { useTheme } from "@/contexts/ThemeContext";
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
-  { to: "/tasks", icon: ListTodo, label: "Tasks" },
-  { to: "/jobs", icon: Layers, label: "Jobs" },
+  { to: "/tasks", icon: ListTodo, label: "Queue" },
   { to: "/plans", icon: FileText, label: "Plans" },
-  { to: "/repositories", icon: Github, label: "Repositories" },
   { to: "/settings", icon: Settings, label: "Settings" },
+];
+
+// External links - configurable via environment variables
+const GITHUB_ORG = import.meta.env.VITE_GITHUB_ORG || "limaronaldo";
+const LINEAR_WORKSPACE = import.meta.env.VITE_LINEAR_WORKSPACE || "";
+
+const externalLinks = [
+  {
+    href: `https://github.com/${GITHUB_ORG}`,
+    icon: ExternalLink,
+    label: "GitHub",
+  },
+  ...(LINEAR_WORKSPACE
+    ? [
+        {
+          href: `https://linear.app/${LINEAR_WORKSPACE}`,
+          icon: ExternalLink,
+          label: "Linear",
+        },
+      ]
+    : [{ href: "https://linear.app", icon: ExternalLink, label: "Linear" }]),
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -68,6 +86,30 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <Icon className="w-5 h-5" />
               {label}
             </NavLink>
+          ))}
+
+          {/* Divider */}
+          <div
+            className={`my-3 border-t ${resolvedTheme === "dark" ? "border-slate-800" : "border-slate-200"}`}
+          />
+
+          {/* External Links */}
+          {externalLinks.map(({ href, icon: Icon, label }) => (
+            <a
+              key={href}
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                resolvedTheme === "dark"
+                  ? "text-slate-500 hover:text-slate-300 hover:bg-slate-800"
+                  : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              <span className="text-sm">{label}</span>
+              <ExternalLink className="w-3 h-3 ml-auto opacity-50" />
+            </a>
           ))}
         </nav>
 
