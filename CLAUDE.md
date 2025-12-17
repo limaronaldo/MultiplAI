@@ -1850,4 +1850,256 @@ Anthropic credits exhausted. All models switched to DeepSeek via OpenRouter:
 
 ---
 
-_Last updated: 2025-12-16 21:00 UTC_
+## Session Update: 2025-12-17 00:30 UTC
+
+### Completed This Session
+
+#### 1. Chat Feature Implementation (Jules-like)
+
+Implemented a full conversational AI chat feature for task interactions.
+
+**New Files Created:**
+- `packages/api/src/agents/chat.ts` - ChatAgent for native conversations
+- `packages/api/src/lib/migrations/011_chat_tables.sql` - Database schema
+- `packages/web/src/components/chat/TaskChat.tsx` - Chat UI component
+- `packages/web/src/components/chat/index.ts` - Export barrel
+
+**Database Tables Added:**
+- `chat_conversations` - Conversation metadata per task
+- `chat_messages` - Message history with role, content, agent, model
+- `external_agent_sessions` - Sessions for Jules/Codex escalation
+
+**API Endpoints Added (router.ts):**
+- `POST /api/tasks/:id/chat` - Send message, get AI response
+- `GET /api/tasks/:id/conversations` - List conversations for task
+- `GET /api/conversations/:id/messages` - Get messages in conversation
+- `PATCH /api/conversations/:id` - Update conversation (title, status)
+- `GET /api/tasks/:id/external-sessions` - List external agent sessions
+- `POST /api/tasks/:id/external-sessions` - Create external session
+
+**ChatAgent Features:**
+- Intent classification (question, code_change, approval, rejection, escalate)
+- Context-aware responses (uses task details, diff, events, history)
+- Action detection (approve, reject, retry_task, modify_code)
+- Suggested follow-ups
+- Confidence scoring
+
+**UI Features (TaskChat.tsx):**
+- Collapsible chat panel on task detail page
+- Opens downward from button
+- Markdown rendering for AI responses (react-markdown)
+- Message history with user/assistant avatars
+- Suggested follow-up buttons
+- Loading state with "Thinking..." indicator
+- Click-outside to close
+- Enter to send, Shift+Enter for newline
+
+#### 2. Bug Fixes
+
+**ActiveJobsWidget crash:**
+- Fixed `jobs.slice is not a function` error
+- Added proper array validation: `Array.isArray(data.jobs) ? data.jobs : []`
+
+**Chat panel positioning:**
+- Changed from `bottom-full` to `top-full` (opens downward)
+- Fixed chevron icons (down when closed, up when open)
+- Added click-outside handler to close panel
+
+**ChatAgent JSON parsing:**
+- Fixed parseResponse to properly extract `response` field from LLM JSON
+- AI responses now show clean text, not nested JSON
+
+#### 3. MainFeatureCard Component Updates
+
+**Dark theme colors:**
+- Background: `bg-slate-800`
+- Border: `border-slate-700`
+- Text: `text-slate-100`
+- Input: `bg-slate-900`
+
+**Updated model list:**
+- Claude Opus 4.5
+- Claude Sonnet 4.5
+- Claude Haiku 4.5
+- DeepSeek V3.2 Speciale
+- Grok 3
+- Grok Code Fast
+
+*(Removed: Kimi K2 Thinking)*
+
+#### 4. Dependencies Added
+
+```bash
+bun install react-markdown  # For chat message rendering
+```
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `packages/api/src/agents/chat.ts` | New ChatAgent with intent classification |
+| `packages/api/src/router.ts` | 6 new chat API endpoints, CORS PATCH method |
+| `packages/api/src/integrations/db.ts` | Chat database functions |
+| `packages/web/src/components/chat/TaskChat.tsx` | New chat UI component |
+| `packages/web/src/components/chat/index.ts` | Export barrel |
+| `packages/web/src/pages/TaskDetailPageMobX.tsx` | Added TaskChat component |
+| `packages/web/src/components/dashboard/widgets/ActiveJobsWidget.tsx` | Fixed array validation |
+| `packages/web/src/components/plans/MainFeatureCard.tsx` | Dark theme + updated models |
+| `packages/web/package.json` | Added react-markdown dependency |
+
+### How to Use Chat Feature
+
+1. Navigate to any task detail page: `/tasks/:id`
+2. Click the "Chat" button in the top-right action area
+3. Type a message and press Enter
+4. AI responds with context-aware answers
+5. Click suggested follow-ups or ask custom questions
+
+**Example prompts:**
+- "What files will be modified?"
+- "Split it into smaller issues"
+- "LGTM" (triggers approve action)
+- "Explain the implementation plan"
+
+### Current System Status
+
+- **API:** Running on port 3000
+- **Web:** Running on port 5173
+- **Chat:** Fully functional with markdown rendering
+- **Models:** Using DeepSeek via OpenRouter for chat
+
+---
+
+## Session Update: 2025-12-17 01:00 UTC
+
+### Completed This Session (Part 2)
+
+#### 1. Dashboard Simplification
+
+Removed redundant data that duplicates GitHub/Linear. AutoDev now focuses on AI-specific value.
+
+**Philosophy:**
+- **AutoDev shows:** AI processing status, diffs, errors, chat, costs
+- **GitHub shows:** Full issue details, PR reviews, code
+- **Linear shows:** Project management, sprints, milestones
+
+#### 2. Navigation Changes (Layout.tsx)
+
+**Before:**
+```
+Dashboard | Tasks | Jobs | Plans | Repositories | Settings
+```
+
+**After:**
+```
+Dashboard | Queue | Plans | Settings
+─────────────────────────────────────
+GitHub ↗ | Linear ↗
+```
+
+**Removed from nav:**
+- Jobs page
+- Repositories page
+
+**Added:**
+- External links section (GitHub, Linear)
+- Renamed "Tasks" → "Queue"
+
+#### 3. Routes Removed (App.tsx)
+
+```diff
+- /jobs
+- /jobs/:jobId
+- /repositories
+- /import
+```
+
+#### 4. Queue Page Updates (TasksPageMobX.tsx)
+
+- Renamed "Tasks" → "Queue"
+- Added subtitle: "AI processing status for your issues"
+- Added "All Issues" external link to GitHub
+- Simplified refresh button (icon only)
+
+#### 5. Task Detail Simplification (TaskDetailPageMobX.tsx)
+
+**Header links:**
+- GitHub link (always shown)
+- Linear link (shown when `linearIssueId` exists)
+
+**Issue body:**
+- Truncated to 300 characters
+- "View full issue on GitHub" link
+- No longer displays full issue body
+
+**Kept (AI-specific):**
+- Implementation plan
+- Definition of done
+- Current diff with preview
+- AI timeline/events
+- Chat panel
+- Error logs
+
+#### 6. Folder Organization
+
+**Moved to `docs/`:**
+- AGENTS.md
+- BUG_403_IMPLEMENTATION_PLAN.md
+- CHAT_FEATURE_PLAN.md
+- DEPLOYMENT_ISSUES.md
+- IMPLEMENTATION_SUMMARY.md
+- LEARNINGS.md
+- PMVP_IMPLEMENTATION_PLAN.md
+- PMVP_ISSUES.md
+- PMVP_PHASE1_BREAKDOWN.md
+
+**Removed (empty/unused):**
+- `autodev-dashboard/` - empty placeholder
+- `src/` - empty placeholder
+- `langgraph_service/` - empty Python stubs
+- `plane-preview/` - cloned external repo
+- `Dockerfile.cua` - unused
+- `docker-compose.cua.yml` - unused
+
+**New structure:**
+```
+autodev/
+├── .claude/
+├── .github/
+├── docs/              # All documentation (9 files)
+├── node_modules/
+├── packages/
+│   ├── api/           # Backend
+│   ├── shared/        # Shared types
+│   └── web/           # Dashboard
+├── scripts/
+├── CLAUDE.md
+├── README.md
+├── fly.toml
+├── package.json
+├── tsconfig.json
+└── turbo.json
+```
+
+### Files Modified This Session
+
+| File | Changes |
+|------|---------|
+| `packages/web/src/components/Layout.tsx` | Simplified nav, added external links |
+| `packages/web/src/App.tsx` | Removed Jobs/Repos/Import routes |
+| `packages/web/src/pages/TasksPageMobX.tsx` | Renamed to Queue, added GitHub link |
+| `packages/web/src/pages/TaskDetailPageMobX.tsx` | Added Linear link, truncated issue body |
+| `docs/DASHBOARD_SIMPLIFICATION.md` | New - simplification proposal |
+
+### Documentation Created
+
+**`docs/DASHBOARD_SIMPLIFICATION.md`** - Full proposal including:
+- Current redundancy analysis
+- What belongs where (GitHub/Linear/AutoDev)
+- Proposed simplified structure
+- Implementation plan
+- Quick wins checklist
+
+---
+
+_Last updated: 2025-12-17 01:00 UTC_
