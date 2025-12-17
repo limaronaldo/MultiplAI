@@ -1539,4 +1539,333 @@ export const db = {
       createdAt: result.created_at,
     };
   },
+
+  // ============================================
+  // Chat Conversations
+  // ============================================
+
+  async createConversation(taskId: string, title?: string): Promise<string> {
+    const sql = getDb();
+    const [result] = await sql`
+      INSERT INTO chat_conversations (task_id, title)
+      VALUES (${taskId}, ${title || null})
+      RETURNING id
+    `;
+    return result.id;
+  },
+
+  async getConversations(taskId: string): Promise<
+    Array<{
+      id: string;
+      taskId: string;
+      title: string | null;
+      status: string;
+      createdAt: Date;
+      updatedAt: Date;
+      messageCount: number;
+    }>
+  > {
+    const sql = getDb();
+    const results = await sql`
+      SELECT
+        c.*,
+        (SELECT COUNT(*) FROM chat_messages WHERE conversation_id = c.id) as message_count
+      FROM chat_conversations c
+      WHERE c.task_id = ${taskId}
+      ORDER BY c.updated_at DESC
+    `;
+    return results.map((r: any) => ({
+      id: r.id,
+      taskId: r.task_id,
+      title: r.title,
+      status: r.status,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+      messageCount: parseInt(r.message_count) || 0,
+    }));
+  },
+
+  async getConversation(conversationId: string): Promise<{
+    id: string;
+    taskId: string;
+    title: string | null;
+    status: string;
+    createdAt: Date;
+    updatedAt: Date;
+  } | null> {
+    const sql = getDb();
+    const [result] = await sql`
+      SELECT * FROM chat_conversations WHERE id = ${conversationId}
+    `;
+    if (!result) return null;
+    return {
+      id: result.id,
+      taskId: result.task_id,
+      title: result.title,
+      status: result.status,
+      createdAt: result.created_at,
+      updatedAt: result.updated_at,
+    };
+  },
+
+  async updateConversation(
+    conversationId: string,
+    updates: {
+      title?: string;
+      status?: string;
+    },
+  ): Promise<void> {
+    const sql = getDb();
+    if (updates.title !== undefined) {
+      await sql`UPDATE chat_conversations SET title = ${updates.title} WHERE id = ${conversationId}`;
+    }
+    if (updates.status !== undefined) {
+      await sql`UPDATE chat_conversations SET status = ${updates.status} WHERE id = ${conversationId}`;
+    }
+  },
+
+  // ============================================
+  // Chat Messages
+  // ============================================
+
+  async saveChatMessage(params: {
+    conversationId: string;
+    role: "user" | "assistant" | "system";
+    content: string;
+    agent?: string;
+    model?: string;
+    tokensUsed?: number;
+    durationMs?: number;
+    actionType?: string;
+    actionResult?: Record<string, unknown>;
+    externalSessionId?: string;
+    externalActivityId?: string;
+  }): Promise<string> {
+    const sql = getDb();
+    const [result] = await sql`
+      INSERT INTO chat_messages (
+        conversation_id, role, content, agent, model,
+        tokens_used, duration_ms, action_type, action_result,
+        external_session_id, external_activity_id
+      ) VALUES (
+        ${params.conversationId},
+        ${params.role},
+        ${params.content},
+        ${params.agent || null},
+        ${params.model || null},
+        ${params.tokensUsed || null},
+        ${params.durationMs || null},
+        ${params.actionType || null},
+        ${params.actionResult ? JSON.stringify(params.actionResult) : null},
+        ${params.externalSessionId || null},
+        ${params.externalActivityId || null}
+      )
+      RETURNING id
+    `;
+
+    // Touch conversation updated_at
+    await sql`
+      UPDATE chat_conversations SET updated_at = NOW()
+      WHERE id = ${params.conversationId}
+    `;
+
+    return result.id;
+  },
+
+  async getChatMessages(
+    conversationId: string,
+    limit: number = 50,
+  ): Promise<
+    Array<{
+      id: string;
+      conversationId: string;
+      role: string;
+      content: string;
+      agent: string | null;
+      model: string | null;
+      tokensUsed: number | null;
+      durationMs: number | null;
+      actionType: string | null;
+      actionResult: Record<string, unknown> | null;
+      externalSessionId: string | null;
+      externalActivityId: string | null;
+      createdAt: Date;
+    }>
+  > {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM chat_messages
+      WHERE conversation_id = ${conversationId}
+      ORDER BY created_at ASC
+      LIMIT ${limit}
+    `;
+    return results.map((r: any) => ({
+      id: r.id,
+      conversationId: r.conversation_id,
+      role: r.role,
+      content: r.content,
+      agent: r.agent,
+      model: r.model,
+      tokensUsed: r.tokens_used,
+      durationMs: r.duration_ms,
+      actionType: r.action_type,
+      actionResult: r.action_result,
+      externalSessionId: r.external_session_id,
+      externalActivityId: r.external_activity_id,
+      createdAt: r.created_at,
+    }));
+  },
+
+  async getRecentChatHistory(
+    conversationId: string,
+    limit: number = 10,
+  ): Promise<
+    Array<{
+      role: string;
+      content: string;
+    }>
+  > {
+    const sql = getDb();
+    const results = await sql`
+      SELECT role, content FROM chat_messages
+      WHERE conversation_id = ${conversationId}
+      ORDER BY created_at DESC
+      LIMIT ${limit}
+    `;
+    // Return in chronological order for LLM context
+    return results.reverse().map((r: any) => ({
+      role: r.role,
+      content: r.content,
+    }));
+  },
+
+  // ============================================
+  // External Agent Sessions
+  // ============================================
+
+  async createExternalSession(params: {
+    taskId: string;
+    agent: string;
+    externalId: string;
+    config?: Record<string, unknown>;
+  }): Promise<{ id: string; externalId: string }> {
+    const sql = getDb();
+    const [result] = await sql`
+      INSERT INTO external_agent_sessions (task_id, agent, external_id, config)
+      VALUES (
+        ${params.taskId},
+        ${params.agent},
+        ${params.externalId},
+        ${params.config ? JSON.stringify(params.config) : null}
+      )
+      RETURNING id, external_id
+    `;
+    return { id: result.id, externalId: result.external_id };
+  },
+
+  async getExternalSession(
+    taskId: string,
+    agent: string,
+  ): Promise<{
+    id: string;
+    taskId: string;
+    agent: string;
+    externalId: string;
+    status: string;
+    config: Record<string, unknown> | null;
+    result: Record<string, unknown> | null;
+    error: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  } | null> {
+    const sql = getDb();
+    const [result] = await sql`
+      SELECT * FROM external_agent_sessions
+      WHERE task_id = ${taskId} AND agent = ${agent}
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    if (!result) return null;
+    return {
+      id: result.id,
+      taskId: result.task_id,
+      agent: result.agent,
+      externalId: result.external_id,
+      status: result.status,
+      config: result.config,
+      result: result.result,
+      error: result.error,
+      createdAt: result.created_at,
+      updatedAt: result.updated_at,
+    };
+  },
+
+  async getExternalSessions(taskId: string): Promise<
+    Array<{
+      id: string;
+      agent: string;
+      externalId: string;
+      status: string;
+      result: Record<string, unknown> | null;
+      error: string | null;
+      createdAt: Date;
+    }>
+  > {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM external_agent_sessions
+      WHERE task_id = ${taskId}
+      ORDER BY created_at DESC
+    `;
+    return results.map((r: any) => ({
+      id: r.id,
+      agent: r.agent,
+      externalId: r.external_id,
+      status: r.status,
+      result: r.result,
+      error: r.error,
+      createdAt: r.created_at,
+    }));
+  },
+
+  async updateExternalSession(
+    sessionId: string,
+    updates: {
+      status?: string;
+      result?: Record<string, unknown>;
+      error?: string;
+    },
+  ): Promise<void> {
+    const sql = getDb();
+    if (updates.status) {
+      await sql`UPDATE external_agent_sessions SET status = ${updates.status} WHERE id = ${sessionId}`;
+    }
+    if (updates.result) {
+      await sql`UPDATE external_agent_sessions SET result = ${JSON.stringify(updates.result)} WHERE id = ${sessionId}`;
+    }
+    if (updates.error !== undefined) {
+      await sql`UPDATE external_agent_sessions SET error = ${updates.error} WHERE id = ${sessionId}`;
+    }
+  },
+
+  async getExternalSessionByExternalId(externalId: string): Promise<{
+    id: string;
+    taskId: string;
+    agent: string;
+    status: string;
+  } | null> {
+    const sql = getDb();
+    const [result] = await sql`
+      SELECT id, task_id, agent, status FROM external_agent_sessions
+      WHERE external_id = ${externalId}
+      LIMIT 1
+    `;
+    if (!result) return null;
+    return {
+      id: result.id,
+      taskId: result.task_id,
+      agent: result.agent,
+      status: result.status,
+    };
+  },
 };

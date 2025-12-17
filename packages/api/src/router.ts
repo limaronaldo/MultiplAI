@@ -2540,6 +2540,51 @@ route("POST", "/api/tasks/:id/process", async (req) => {
 });
 
 /**
+ * POST /api/tasks/:id/approve - Manually approve a task and mark as completed
+ */
+route("POST", "/api/tasks/:id/approve", async (req) => {
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const id = pathParts[3];
+
+  const task = await db.getTask(id);
+  if (!task) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  // Allow approval from WAITING_HUMAN or PR_CREATED states
+  if (
+    !["WAITING_HUMAN", "PR_CREATED", "REVIEW_APPROVED"].includes(task.status)
+  ) {
+    return Response.json(
+      { error: `Task cannot be approved in ${task.status} state` },
+      { status: 400 },
+    );
+  }
+
+  // Update task to COMPLETED
+  await db.updateTask(task.id, {
+    status: "COMPLETED",
+  });
+
+  // Log the approval event
+  await db.saveEvent({
+    taskId: task.id,
+    eventType: "APPROVED",
+    agent: "human",
+    outputSummary: "Task manually approved via chat",
+  });
+
+  console.log(`[API] Task ${task.id} manually approved`);
+
+  return Response.json({
+    ok: true,
+    message: "Task approved and marked as completed",
+    task: { id: task.id, status: "COMPLETED" },
+  });
+});
+
+/**
  * POST /api/tasks/:id/reject - Manually reject a PR and trigger fix loop
  * Body: { feedback: string }
  */
@@ -5612,6 +5657,358 @@ route("POST", "/api/plans/:id/create-issues", async (req) => {
 });
 
 // ============================================
+// Chat API (Task Conversations)
+// ============================================
+
+import { ChatAgent, ChatInputSchema } from "./agents/chat";
+
+/**
+ * POST /api/tasks/:id/chat - Send a message in a task conversation
+ * Body: { message: string, conversationId?: string }
+ */
+route("POST", "/api/tasks/:id/chat", async (req) => {
+  const url = new URL(req.url);
+  const taskId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(taskId)) {
+    return Response.json({ error: "Invalid task ID" }, { status: 400 });
+  }
+
+  try {
+    const body = await req.json();
+    const { message, conversationId } = body as {
+      message: string;
+      conversationId?: string;
+    };
+
+    if (
+      !message ||
+      typeof message !== "string" ||
+      message.trim().length === 0
+    ) {
+      return Response.json(
+        { error: "Missing or empty message" },
+        { status: 400 },
+      );
+    }
+
+    // Get task details
+    const task = await db.getTask(taskId);
+    if (!task) {
+      return Response.json({ error: "Task not found" }, { status: 404 });
+    }
+
+    // Get or create conversation
+    let activeConversationId: string;
+    if (conversationId) {
+      const existingConversation = await db.getConversation(conversationId);
+      if (!existingConversation || existingConversation.taskId !== taskId) {
+        return Response.json(
+          { error: "Conversation not found or does not belong to this task" },
+          { status: 404 },
+        );
+      }
+      activeConversationId = existingConversation.id;
+    } else {
+      // Create new conversation (returns just the ID)
+      activeConversationId = await db.createConversation(
+        taskId,
+        `Chat about #${task.githubIssueNumber}: ${task.githubIssueTitle}`,
+      );
+    }
+
+    // Save user message
+    await db.saveChatMessage({
+      conversationId: activeConversationId,
+      role: "user",
+      content: message,
+    });
+
+    // Get conversation history for context
+    const history = await db.getRecentChatHistory(activeConversationId, 10);
+
+    // Get recent task events for context
+    const events = await db.getTaskEvents(taskId);
+    const recentEvents = events.slice(0, 5).map((e) => ({
+      eventType: e.eventType,
+      agent: e.agent,
+      outputSummary: e.outputSummary,
+      createdAt: e.createdAt.toISOString(),
+    }));
+
+    // Quick intent classification for routing
+    const intent = ChatAgent.classifyIntent(message);
+    console.log(
+      `[Chat] Task ${taskId}: intent=${intent.type}, confidence=${intent.confidence}`,
+    );
+
+    // Build chat context
+    const chatInput = {
+      taskId,
+      conversationId: activeConversationId,
+      message,
+      context: {
+        task: {
+          id: task.id,
+          githubRepo: task.githubRepo,
+          githubIssueNumber: task.githubIssueNumber,
+          githubIssueTitle: task.githubIssueTitle,
+          githubIssueBody: task.githubIssueBody || undefined,
+          status: task.status,
+          currentDiff: task.currentDiff || undefined,
+          lastError: task.lastError || undefined,
+          plan: task.plan || undefined,
+          definitionOfDone: task.definitionOfDone || undefined,
+          targetFiles: task.targetFiles || undefined,
+        },
+        recentEvents,
+        conversationHistory: history.map((m) => ({
+          role: m.role,
+          content: m.content,
+        })),
+      },
+    };
+
+    // Run ChatAgent
+    const agent = new ChatAgent();
+    const startTime = Date.now();
+    const result = await agent.run(chatInput);
+    const durationMs = Date.now() - startTime;
+
+    // Save assistant response
+    await db.saveChatMessage({
+      conversationId: activeConversationId,
+      role: "assistant",
+      content: result.response,
+      agent: "ChatAgent",
+      model: agent.agentConfig.model,
+      durationMs,
+      actionType: result.action,
+      actionResult: result.actionPayload,
+    });
+
+    console.log(
+      `[Chat] Task ${taskId}: responded in ${durationMs}ms, action=${result.action}`,
+    );
+
+    return Response.json({
+      conversationId: activeConversationId,
+      response: result.response,
+      action: result.action,
+      actionPayload: result.actionPayload,
+      suggestedFollowUps: result.suggestedFollowUps,
+      confidence: result.confidence,
+      durationMs,
+    });
+  } catch (error) {
+    console.error("[Chat] Error processing message:", error);
+    return Response.json(
+      { error: "Failed to process chat message", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/tasks/:id/conversations - List conversations for a task
+ */
+route("GET", "/api/tasks/:id/conversations", async (req) => {
+  const url = new URL(req.url);
+  const taskId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(taskId)) {
+    return Response.json({ error: "Invalid task ID" }, { status: 400 });
+  }
+
+  try {
+    const task = await db.getTask(taskId);
+    if (!task) {
+      return Response.json({ error: "Task not found" }, { status: 404 });
+    }
+
+    const conversations = await db.getConversations(taskId);
+
+    return Response.json({
+      conversations,
+      count: conversations.length,
+    });
+  } catch (error) {
+    console.error("[Chat] Error listing conversations:", error);
+    return Response.json(
+      { error: "Failed to list conversations", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/conversations/:id/messages - Get messages for a conversation
+ * Query params:
+ *   - limit: max messages (default: 50)
+ *   - before: cursor for pagination
+ */
+route("GET", "/api/conversations/:id/messages", async (req) => {
+  const url = new URL(req.url);
+  const conversationId = url.pathname.split("/")[3];
+  const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+
+  if (!isValidUUID(conversationId)) {
+    return Response.json({ error: "Invalid conversation ID" }, { status: 400 });
+  }
+
+  try {
+    const conversation = await db.getConversation(conversationId);
+    if (!conversation) {
+      return Response.json(
+        { error: "Conversation not found" },
+        { status: 404 },
+      );
+    }
+
+    const messages = await db.getChatMessages(conversationId, limit);
+
+    return Response.json({
+      conversationId,
+      messages,
+      count: messages.length,
+    });
+  } catch (error) {
+    console.error("[Chat] Error getting messages:", error);
+    return Response.json(
+      { error: "Failed to get messages", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/tasks/:id/external-sessions - List external agent sessions for a task
+ */
+route("GET", "/api/tasks/:id/external-sessions", async (req) => {
+  const url = new URL(req.url);
+  const taskId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(taskId)) {
+    return Response.json({ error: "Invalid task ID" }, { status: 400 });
+  }
+
+  try {
+    const task = await db.getTask(taskId);
+    if (!task) {
+      return Response.json({ error: "Task not found" }, { status: 404 });
+    }
+
+    const sessions = await db.getExternalSessions(taskId);
+
+    return Response.json({
+      sessions,
+      count: sessions.length,
+    });
+  } catch (error) {
+    console.error("[Chat] Error listing external sessions:", error);
+    return Response.json(
+      { error: "Failed to list external sessions", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/tasks/:id/external-sessions - Create external agent session
+ * Body: { agent: "jules" | "codex", config?: object }
+ */
+route("POST", "/api/tasks/:id/external-sessions", async (req) => {
+  const url = new URL(req.url);
+  const taskId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(taskId)) {
+    return Response.json({ error: "Invalid task ID" }, { status: 400 });
+  }
+
+  try {
+    const body = await req.json();
+    const { agent, config } = body as {
+      agent: string;
+      config?: Record<string, unknown>;
+    };
+
+    if (!agent || !["jules", "codex", "copilot"].includes(agent)) {
+      return Response.json(
+        { error: "Invalid agent. Must be one of: jules, codex, copilot" },
+        { status: 400 },
+      );
+    }
+
+    const task = await db.getTask(taskId);
+    if (!task) {
+      return Response.json({ error: "Task not found" }, { status: 404 });
+    }
+
+    // Create placeholder session (actual external integration TBD)
+    const session = await db.createExternalSession({
+      taskId,
+      agent,
+      externalId: `pending-${Date.now()}`,
+      config,
+    });
+
+    console.log(
+      `[Chat] Created ${agent} session ${session.id} for task ${taskId}`,
+    );
+
+    return Response.json({
+      session,
+      message: `External session created. Integration with ${agent} is pending.`,
+    });
+  } catch (error) {
+    console.error("[Chat] Error creating external session:", error);
+    return Response.json(
+      { error: "Failed to create external session", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * PATCH /api/conversations/:id - Update conversation (e.g., close it)
+ * Body: { status?: string, title?: string }
+ */
+route("PATCH", "/api/conversations/:id", async (req) => {
+  const url = new URL(req.url);
+  const conversationId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(conversationId)) {
+    return Response.json({ error: "Invalid conversation ID" }, { status: 400 });
+  }
+
+  try {
+    const body = await req.json();
+    const { status, title } = body as { status?: string; title?: string };
+
+    const conversation = await db.getConversation(conversationId);
+    if (!conversation) {
+      return Response.json(
+        { error: "Conversation not found" },
+        { status: 404 },
+      );
+    }
+
+    const updated = await db.updateConversation(conversationId, {
+      status,
+      title,
+    });
+
+    return Response.json({ conversation: updated });
+  } catch (error) {
+    console.error("[Chat] Error updating conversation:", error);
+    return Response.json(
+      { error: "Failed to update conversation", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+// ============================================
 // Visual Tests (CUA)
 // ============================================
 
@@ -5740,7 +6137,7 @@ route("GET", "/api/visual-tests/:runId", async (req) => {
 // CORS headers for cross-origin requests
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
