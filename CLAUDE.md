@@ -2102,4 +2102,109 @@ autodev/
 
 ---
 
-_Last updated: 2025-12-17 01:00 UTC_
+## Session Update: 2025-12-17 02:15 UTC
+
+### Completed This Session
+
+#### 1. Chat Feature - Full Implementation ✅
+
+**Backend (packages/api):**
+- `ChatAgent` with intent classification (approve, reject, retry_task, modify_code, escalate)
+- `POST /api/chat/:taskId` endpoint for conversations
+- `POST /api/tasks/:id/approve` endpoint for task approval
+- Database migration `011_chat_tables.sql` with conversations, messages, external_agent_sessions tables
+
+**Frontend (packages/web):**
+- `TaskChat.tsx` - Collapsible chat panel with markdown rendering
+- Chat actions execute real API calls (approve → COMPLETED, reject → feedback, retry → reprocess)
+- System messages confirm action results
+- React-markdown for AI response formatting
+
+#### 2. Dashboard Simplification ✅
+
+**Philosophy:** Dashboard is "glue" between systems, not a duplicate of GitHub/Linear.
+
+**Navigation Changes (Layout.tsx):**
+- Removed: Jobs, Repositories pages
+- Renamed: Tasks → Queue
+- Added: External links section (GitHub, Linear)
+- Configurable via env vars: `VITE_GITHUB_ORG`, `VITE_LINEAR_WORKSPACE`
+
+**Routes Removed (App.tsx):**
+- `/jobs`, `/jobs/:jobId`, `/repositories`, `/import`
+
+**Task Detail Updates (TaskDetailPageMobX.tsx):**
+- Issue body truncated to 300 chars with "View on GitHub" link
+- Added Linear link when `linearIssueId` exists
+- Focus on AI-specific data (plan, DoD, diff, events)
+
+#### 3. UI Fixes ✅
+
+- **ActiveJobsWidget crash**: Fixed `jobs.slice is not a function` with `Array.isArray()` check
+- **MainFeatureCard**: Updated dark theme colors (slate palette), AutoDev models list
+- **Chat panel**: Fixed positioning (opens downward), click-outside handler
+
+#### 4. Folder Organization ✅
+
+**Moved to `docs/`:** 9 documentation files (AGENTS.md, LEARNINGS.md, PMVP_*.md, etc.)
+
+**Removed (empty/unused):**
+- `autodev-dashboard/`, `src/`, `langgraph_service/`, `plane-preview/`
+- `Dockerfile.cua`, `docker-compose.cua.yml`
+
+#### 5. Plans → Tasks Integration ✅
+
+Verified the flow is already connected:
+1. Plans page → Create Issues → GitHub issues with `auto-dev` label
+2. GitHub webhook fires → AutoDev creates task automatically
+3. Task appears in Queue → normal pipeline processing
+
+#### 6. Database Migration ✅
+
+Chat tables already exist (ran previously). Verified:
+- `chat_conversations`
+- `chat_messages`
+- `external_agent_sessions`
+
+### Commits Pushed (6 total)
+
+| Commit | Description |
+|--------|-------------|
+| `886c367` | feat(chat): add conversational AI chat for tasks |
+| `8b0b3d9` | refactor(dashboard): simplify UI as glue between systems |
+| `8955cf7` | fix(ui): various dashboard fixes |
+| `963cc05` | chore: organize documentation into docs/ folder |
+| `b610b6b` | chore: remove unused files and directories |
+| `04d4f47` | docs: update CLAUDE.md with session summary |
+
+### Current System Status
+
+| Component | Status | Details |
+|-----------|--------|---------|
+| **Production** | ✅ Running | multiplai.fly.dev (v221) |
+| **Database** | ✅ OK | Chat tables migrated |
+| **GitHub API** | ✅ OK | 5000/5000 requests |
+| **LLM Providers** | ✅ 3 configured | Anthropic, OpenAI, OpenRouter |
+| **Uptime** | 5+ hours | 204MB RSS |
+
+### Task Queue Status
+
+| Status | Count |
+|--------|-------|
+| NEW | 7 |
+| FAILED | 6 |
+| PLANNING_DONE | 5 |
+| CODING_DONE | 2 |
+| TESTS_FAILED | 1 |
+| **Total** | **21** |
+
+### What's Next
+
+1. **Test chat feature** in production with real tasks
+2. **Monitor Plans → Tasks flow** when new plan issues are created
+3. **Review pending PRs** (if any in WAITING_HUMAN status)
+4. **Consider OpenAI credits** if queue processing needed
+
+---
+
+_Last updated: 2025-12-17 02:15 UTC_
