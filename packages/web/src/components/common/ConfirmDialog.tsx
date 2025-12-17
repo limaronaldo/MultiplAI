@@ -1,4 +1,4 @@
-import { X, AlertTriangle } from "lucide-react";
+import { X, AlertTriangle, Play } from "lucide-react";
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -6,7 +6,7 @@ interface ConfirmDialogProps {
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
-  variant?: "danger" | "warning" | "info";
+  variant?: "danger" | "warning" | "info" | "default";
   isLoading?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -26,6 +26,10 @@ export function ConfirmDialog({
   if (!isOpen) return null;
 
   const variantStyles = {
+    default: {
+      icon: "text-emerald-400",
+      button: "bg-emerald-600 hover:bg-emerald-700",
+    },
     danger: {
       icon: "text-red-400",
       button: "bg-red-600 hover:bg-red-700",
@@ -61,7 +65,11 @@ export function ConfirmDialog({
 
         <div className="flex items-start gap-4">
           <div className={`p-2 rounded-full bg-slate-800 ${styles.icon}`}>
-            <AlertTriangle className="w-6 h-6" />
+            {variant === "default" ? (
+              <Play className="w-6 h-6" />
+            ) : (
+              <AlertTriangle className="w-6 h-6" />
+            )}
           </div>
           <div className="flex-1">
             <h3 className="text-lg font-semibold text-white">{title}</h3>

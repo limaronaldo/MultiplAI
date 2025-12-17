@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState } from "react";
 
 interface MainFeatureCardProps {
   description: string;
@@ -26,21 +26,27 @@ export const MainFeatureCard: React.FC<MainFeatureCardProps> = ({
     setIsEditing(false);
   };
 
+  // AutoDev's available models
   const models = [
-    { value: 'gpt-4', label: 'GPT-4' },
-    { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
-    { value: 'claude-3-opus', label: 'Claude 3 Opus' },
-    { value: 'claude-3-sonnet', label: 'Claude 3 Sonnet' },
+    { value: "claude-opus-4-5-20251101", label: "Claude Opus 4.5" },
+    { value: "claude-sonnet-4-5-20250929", label: "Claude Sonnet 4.5" },
+    { value: "claude-haiku-4-5-20251015", label: "Claude Haiku 4.5" },
+    {
+      value: "deepseek/deepseek-v3.2-speciale",
+      label: "DeepSeek V3.2 Speciale",
+    },
+    { value: "x-ai/grok-3", label: "Grok 3" },
+    { value: "x-ai/grok-code-fast-1", label: "Grok Code Fast" },
   ];
 
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
+    <div className="bg-slate-800 border border-slate-700 rounded-lg p-6 shadow-sm">
       <div className="flex justify-between items-start mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">Main Feature</h3>
+        <h3 className="text-lg font-semibold text-slate-100">Main Feature</h3>
         {!isEditing && (
           <button
             onClick={() => setIsEditing(true)}
-            className="text-sm text-blue-600 hover:text-blue-700"
+            className="text-sm text-blue-400 hover:text-blue-300"
           >
             Edit
           </button>
@@ -50,29 +56,33 @@ export const MainFeatureCard: React.FC<MainFeatureCardProps> = ({
       {isEditing ? (
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-slate-300 mb-2">
               Description
             </label>
             <textarea
               value={editDescription}
               onChange={(e) => setEditDescription(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-md text-slate-100 placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               rows={6}
               placeholder="Describe the main feature..."
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-slate-300 mb-2">
               Model
             </label>
             <select
               value={editModel}
               onChange={(e) => setEditModel(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-md text-slate-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
               {models.map((model) => (
-                <option key={model.value} value={model.value}>
+                <option
+                  key={model.value}
+                  value={model.value}
+                  className="bg-slate-900 text-slate-100"
+                >
                   {model.label}
                 </option>
               ))}
@@ -88,7 +98,7 @@ export const MainFeatureCard: React.FC<MainFeatureCardProps> = ({
             </button>
             <button
               onClick={handleCancel}
-              className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors"
+              className="flex-1 px-4 py-2 bg-slate-700 text-slate-200 rounded-md hover:bg-slate-600 transition-colors"
             >
               Cancel
             </button>
@@ -97,14 +107,15 @@ export const MainFeatureCard: React.FC<MainFeatureCardProps> = ({
       ) : (
         <div className="space-y-3">
           <div>
-            <p className="text-sm text-gray-600 whitespace-pre-wrap">
-              {description || 'No description yet. Click Edit to add one.'}
+            <p className="text-sm text-slate-300 whitespace-pre-wrap">
+              {description || "No description yet. Click Edit to add one."}
             </p>
           </div>
-          <div className="pt-3 border-t border-gray-100">
-            <span className="text-xs text-gray-500">Model: </span>
-            <span className="text-xs font-medium text-gray-700">
-              {models.find((m) => m.value === selectedModel)?.label || selectedModel}
+          <div className="pt-3 border-t border-slate-700">
+            <span className="text-xs text-slate-500">Model: </span>
+            <span className="text-xs font-medium text-slate-300">
+              {models.find((m) => m.value === selectedModel)?.label ||
+                selectedModel}
             </span>
           </div>
         </div>

@@ -18,5 +18,8 @@
   "packageManager": "pnpm@9.14.2",
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "react-markdown": "^10.1.0"
   }
 }

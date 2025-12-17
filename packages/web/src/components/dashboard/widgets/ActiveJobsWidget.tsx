@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Briefcase, ArrowRight, Play, CheckCircle, XCircle } from "lucide-react";
+import {
+  Briefcase,
+  ArrowRight,
+  Play,
+  CheckCircle,
+  XCircle,
+} from "lucide-react";
 import clsx from "clsx";
 
 interface Job {
@@ -23,7 +29,12 @@ export function ActiveJobsWidget() {
     fetch(`${API_BASE}/api/jobs?limit=5`)
       .then((res) => res.json())
       .then((data) => {
-        setJobs(data.jobs || data || []);
+        const jobsData = Array.isArray(data.jobs)
+          ? data.jobs
+          : Array.isArray(data)
+            ? data
+            : [];
+        setJobs(jobsData);
         setLoading(false);
       })
       .catch(() => setLoading(false));
