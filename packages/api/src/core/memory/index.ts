@@ -291,3 +291,45 @@ export {
   getCheckpointStore,
   resetCheckpointStore,
 } from "./checkpoints";
+
+// =============================================================================
+// FEEDBACK - Self-correction through human feedback (Phase 2)
+// =============================================================================
+
+export {
+  // Schemas
+  FeedbackTypeSchema,
+  FeedbackSourceSchema,
+  FeedbackSchema,
+  CreateFeedbackSchema,
+
+  // Types
+  type FeedbackType,
+  type FeedbackSource,
+  type Feedback,
+  type CreateFeedbackInput,
+  type FeedbackProcessingResult,
+
+  // Constants
+  FEEDBACK_PATTERNS,
+
+  // Helpers
+  detectFeedbackType,
+
+  // Store
+  FeedbackStore,
+  getFeedbackStore,
+  resetFeedbackStore,
+
+  // Processor
+  FeedbackProcessor,
+  getFeedbackProcessor,
+  resetFeedbackProcessor,
+
+  // Compression
+  MemoryCompressor,
+  getMemoryCompressor,
+  resetMemoryCompressor,
+  type CompressionResult,
+  type BlockCompression,
+} from "./feedback";
