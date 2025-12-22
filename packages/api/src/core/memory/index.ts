@@ -169,3 +169,63 @@ export {
   getLearningMemoryStore,
   resetLearningMemoryStore,
 } from "./learning-memory-store";
+
+// =============================================================================
+// OBSERVATIONS - Action capture with progressive disclosure (Phase 0)
+// =============================================================================
+
+export {
+  // Schemas
+  ObservationTypeSchema,
+  ObservationSchema,
+  CreateObservationSchema,
+  ObservationIndexSchema,
+  ObservationSummarySchema,
+
+  // Types
+  type ObservationType,
+  type Observation,
+  type CreateObservationInput,
+  type ObservationIndex,
+  type ObservationSummary,
+  type RelevantObservationsResult,
+  type RetrievalOptions,
+
+  // Helpers
+  estimateTokens,
+  extractTags,
+  extractFileRefs,
+
+  // Store
+  ObservationStore,
+  getObservationStore,
+  resetObservationStore,
+
+  // Compression
+  compressObservation,
+  batchCompress,
+} from "./observations";
+
+// =============================================================================
+// HOOKS - Extensible event system for memory lifecycle (Phase 0)
+// =============================================================================
+
+export {
+  // Types
+  type HookEvent,
+  type HookContext,
+  type HookHandler,
+  type HookOptions,
+  type RegisteredHook,
+  type HookEmitResult,
+
+  // Hooks Manager
+  MemoryHooks,
+  getMemoryHooks,
+  resetMemoryHooks,
+
+  // Setup
+  setObservationCallback,
+  setupDefaultHooks,
+  initDefaultHooks,
+} from "./hooks";
