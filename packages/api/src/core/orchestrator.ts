@@ -62,6 +62,22 @@ import {
   type LoopResult,
 } from "./agentic";
 import { validateSyntaxBatch } from "./syntax-validator";
+import {
+  MemoryHooks,
+  getMemoryHooks,
+  setupDefaultHooks,
+  setObservationCallback,
+} from "./memory/hooks";
+import {
+  getObservationStore,
+  type ObservationStore,
+} from "./memory/observations";
+import { getMemoryBlockStore } from "./memory/blocks";
+import {
+  archiveMemory,
+  learnPattern,
+  promoteToGlobal,
+} from "./memory/archival";
 
 const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
 const ENABLE_LEARNING = process.env.ENABLE_LEARNING !== "false"; // Default to true
@@ -105,6 +121,10 @@ export class Orchestrator {
   // Learning memory - track error before fix for pattern learning
   private errorBeforeFix?: string;
 
+  // Memory hooks for observation capture
+  private memoryHooks: MemoryHooks;
+  private observationStore: ObservationStore;
+
   constructor(config: Partial<AutoDevConfig> = {}) {
     this.config = { ...defaultConfig, ...config };
     this.multiAgentConfig = loadMultiAgentConfig();
@@ -129,6 +149,16 @@ export class Orchestrator {
         `Fixers: ${this.multiAgentConfig.fixerCount} (${this.multiAgentConfig.fixerModels.join(", ")})`,
       );
     }
+
+    // Initialize memory system
+    this.observationStore = getObservationStore();
+    this.memoryHooks = getMemoryHooks();
+
+    // Connect observation store to hooks
+    setObservationCallback(async (input) => {
+      await this.observationStore.create(input);
+    });
+    setupDefaultHooks(this.memoryHooks);
   }
 
   /**
@@ -2044,9 +2074,147 @@ export class Orchestrator {
   // ============================================
 
   private updateStatus(task: Task, status: TaskStatus): Task {
+    const previousStatus = task.status;
     task.status = transition(task.status, status);
     task.updatedAt = new Date();
+
+    // Trigger memory hooks for state transition
+    this.captureStateTransition(task, previousStatus, status).catch((err) => {
+      this.systemLogger.warn(`Memory hook failed: ${err}`);
+    });
+
     return task;
+  }
+
+  /**
+   * Capture state transition as observation for memory
+   */
+  private async captureStateTransition(
+    task: Task,
+    fromStatus: TaskStatus,
+    toStatus: TaskStatus,
+  ): Promise<void> {
+    try {
+      // Record observation for significant state changes
+      const significantTransitions = [
+        "PLANNING_DONE",
+        "CODING_DONE",
+        "TESTS_PASSED",
+        "TESTS_FAILED",
+        "REVIEW_APPROVED",
+        "REVIEW_REJECTED",
+        "COMPLETED",
+        "FAILED",
+      ];
+
+      if (significantTransitions.includes(toStatus)) {
+        // Use 'error' type for failures, 'decision' for other transitions
+        const observationType =
+          toStatus === "TESTS_FAILED" || toStatus === "FAILED"
+            ? ("error" as const)
+            : ("decision" as const);
+
+        await this.observationStore.create({
+          taskId: task.id,
+          type: observationType,
+          agent: "orchestrator",
+          fullContent: `Task transitioned from ${fromStatus} to ${toStatus}. Title: ${task.githubIssueTitle}. Complexity: ${task.estimatedComplexity || "unknown"}.`,
+          tags: ["state-change", fromStatus, toStatus],
+          fileRefs: [],
+        });
+      }
+
+      // Trigger hooks for specific events
+      if (toStatus === "TESTS_FAILED" && task.lastError) {
+        await this.memoryHooks.emit("error", {
+          taskId: task.id,
+          phase: fromStatus,
+          error: new Error(task.lastError),
+          agent: "orchestrator",
+          observations: [],
+          timestamp: new Date(),
+        });
+      }
+
+      if (toStatus === "COMPLETED") {
+        await this.memoryHooks.emit("phase_change", {
+          taskId: task.id,
+          phase: "completed",
+          agent: "orchestrator",
+          metadata: { diff: task.currentDiff },
+          observations: [],
+          timestamp: new Date(),
+        });
+
+        // Archive successful completion to global knowledge (RML-674)
+        await this.archiveSuccessfulCompletion(task);
+      }
+    } catch (error) {
+      // Don't fail the main flow for memory operations
+      console.warn("[Memory] Failed to capture state transition:", error);
+    }
+  }
+
+  /**
+   * Archive successful task completion to global knowledge (RML-674)
+   * This extracts learnings from successful tasks and stores them for future reference.
+   */
+  private async archiveSuccessfulCompletion(task: Task): Promise<void> {
+    try {
+      // Format the plan as a string if it exists
+      const planString = task.plan?.join("\n") || "";
+
+      // 1. Archive the task summary to long-term memory
+      const taskSummary = [
+        `Issue: ${task.githubIssueTitle}`,
+        `Complexity: ${task.estimatedComplexity || "unknown"}`,
+        `Effort: ${task.estimatedEffort || "unknown"}`,
+        `Files modified: ${task.targetFiles?.join(", ") || "unknown"}`,
+        planString ? `Plan:\n${planString.slice(0, 500)}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      await archiveMemory({
+        content: taskSummary,
+        summary: `Completed: ${task.githubIssueTitle}`,
+        sourceType: "observation",
+        sourceId: task.id,
+        taskId: task.id,
+        repo: task.githubRepo,
+        importanceScore: 0.8, // Successful completions are valuable
+        isGlobal: true, // Make available across tasks
+        metadata: {
+          complexity: task.estimatedComplexity,
+          effort: task.estimatedEffort,
+          targetFiles: task.targetFiles,
+        },
+      });
+
+      // 2. If there was a successful diff, learn the pattern as a convention
+      if (task.currentDiff && planString) {
+        await learnPattern({
+          repo: task.githubRepo,
+          patternType: "convention",
+          description: `${task.estimatedComplexity || "unknown"} complexity: ${task.githubIssueTitle}`,
+          triggerPattern: `Issue type: ${task.estimatedComplexity || "unknown"}, Files: ${task.targetFiles?.join(", ") || "unknown"}`,
+          solution: planString.slice(0, 500),
+          taskId: task.id,
+          input: task.githubIssueTitle,
+          output: task.currentDiff.slice(0, 1000),
+        });
+      }
+
+      // 3. Promote task-specific learnings to global knowledge
+      await promoteToGlobal(task.id, { minConfidence: 0.6 });
+
+      this.systemLogger.info(
+        `[Memory] Archived successful completion for task ${task.id}`,
+      );
+    } catch (error) {
+      // Don't fail the task for archival errors
+      console.warn("[Memory] Failed to archive successful completion:", error);
+    }
   }
 
   private validateTaskState(

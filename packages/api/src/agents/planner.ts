@@ -3,6 +3,7 @@ import { PlannerOutput, PlannerOutputSchema } from "../core/types";
 import { ragService } from "../services/rag";
 import type { CodeChunk } from "../services/rag";
 import { getModelForPositionSync } from "../core/model-selection";
+import { progressiveSearch, getPatterns } from "../core/memory/archival";
 
 // Default planner model - reads from database config, falls back to env var or hardcoded default
 // The model can be configured via the Settings page in the dashboard
@@ -19,6 +20,12 @@ interface PlannerInput {
   issueTitle: string;
   issueBody: string;
   repoContext: string;
+  repo?: string; // For memory search scoping
+}
+
+interface MemoryContext {
+  similarTasks: string;
+  patterns: string;
 }
 
 function uniq<T>(values: T[]): T[] {
@@ -41,6 +48,58 @@ function asCodeChunk(value: unknown): CodeChunk | null {
   if (typeof v.startLine !== "number") return null;
   if (typeof v.endLine !== "number") return null;
   return v as CodeChunk;
+}
+
+/**
+ * Build memory context from archival memory
+ * Uses progressive search (3-layer retrieval) for efficient context building
+ */
+async function buildMemoryContext(
+  query: string,
+  repo?: string,
+): Promise<MemoryContext> {
+  try {
+    // Search archival memory for similar past tasks
+    const searchResult = await progressiveSearch(query, { repo, topK: 5 });
+
+    // Get relevant patterns (fix patterns, conventions)
+    const patterns = await getPatterns({
+      repo,
+      minConfidence: 0.6,
+      limit: 5,
+    });
+
+    // Format similar tasks context (Layer 2 - summaries only for efficiency)
+    const similarTasks =
+      searchResult.summaries.length > 0
+        ? searchResult.summaries
+            .slice(0, 3)
+            .map((s, i) => `${i + 1}. [${s.sourceType}] ${s.summary}`)
+            .join("\n")
+        : "";
+
+    // Format patterns context
+    const patternsContext =
+      patterns.length > 0
+        ? patterns
+            .map((p) => {
+              const solution = p.solution ? ` → ${p.solution}` : "";
+              return `- [${p.patternType}] ${p.description}${solution} (confidence: ${(p.confidence * 100).toFixed(0)}%)`;
+            })
+            .join("\n")
+        : "";
+
+    return {
+      similarTasks,
+      patterns: patternsContext,
+    };
+  } catch (error) {
+    console.warn(
+      "[Planner] Memory search failed, continuing without it:",
+      error,
+    );
+    return { similarTasks: "", patterns: "" };
+  }
 }
 
 function buildRagContext(results: unknown[]): {
@@ -215,6 +274,12 @@ export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
       }
     }
 
+    // Query archival memory for similar past tasks and learned patterns
+    const memoryContext = await buildMemoryContext(
+      `${input.issueTitle}\n\n${input.issueBody}`,
+      input.repo,
+    );
+
     const ragContext =
       ragSuggestedFiles.length || ragSnippets
         ? [
@@ -228,12 +293,30 @@ export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
             .join("\n\n")
         : "";
 
+    // Build memory context section
+    const memorySection =
+      memoryContext.similarTasks || memoryContext.patterns
+        ? [
+            "## Memory Context (from past tasks)",
+            memoryContext.similarTasks
+              ? `### Similar Past Tasks\n${memoryContext.similarTasks}`
+              : "",
+            memoryContext.patterns
+              ? `### Learned Patterns\n${memoryContext.patterns}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join("\n\n")
+        : "";
+
     const userPrompt = `
 ## Issue Title
 ${input.issueTitle}
 
 ## Issue Description
 ${input.issueBody || "No description provided"}
+
+${memorySection}
 
 ${ragContext}
 
@@ -243,6 +326,7 @@ ${input.repoContext}
 ---
 
 Analyze this issue and provide your implementation plan as JSON.
+Use insights from Memory Context if relevant - these are patterns learned from similar past tasks.
 `.trim();
 
     const response = await this.complete(SYSTEM_PROMPT, userPrompt);

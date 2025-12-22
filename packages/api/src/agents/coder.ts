@@ -6,6 +6,8 @@ import {
   type SharedType,
 } from "../core/types";
 import { ragRuntime, type RagSearchResult } from "../services/rag/rag-runtime";
+import { getMemoryBlockStore, type MemoryBlock } from "../core/memory/blocks";
+import { getPatterns } from "../core/memory/archival";
 
 interface CoderInput {
   definitionOfDone: string[];
@@ -20,6 +22,9 @@ interface CoderInput {
   sharedTypes?: SharedType[];
   // RAG context (optional)
   repoFullName?: string;
+  // Memory context
+  taskId?: string;
+  repo?: string;
 }
 
 const SYSTEM_PROMPT = `You are an expert software engineer implementing a planned change.
@@ -176,6 +181,9 @@ export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
     // Gather RAG context if available
     const ragContext = await this.gatherRagContext(input);
 
+    // Gather memory blocks and learned patterns
+    const memoryContext = await this.gatherMemoryContext(input);
+
     const fileContentsStr = Object.entries(input.fileContents)
       .map(([path, content]) => `### ${path}\n\`\`\`\n${content}\n\`\`\``)
       .join("\n\n");
@@ -192,6 +200,7 @@ ${input.targetFiles.join(", ")}
 
 ${input.knowledgeGraphContext ? `\n## Knowledge Graph Context (best-effort)\n${input.knowledgeGraphContext}\n` : ""}
 ${ragContext ? `\n## Similar Code Patterns (RAG)\n${ragContext}\n` : ""}
+${memoryContext ? `\n## Memory Context (learned from past tasks)\n${memoryContext}\n` : ""}
 
 ## Current File Contents
 ${fileContentsStr}
@@ -272,6 +281,78 @@ Please fix the issues while maintaining the original intent.`;
     }
 
     return CoderOutputSchema.parse(parsed);
+  }
+
+  /**
+   * Gather memory blocks and coding conventions for context
+   */
+  private async gatherMemoryContext(input: CoderInput): Promise<string | null> {
+    try {
+      const parts: string[] = [];
+
+      // Get task-specific memory blocks if taskId is provided
+      if (input.taskId) {
+        const store = getMemoryBlockStore();
+        const blocks = await store.getForTask(input.taskId);
+
+        // Filter for relevant blocks (project context, learned patterns)
+        const relevantBlocks = blocks.filter(
+          (b: MemoryBlock) => b.label === "project" || b.label === "learned",
+        );
+
+        if (relevantBlocks.length > 0) {
+          const blocksSection = relevantBlocks
+            .map(
+              (b: MemoryBlock) =>
+                `**${b.label}** (${b.description}):\n${b.value.slice(0, 500)}${b.value.length > 500 ? "..." : ""}`,
+            )
+            .join("\n\n");
+          parts.push(`### Task Context\n${blocksSection}`);
+        }
+      }
+
+      // Get coding conventions from learned patterns
+      const conventions = await getPatterns({
+        patternType: "convention",
+        repo: input.repo,
+        minConfidence: 0.6,
+        limit: 5,
+      });
+
+      if (conventions.length > 0) {
+        const conventionsSection = conventions
+          .map((c) => `- ${c.description}`)
+          .join("\n");
+        parts.push(`### Coding Conventions (learned)\n${conventionsSection}`);
+      }
+
+      // Get style patterns
+      const stylePatterns = await getPatterns({
+        patternType: "style",
+        repo: input.repo,
+        minConfidence: 0.6,
+        limit: 3,
+      });
+
+      if (stylePatterns.length > 0) {
+        const styleSection = stylePatterns
+          .map((s) => `- ${s.description}`)
+          .join("\n");
+        parts.push(`### Style Guidelines (learned)\n${styleSection}`);
+      }
+
+      if (parts.length === 0) {
+        return null;
+      }
+
+      console.log(
+        `[Coder] Found memory context: ${input.taskId ? "task blocks, " : ""}${conventions.length} conventions, ${stylePatterns.length} style patterns`,
+      );
+      return parts.join("\n\n");
+    } catch (error) {
+      console.warn("[Coder] Failed to gather memory context:", error);
+      return null;
+    }
   }
 
   /**

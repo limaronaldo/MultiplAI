@@ -5,6 +5,7 @@ import {
   type ReflectionRootCause,
 } from "../core/types";
 import { ragRuntime, type RagSearchResult } from "../services/rag/rag-runtime";
+import { getPatterns, semanticSearch } from "../core/memory/archival";
 
 interface FixerInput {
   definitionOfDone: string[];
@@ -19,6 +20,8 @@ interface FixerInput {
   reflectionFeedback?: string;
   rootCause?: ReflectionRootCause;
   reflectionDiagnosis?: string;
+  // Memory context
+  repo?: string;
 }
 
 // Default fixer model - Claude Haiku 4.5 for fast debugging
@@ -95,6 +98,9 @@ export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
     // Gather RAG context for error resolution
     const ragContext = await this.gatherRagContext(input);
 
+    // Gather fix patterns from archival memory
+    const memoryPatterns = await this.gatherMemoryPatterns(input);
+
     const fileContentsStr = Object.entries(input.fileContents)
       .map(([path, content]) => `### ${path}\n\`\`\`\n${content}\n\`\`\``)
       .join("\n\n");
@@ -120,6 +126,7 @@ ${input.errorLogs}
 
 ${input.knowledgeGraphContext ? `\n## Knowledge Graph Context (best-effort)\n${input.knowledgeGraphContext}\n` : ""}
 ${ragContext ? `\n## Related Code (RAG)\n${ragContext}\n` : ""}
+${memoryPatterns ? `\n## Memory Context (learned from past fixes)\n${memoryPatterns}\n` : ""}
 ${this.buildReflectionSection(input)}
 
 ## Current File Contents
@@ -135,6 +142,66 @@ Analyze the error and generate a fixed diff in JSON format.
     const parsed = this.parseJSON<FixerOutput>(response);
 
     return FixerOutputSchema.parse(parsed);
+  }
+
+  /**
+   * Gather fix patterns from archival memory
+   * Searches for similar errors that were successfully fixed in the past
+   */
+  private async gatherMemoryPatterns(
+    input: FixerInput,
+  ): Promise<string | null> {
+    try {
+      // Search for fix patterns matching this type of error
+      const fixPatterns = await getPatterns({
+        patternType: "fix",
+        repo: input.repo,
+        minConfidence: 0.5,
+        limit: 5,
+      });
+
+      // Also search archival memory for similar error contexts
+      const errorQuery = input.errorLogs.slice(0, 500); // First 500 chars of error
+      const similarErrors = await semanticSearch({
+        query: errorQuery,
+        repo: input.repo,
+        sourceTypes: ["feedback", "observation"],
+        limit: 3,
+        threshold: 0.6,
+        includeGlobal: true,
+      });
+
+      const parts: string[] = [];
+
+      if (fixPatterns.length > 0) {
+        const patternsSection = fixPatterns
+          .map((p) => {
+            const solution = p.solution ? `\n   Solution: ${p.solution}` : "";
+            return `- ${p.description}${solution} (${(p.confidence * 100).toFixed(0)}% confidence)`;
+          })
+          .join("\n");
+        parts.push(`### Known Fix Patterns\n${patternsSection}`);
+      }
+
+      if (similarErrors.length > 0) {
+        const errorsSection = similarErrors
+          .map((e) => `- ${e.summary || e.content.slice(0, 200)}...`)
+          .join("\n");
+        parts.push(`### Similar Past Errors\n${errorsSection}`);
+      }
+
+      if (parts.length === 0) {
+        return null;
+      }
+
+      console.log(
+        `[Fixer] Found ${fixPatterns.length} fix patterns and ${similarErrors.length} similar errors from memory`,
+      );
+      return parts.join("\n\n");
+    } catch (error) {
+      console.warn("[Fixer] Failed to gather memory patterns:", error);
+      return null;
+    }
   }
 
   /**
