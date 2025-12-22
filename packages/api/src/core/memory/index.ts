@@ -229,3 +229,65 @@ export {
   setupDefaultHooks,
   initDefaultHooks,
 } from "./hooks";
+
+// =============================================================================
+// MEMORY BLOCKS - Letta-style structured memory (Phase 1)
+// =============================================================================
+
+export {
+  // Schemas
+  MemorySourceSchema,
+  MemoryScopeSchema,
+  MemoryMetadataSchema,
+  MemoryBlockSchema,
+  CreateMemoryBlockSchema,
+  MemoryBlockHistorySchema,
+
+  // Types
+  type MemorySource,
+  type MemoryScope,
+  type MemoryMetadata,
+  type MemoryBlock,
+  type CreateMemoryBlockInput,
+  type MemoryBlockHistory,
+  type DefaultBlockConfig,
+  type MemoryToolAction,
+  type MemoryReplaceInput,
+  type MemoryInsertInput,
+  type MemoryRethinkInput,
+
+  // Constants
+  DEFAULT_TASK_BLOCKS,
+
+  // Store
+  MemoryBlockStore,
+  getMemoryBlockStore,
+  resetMemoryBlockStore,
+} from "./blocks";
+
+// =============================================================================
+// CHECKPOINTS - State snapshots for rollback/replay (Phase 1)
+// =============================================================================
+
+export {
+  // Schemas
+  CheckpointPhaseSchema,
+  CheckpointStateSchema,
+  CheckpointEffortSchema,
+  CheckpointSchema,
+  CreateCheckpointSchema,
+
+  // Types
+  type CheckpointPhase,
+  type CheckpointState,
+  type CheckpointEffort,
+  type Checkpoint,
+  type CreateCheckpointInput,
+  type CheckpointSummary,
+  type EffortSummary,
+
+  // Store
+  CheckpointStore,
+  getCheckpointStore,
+  resetCheckpointStore,
+} from "./checkpoints";
