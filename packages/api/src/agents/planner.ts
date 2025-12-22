@@ -12,7 +12,7 @@ function getPlannerModel(): string {
     // x-ai/grok-code-fast-1 is the fallback default in model-selection.ts
     return dbModel;
   }
-  return process.env.PLANNER_MODEL || "claude-haiku-4-5-20251001";
+  return process.env.PLANNER_MODEL || "deepseek/deepseek-chat";
 }
 
 interface PlannerInput {

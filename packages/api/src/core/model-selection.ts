@@ -74,16 +74,17 @@ const CACHE_TTL_MS = 60_000; // Refresh every 60 seconds
 /**
  * Default model configuration (fallback)
  *
- * ⚠️ NO OPENAI MODELS - OpenAI quota exhausted as of 2025-12-15
- * All defaults use Claude (Anthropic), Grok (xAI), or DeepSeek (OpenRouter)
+ * ⚠️ NO OPENAI OR ANTHROPIC MODELS - Both quotas exhausted
+ * All defaults use DeepSeek (OpenRouter) and Grok (xAI)
+ * Updated 2025-12-22: Switched from Claude to DeepSeek
  */
 export const DEFAULT_MODEL_CONFIG: Record<string, string> = {
-  // Core agents - all Anthropic Claude
-  planner: "claude-haiku-4-5-20251001",
-  fixer: "claude-opus-4-5-20251101",
-  reviewer: "claude-sonnet-4-5-20250929",
-  escalation_1: "claude-sonnet-4-5-20250929",
-  escalation_2: "claude-opus-4-5-20251101",
+  // Core agents - DeepSeek via OpenRouter (Anthropic credits exhausted)
+  planner: "deepseek/deepseek-chat",
+  fixer: "deepseek/deepseek-r1",
+  reviewer: "deepseek/deepseek-chat",
+  escalation_1: "deepseek/deepseek-chat",
+  escalation_2: "deepseek/deepseek-r1",
   // XS tasks - DeepSeek and Grok (cheap, fast)
   coder_xs_low: "deepseek/deepseek-v3.2-speciale",
   coder_xs_medium: "x-ai/grok-code-fast-1",
