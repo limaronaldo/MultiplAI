@@ -78,6 +78,11 @@ import {
   learnPattern,
   promoteToGlobal,
 } from "./memory/archival";
+import { getCheckpointStore } from "./memory/checkpoints";
+import type {
+  CheckpointPhase,
+  CheckpointEffort,
+} from "./memory/checkpoints/types";
 
 const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
 const ENABLE_LEARNING = process.env.ENABLE_LEARNING !== "false"; // Default to true
@@ -2073,6 +2078,61 @@ export class Orchestrator {
   // Helpers
   // ============================================
 
+  /**
+   * Create a checkpoint for Replit-style rollback capability
+   * Called automatically on significant state transitions
+   */
+  private async createCheckpoint(
+    task: Task,
+    status: TaskStatus,
+  ): Promise<void> {
+    try {
+      // Map task status to checkpoint phase
+      const phaseMap: Record<string, CheckpointPhase> = {
+        PLANNING_DONE: "planning",
+        CODING_DONE: "coding",
+        TESTS_PASSED: "testing",
+        TESTS_FAILED: "testing",
+        REVIEW_APPROVED: "reviewing",
+        REVIEW_REJECTED: "reviewing",
+        COMPLETED: "completed",
+        FAILED: "failed",
+      };
+
+      const phase = phaseMap[status];
+      if (!phase) return; // Not a checkpointable status
+
+      const checkpointStore = getCheckpointStore();
+
+      // Create description based on status
+      const descriptionMap: Record<string, string> = {
+        PLANNING_DONE: "Planning complete",
+        CODING_DONE: "Code generation complete",
+        TESTS_PASSED: "All tests passed",
+        TESTS_FAILED: `Tests failed (attempt ${task.attemptCount})`,
+        REVIEW_APPROVED: "Code review approved",
+        REVIEW_REJECTED: "Code review rejected",
+        COMPLETED: "Task completed successfully",
+        FAILED: `Task failed: ${task.lastError?.slice(0, 100) || "Unknown error"}`,
+      };
+
+      await checkpointStore.create({
+        taskId: task.id,
+        phase,
+        description: descriptionMap[status] || status,
+        // Note: Effort tracking would require passing token/cost info here
+        // For now, this will be enhanced when we add per-phase cost tracking
+      });
+
+      console.log(
+        `[Checkpoint] Created ${phase} checkpoint for task ${task.id}`,
+      );
+    } catch (error) {
+      // Don't fail the main flow for checkpoint operations
+      console.warn("[Checkpoint] Failed to create checkpoint:", error);
+    }
+  }
+
   private updateStatus(task: Task, status: TaskStatus): Task {
     const previousStatus = task.status;
     task.status = transition(task.status, status);
@@ -2122,6 +2182,9 @@ export class Orchestrator {
           tags: ["state-change", fromStatus, toStatus],
           fileRefs: [],
         });
+
+        // Create checkpoint for Replit-style rollback (UX Enhancement)
+        await this.createCheckpoint(task, toStatus);
       }
 
       // Trigger hooks for specific events

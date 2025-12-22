@@ -1,11 +1,20 @@
 import React, { useState } from "react";
-import { Loader2, CheckCircle, AlertCircle } from "lucide-react";
+import {
+  Loader2,
+  CheckCircle,
+  AlertCircle,
+  Zap,
+  Clock,
+  Info,
+} from "lucide-react";
 
 interface CreateIssuesButtonProps {
   planId: string;
   cardCount: number;
   disabled: boolean;
-  onCreateIssues: () => Promise<{ created: number; failed: number }>;
+  onCreateIssues: (options?: {
+    fastMode?: boolean;
+  }) => Promise<{ created: number; failed: number }>;
 }
 
 export const CreateIssuesButton: React.FC<CreateIssuesButtonProps> = ({
@@ -16,6 +25,8 @@ export const CreateIssuesButton: React.FC<CreateIssuesButtonProps> = ({
 }) => {
   const [isCreating, setIsCreating] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [fastMode, setFastMode] = useState(false);
+  const [showFastModeInfo, setShowFastModeInfo] = useState(false);
   const [result, setResult] = useState<{
     type: "success" | "error";
     message: string;
@@ -32,7 +43,7 @@ export const CreateIssuesButton: React.FC<CreateIssuesButtonProps> = ({
     setResult(null);
 
     try {
-      const response = await onCreateIssues();
+      const response = await onCreateIssues({ fastMode });
 
       if (response.failed > 0) {
         setResult({
@@ -121,16 +132,92 @@ export const CreateIssuesButton: React.FC<CreateIssuesButtonProps> = ({
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">
               Create GitHub Issues?
             </h3>
-            <p className="text-gray-600 dark:text-slate-300 mb-6">
+            <p className="text-gray-600 dark:text-slate-300 mb-4">
               This will create <strong>{cardCount}</strong> GitHub issue
               {cardCount !== 1 ? "s" : ""} from your plan cards. Each card will
               become a new issue in the linked repository.
             </p>
+
+            {/* Fast Mode Toggle */}
+            <div className="mb-6 p-3 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Zap
+                    className={`w-5 h-5 ${fastMode ? "text-yellow-500" : "text-slate-400"}`}
+                  />
+                  <span className="font-medium text-gray-900 dark:text-white">
+                    Fast Mode
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowFastModeInfo(!showFastModeInfo)}
+                    className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                  >
+                    <Info size={14} />
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFastMode(!fastMode)}
+                  className={`
+                    relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                    ${fastMode ? "bg-yellow-500" : "bg-slate-300 dark:bg-slate-600"}
+                  `}
+                >
+                  <span
+                    className={`
+                      inline-block h-4 w-4 transform rounded-full bg-white transition-transform
+                      ${fastMode ? "translate-x-6" : "translate-x-1"}
+                    `}
+                  />
+                </button>
+              </div>
+
+              {/* Fast Mode Info */}
+              {showFastModeInfo && (
+                <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+                  <p className="text-sm text-slate-600 dark:text-slate-400 mb-2">
+                    Quick, lightweight changes with faster models
+                  </p>
+                  <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400">
+                    <div className="flex items-center gap-2">
+                      <Clock size={12} className="text-blue-400" />
+                      <span>10-60 seconds vs minutes</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-green-400 font-bold">$</span>
+                      <span>Lower cost per task (~$0.02)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Info size={12} className="text-slate-400" />
+                      <span>Skips comprehensive review</span>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                    Best for: typos, docs, small refactors, simple bug fixes
+                  </p>
+                </div>
+              )}
+
+              {/* Fast mode enabled indicator */}
+              {fastMode && !showFastModeInfo && (
+                <p className="mt-2 text-xs text-yellow-600 dark:text-yellow-400 flex items-center gap-1">
+                  <Zap size={12} />
+                  Issues will be processed with faster models
+                </p>
+              )}
+            </div>
+
             <div className="flex gap-3">
               <button
                 onClick={handleConfirm}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                className={`flex-1 px-4 py-2 rounded-lg transition-colors flex items-center justify-center gap-2 ${
+                  fastMode
+                    ? "bg-yellow-500 hover:bg-yellow-600 text-black"
+                    : "bg-blue-600 hover:bg-blue-700 text-white"
+                }`}
               >
+                {fastMode && <Zap size={16} />}
                 Create {cardCount} Issue{cardCount !== 1 ? "s" : ""}
               </button>
               <button

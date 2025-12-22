@@ -35,6 +35,7 @@ export const TaskStatus = {
   NEW: "NEW",
   PLANNING: "PLANNING",
   PLANNING_DONE: "PLANNING_DONE",
+  PLAN_PENDING_APPROVAL: "PLAN_PENDING_APPROVAL", // Waiting for user to approve plan (Plan Mode)
   BREAKING_DOWN: "BREAKING_DOWN", // Decomposing M/L issues into subtasks
   BREAKDOWN_DONE: "BREAKDOWN_DONE", // Subtasks created, ready for orchestration
   ORCHESTRATING: "ORCHESTRATING", // Processing child tasks

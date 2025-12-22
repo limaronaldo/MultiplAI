@@ -11,8 +11,10 @@ type StatusTransitions = {
 export const validTransitions: StatusTransitions = {
   NEW: ["PLANNING", "FAILED"],
   PLANNING: ["PLANNING_DONE", "FAILED"],
-  // PLANNING_DONE can go to CODING (XS/S) or BREAKING_DOWN (M/L)
-  PLANNING_DONE: ["CODING", "BREAKING_DOWN", "FAILED"],
+  // PLANNING_DONE can go to CODING (XS/S), BREAKING_DOWN (M/L), or wait for approval (Plan Mode)
+  PLANNING_DONE: ["CODING", "BREAKING_DOWN", "PLAN_PENDING_APPROVAL", "FAILED"],
+  // Plan Mode: waiting for user approval before proceeding
+  PLAN_PENDING_APPROVAL: ["CODING", "BREAKING_DOWN", "FAILED"],
   // Decomposition flow for M/L complexity issues
   BREAKING_DOWN: ["BREAKDOWN_DONE", "FAILED"],
   BREAKDOWN_DONE: ["ORCHESTRATING", "FAILED"],
@@ -83,6 +85,8 @@ export function getNextAction(status: TaskStatus): TaskAction {
       return "PLAN";
     case "PLANNING_DONE":
       return "CODE";
+    case "PLAN_PENDING_APPROVAL":
+      return "WAIT"; // Waiting for user to approve/reject plan
     case "BREAKING_DOWN":
       return "WAIT";
     case "BREAKDOWN_DONE":

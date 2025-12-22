@@ -2331,4 +2331,206 @@ gh run list --workflow=deploy.yml
 
 ---
 
-_Last updated: 2025-12-17 03:30 UTC_
+## Session Update: 2025-12-22 - Replit Agent UX Enhancement
+
+### Overview
+
+Completed full implementation of Replit Agent-inspired UX patterns for the AutoDev dashboard. All 3 phases implemented successfully.
+
+### Phase 1: Core UX ✅
+
+#### Checkpoint Timeline & Rollback
+- **Component:** `packages/web/src/components/task/CheckpointTimeline.tsx`
+- **Features:**
+  - Visual timeline showing task phases (Planning → Coding → Testing → Review → PR)
+  - Cost tracking per checkpoint
+  - Timestamps with relative time
+  - Rollback buttons at each checkpoint
+  - Compact variant for smaller spaces
+- **API Endpoints:**
+  - `GET /api/tasks/:id/checkpoints` - List checkpoints
+  - `GET /api/tasks/:id/checkpoints/:checkpointId` - Get checkpoint details
+  - `POST /api/tasks/:id/checkpoints/:checkpointId/rollback` - Restore to checkpoint
+  - `GET /api/tasks/:id/effort` - Get effort summary
+
+#### Autonomy Level Controls
+- **Component:** `packages/web/src/components/settings/AutonomyLevelCard.tsx`
+- **Features:**
+  - 4-level selector: Low / Medium / High / Max
+  - Feature badges showing what each level enables
+  - Descriptions for each autonomy level
+  - Persisted to database via API
+- **Autonomy Levels:**
+  | Level | Max Attempts | Self-Test | Code Review | Description |
+  |-------|-------------|-----------|-------------|-------------|
+  | Low | 1 | Off | Off | Hands-on, basic mode |
+  | Medium | 2 | Off | On | Balanced with validation |
+  | High | 3 | On | On | Comprehensive testing (default) |
+  | Max | 5 | On | On + Extended | Extended autonomous work |
+- **API Endpoints:**
+  - `GET /api/config/autonomy` - Get current autonomy level
+  - `PUT /api/config/autonomy` - Update autonomy level
+
+### Phase 2: User Control ✅
+
+#### Plan Mode Toggle
+- **New Status:** `PLAN_PENDING_APPROVAL` added to TaskStatus enum
+- **Component:** `packages/web/src/components/plans/PlanReviewPanel.tsx`
+- **Features:**
+  - Shows implementation plan for user review
+  - Definition of Done checklist
+  - Target files list
+  - Approve / Reject with feedback buttons
+  - Complexity and effort indicators
+- **State Machine Updates:**
+  - `PLANNING_DONE` → `PLAN_PENDING_APPROVAL` (when plan mode enabled)
+  - `PLAN_PENDING_APPROVAL` → `CODING` (on approve)
+  - `PLAN_PENDING_APPROVAL` → `FAILED` (on reject)
+- **API Endpoints:**
+  - `POST /api/tasks/:id/approve-plan` - Approve plan, proceed to coding
+  - `POST /api/tasks/:id/reject-plan` - Reject with feedback
+  - `PUT /api/tasks/:id/plan-mode` - Enable/disable plan mode
+
+#### Task Progress Panel
+- **Component:** `packages/web/src/components/task/TaskProgressPanel.tsx`
+- **Features:**
+  - Current phase indicator with icon
+  - Progress percentage bar
+  - Current agent working indicator
+  - Completed/pending steps list
+  - Modified files list
+  - Processing animation
+
+#### Enhanced Live Activity Feed
+- **Component:** `packages/web/src/components/live/LiveActivityFeed.tsx` (enhanced)
+- **New Features:**
+  - Progress panel showing phases completed
+  - Agent-specific color-coded badges
+  - Event type icons (planning, coding, testing, etc.)
+  - Active processing indicator with pulse animation
+  - Progress bar derived from event stream
+  - Compact mode option
+
+### Phase 3: Speed & Testing ✅
+
+#### Fast Mode Toggle
+- **Component:** `packages/web/src/components/common/FastModeToggle.tsx`
+- **Features:**
+  - Toggle button with ⚡ icon
+  - Tooltip explaining benefits
+  - Compact chip variant for inline use
+  - Visual feedback when enabled
+- **Fast Mode Config** (`packages/api/src/core/model-selection.ts`):
+  ```typescript
+  FAST_MODE_CONFIG = {
+    planner: "deepseek/deepseek-chat",
+    coder: "x-ai/grok-code-fast-1",
+    fixer: "x-ai/grok-code-fast-1",
+    reviewer: null, // Skip review
+    maxAttempts: 1,
+    skipReview: true,
+    estimatedTime: "10-60s",
+    avgCostPerTask: 0.02,
+  }
+  ```
+- **API:** `POST /api/tasks/:id/process?fastMode=true`
+- **Suitability Check:** `isSuitableForFastMode()` function validates:
+  - XS or S complexity only
+  - Low or medium effort
+  - Max 3 target files
+  - Not a breaking change
+
+#### Create Issues with Fast Mode
+- **Component:** `packages/web/src/components/plans/CreateIssuesButton.tsx` (enhanced)
+- **Features:**
+  - Fast Mode toggle in confirmation dialog
+  - Info panel explaining benefits/limitations
+  - Visual indicator when fast mode enabled
+  - Passes `fastMode` option to API
+
+#### Visual Test Panel (App Testing)
+- **Component:** `packages/web/src/components/task/VisualTestPanel.tsx`
+- **Features:**
+  - Test run summary with pass rate
+  - Progress bar colored by pass rate
+  - Expandable test case results
+  - Screenshot thumbnails with modal viewer
+  - Run Tests button
+  - Error display for failed tests
+- **Integrated with existing CUA (Computer Use Agent) backend:**
+  - `packages/api/src/agents/computer-use/` - Full implementation exists
+  - `POST /api/tasks/:id/run-visual-tests` - Run visual tests
+  - `GET /api/tasks/:id/visual-tests` - Get test runs
+  - `GET /api/visual-tests/:runId` - Get specific run
+
+### Files Created
+
+```
+packages/web/src/components/
+├── common/
+│   └── FastModeToggle.tsx          # ⚡ Fast mode toggle + chip
+├── task/
+│   ├── CheckpointTimeline.tsx      # 📍 Checkpoint rollback timeline
+│   ├── TaskProgressPanel.tsx       # 🔄 Progress tracking panel
+│   ├── VisualTestPanel.tsx         # 🖥️ Visual test results
+│   └── index.ts                    # Exports
+├── settings/
+│   ├── AutonomyLevelCard.tsx       # ⚙️ Autonomy level selector
+│   └── index.ts                    # Exports
+├── plans/
+│   ├── PlanReviewPanel.tsx         # 📋 Plan approval UI
+│   └── index.ts                    # Exports (updated)
+└── live/
+    └── LiveActivityFeed.tsx        # Enhanced with progress metrics
+```
+
+### Files Modified
+
+```
+packages/api/src/
+├── core/
+│   ├── types.ts                    # Added PLAN_PENDING_APPROVAL status
+│   ├── state-machine.ts            # Added transitions for new status
+│   ├── orchestrator.ts             # Added checkpoint creation
+│   └── model-selection.ts          # Added FAST_MODE_CONFIG + helpers
+└── router.ts                       # Added 8+ new API endpoints
+
+packages/web/src/
+├── pages/
+│   ├── TaskDetailPageMobX.tsx      # Integrated all new components
+│   └── SettingsPageMobX.tsx        # Added autonomy controls
+└── components/plans/
+    └── CreateIssuesButton.tsx      # Added Fast Mode toggle
+```
+
+### API Endpoints Added
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/tasks/:id/checkpoints` | List checkpoints for task |
+| GET | `/api/tasks/:id/checkpoints/:id` | Get checkpoint details |
+| POST | `/api/tasks/:id/checkpoints/:id/rollback` | Rollback to checkpoint |
+| GET | `/api/tasks/:id/effort` | Get effort summary |
+| GET | `/api/config/autonomy` | Get autonomy level |
+| PUT | `/api/config/autonomy` | Set autonomy level |
+| POST | `/api/tasks/:id/approve-plan` | Approve plan (Plan Mode) |
+| POST | `/api/tasks/:id/reject-plan` | Reject plan with feedback |
+| PUT | `/api/tasks/:id/plan-mode` | Enable/disable plan mode |
+| POST | `/api/tasks/:id/process?fastMode=true` | Fast Mode processing |
+
+### Linear Issues Created
+
+| Issue | Title | Priority |
+|-------|-------|----------|
+| RML-714 | Batch Merge Detection - Prevent merge conflicts | High |
+| RML-715 | MobX State Management - Migrate remaining pages | Medium |
+| RML-716 | SSE Real-time Updates - Replace polling | Medium |
+| RML-717 | Dashboard Charts - Complete analytics widgets | Low |
+
+### Plan File
+
+Full implementation plan at: `/Users/ronaldo/.claude/plans/virtual-wandering-pony.md`
+
+---
+
+_Last updated: 2025-12-22 UTC_

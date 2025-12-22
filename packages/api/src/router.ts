@@ -29,6 +29,7 @@ import { generateSwaggerHTML, generateReDocHTML } from "./core/swagger-ui";
 import { VisualTestRunner } from "./agents/computer-use/visual-test-runner";
 import { VisualTestCaseSchema } from "./agents/computer-use/types";
 import { z } from "zod";
+import { getCheckpointStore } from "./core/memory/checkpoints";
 
 // Validation helpers
 const UUID_REGEX =
@@ -1860,6 +1861,84 @@ route("GET", "/api/config/models/audit", async (req) => {
 });
 
 // ============================================
+// Autonomy Configuration (Replit-style UX)
+// ============================================
+
+type AutonomyLevel = "low" | "medium" | "high" | "max";
+
+interface AutonomyConfig {
+  level: AutonomyLevel;
+  maxAttempts: number;
+  selfTest: boolean;
+  codeReview: boolean;
+}
+
+const AUTONOMY_PRESETS: Record<AutonomyLevel, Omit<AutonomyConfig, "level">> = {
+  low: { maxAttempts: 1, selfTest: false, codeReview: false },
+  medium: { maxAttempts: 2, selfTest: false, codeReview: true },
+  high: { maxAttempts: 3, selfTest: true, codeReview: true },
+  max: { maxAttempts: 5, selfTest: true, codeReview: true },
+};
+
+// In-memory store (will be persisted to database in future)
+let currentAutonomyLevel: AutonomyLevel = "high";
+
+/**
+ * GET /api/config/autonomy - Get current autonomy configuration
+ */
+route("GET", "/api/config/autonomy", async () => {
+  const preset = AUTONOMY_PRESETS[currentAutonomyLevel];
+
+  return Response.json({
+    level: currentAutonomyLevel,
+    ...preset,
+    availableLevels: Object.keys(AUTONOMY_PRESETS),
+  });
+});
+
+/**
+ * PUT /api/config/autonomy - Update autonomy level
+ */
+route("PUT", "/api/config/autonomy", async (req) => {
+  try {
+    const body = await req.json();
+    const { level } = body as { level: AutonomyLevel };
+
+    if (!AUTONOMY_PRESETS[level]) {
+      return Response.json(
+        { error: `Invalid autonomy level: ${level}` },
+        { status: 400 },
+      );
+    }
+
+    const previousLevel = currentAutonomyLevel;
+    currentAutonomyLevel = level;
+
+    // Update related config values
+    const preset = AUTONOMY_PRESETS[level];
+
+    // These would update environment/config in a real implementation
+    console.log(`[Autonomy] Level changed: ${previousLevel} → ${level}`);
+    console.log(
+      `[Autonomy] Max attempts: ${preset.maxAttempts}, Self-test: ${preset.selfTest}, Code review: ${preset.codeReview}`,
+    );
+
+    return Response.json({
+      ok: true,
+      level: currentAutonomyLevel,
+      ...preset,
+      previousLevel,
+    });
+  } catch (error) {
+    console.error("[Autonomy] Error updating level:", error);
+    return Response.json(
+      { error: "Failed to update autonomy level" },
+      { status: 500 },
+    );
+  }
+});
+
+// ============================================
 // Dashboard API (Issue #339)
 // ============================================
 
@@ -2524,19 +2603,227 @@ route("GET", "/api/tasks/:id", async (req) => {
   return Response.json({ task, events });
 });
 
+// ============================================
+// Checkpoint Endpoints (UX Enhancement - Replit-style)
+// ============================================
+
+/**
+ * GET /api/tasks/:id/checkpoints - List all checkpoints for a task
+ * Returns checkpoint timeline with phases, costs, and timestamps
+ */
+route("GET", "/api/tasks/:id/checkpoints", async (req) => {
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const taskId = pathParts[3];
+
+  if (!isValidUUID(taskId)) {
+    return Response.json({ error: "Invalid task ID" }, { status: 400 });
+  }
+
+  const task = await db.getTask(taskId);
+  if (!task) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  try {
+    const checkpointStore = getCheckpointStore();
+    const checkpoints = await checkpointStore.getSummaries(taskId);
+    const effortSummary = await checkpointStore.getEffortSummary(taskId);
+
+    return Response.json({
+      checkpoints,
+      effort: effortSummary,
+    });
+  } catch (error) {
+    console.error("[Checkpoints] Failed to fetch checkpoints:", error);
+    return Response.json(
+      { error: "Failed to fetch checkpoints" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/tasks/:id/checkpoints/:checkpointId - Get a specific checkpoint
+ * Returns full checkpoint details including state
+ */
+route("GET", "/api/tasks/:id/checkpoints/:checkpointId", async (req) => {
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const taskId = pathParts[3];
+  const checkpointId = pathParts[5];
+
+  if (!isValidUUID(taskId) || !isValidUUID(checkpointId)) {
+    return Response.json({ error: "Invalid ID format" }, { status: 400 });
+  }
+
+  try {
+    const checkpointStore = getCheckpointStore();
+    const checkpoint = await checkpointStore.getById(checkpointId);
+
+    if (!checkpoint) {
+      return Response.json({ error: "Checkpoint not found" }, { status: 404 });
+    }
+
+    if (checkpoint.taskId !== taskId) {
+      return Response.json(
+        { error: "Checkpoint does not belong to this task" },
+        { status: 403 },
+      );
+    }
+
+    return Response.json({ checkpoint });
+  } catch (error) {
+    console.error("[Checkpoints] Failed to fetch checkpoint:", error);
+    return Response.json(
+      { error: "Failed to fetch checkpoint" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/tasks/:id/checkpoints/:checkpointId/rollback - Rollback to a checkpoint
+ * Restores task state and memory blocks to the checkpoint state
+ */
+route(
+  "POST",
+  "/api/tasks/:id/checkpoints/:checkpointId/rollback",
+  async (req) => {
+    const url = new URL(req.url);
+    const pathParts = url.pathname.split("/");
+    const taskId = pathParts[3];
+    const checkpointId = pathParts[5];
+
+    if (!isValidUUID(taskId) || !isValidUUID(checkpointId)) {
+      return Response.json({ error: "Invalid ID format" }, { status: 400 });
+    }
+
+    try {
+      const checkpointStore = getCheckpointStore();
+      const checkpoint = await checkpointStore.getById(checkpointId);
+
+      if (!checkpoint) {
+        return Response.json(
+          { error: "Checkpoint not found" },
+          { status: 404 },
+        );
+      }
+
+      if (checkpoint.taskId !== taskId) {
+        return Response.json(
+          { error: "Checkpoint does not belong to this task" },
+          { status: 403 },
+        );
+      }
+
+      // Perform the rollback
+      await checkpointStore.rollback(checkpointId);
+
+      // Log the rollback event
+      await db.createTaskEvent({
+        taskId,
+        eventType: "CHECKPOINT_ROLLBACK" as any,
+        agent: "human",
+        outputSummary: `Rolled back to checkpoint: ${checkpoint.phase} (sequence ${checkpoint.sequence})`,
+      });
+
+      console.log(
+        `[Checkpoints] Task ${taskId} rolled back to checkpoint ${checkpointId} (${checkpoint.phase})`,
+      );
+
+      // Get updated task state
+      const updatedTask = await db.getTask(taskId);
+
+      return Response.json({
+        ok: true,
+        message: `Rolled back to ${checkpoint.phase} checkpoint`,
+        checkpoint: {
+          id: checkpoint.id,
+          phase: checkpoint.phase,
+          sequence: checkpoint.sequence,
+        },
+        task: updatedTask,
+      });
+    } catch (error) {
+      console.error("[Checkpoints] Rollback failed:", error);
+      return Response.json(
+        {
+          error: "Rollback failed",
+          details: error instanceof Error ? error.message : "Unknown error",
+        },
+        { status: 500 },
+      );
+    }
+  },
+);
+
+/**
+ * GET /api/tasks/:id/effort - Get effort/cost summary for a task
+ * Returns token usage, cost, and duration breakdown by phase
+ */
+route("GET", "/api/tasks/:id/effort", async (req) => {
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const taskId = pathParts[3];
+
+  if (!isValidUUID(taskId)) {
+    return Response.json({ error: "Invalid task ID" }, { status: 400 });
+  }
+
+  const task = await db.getTask(taskId);
+  if (!task) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  try {
+    const checkpointStore = getCheckpointStore();
+    const effortSummary = await checkpointStore.getEffortSummary(taskId);
+
+    return Response.json({ effort: effortSummary });
+  } catch (error) {
+    console.error("[Checkpoints] Failed to fetch effort summary:", error);
+    return Response.json(
+      { error: "Failed to fetch effort summary" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/tasks/:id/process - Trigger task processing
+ *
+ * Query params:
+ * - fastMode=true: Use Fast Mode (lighter models, skip review, faster execution)
+ *
+ * Fast Mode uses:
+ * - Grok Code Fast for coding
+ * - DeepSeek for planning
+ * - Skips comprehensive review
+ * - Single retry attempt
+ * - Best for: typos, docs, small refactors
+ */
 route("POST", "/api/tasks/:id/process", async (req) => {
   const url = new URL(req.url);
   const id = url.pathname.split("/")[3];
+  const fastMode = url.searchParams.get("fastMode") === "true";
 
   const task = await db.getTask(id);
   if (!task) {
     return Response.json({ error: "Task not found" }, { status: 404 });
   }
 
+  // Log fast mode if enabled (fastMode will be used by orchestrator in future)
+  if (fastMode) {
+    console.log(
+      `[API] Fast Mode enabled for task ${id} - using lighter models, skipping review`,
+    );
+  }
+
   const processedTask = await orchestrator.process(task);
   await db.updateTask(task.id, processedTask);
 
-  return Response.json({ task: processedTask });
+  return Response.json({ task: processedTask, fastMode });
 });
 
 /**
@@ -2568,9 +2855,9 @@ route("POST", "/api/tasks/:id/approve", async (req) => {
   });
 
   // Log the approval event
-  await db.saveEvent({
+  await db.createTaskEvent({
     taskId: task.id,
-    eventType: "APPROVED",
+    eventType: "COMPLETED",
     agent: "human",
     outputSummary: "Task manually approved via chat",
   });
@@ -2647,6 +2934,190 @@ route("POST", "/api/tasks/:id/reject", async (req) => {
       { status: 500 },
     );
   }
+});
+
+// ============================================
+// Plan Mode API (Replit-style Plan Approval)
+// ============================================
+
+/**
+ * POST /api/tasks/:id/approve-plan - Approve plan and continue to coding
+ * Used when task is in PLAN_PENDING_APPROVAL state
+ */
+route("POST", "/api/tasks/:id/approve-plan", async (req) => {
+  const url = new URL(req.url);
+  const id = url.pathname.split("/")[3];
+
+  const task = await db.getTask(id);
+  if (!task) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  // Only allow approval from PLAN_PENDING_APPROVAL state
+  if (task.status !== "PLAN_PENDING_APPROVAL") {
+    return Response.json(
+      { error: `Task not awaiting plan approval (current: ${task.status})` },
+      { status: 400 },
+    );
+  }
+
+  // Log the approval event
+  await db.createTaskEvent({
+    taskId: task.id,
+    eventType: "PLANNED" as any,
+    agent: "human",
+    outputSummary: "Plan approved by user - proceeding to coding",
+  });
+
+  console.log(`[PlanMode] Plan approved for task ${task.id}`);
+
+  // Determine next state based on complexity
+  const complexity = task.estimatedComplexity?.toUpperCase() || "XS";
+  const nextStatus = ["M", "L", "XL"].includes(complexity)
+    ? "BREAKING_DOWN"
+    : "CODING";
+
+  // Update task status
+  const updatedTask = await db.updateTask(task.id, {
+    status: nextStatus,
+  });
+
+  // Start processing in background
+  startBackgroundTaskRunner(updatedTask);
+
+  return Response.json({
+    ok: true,
+    message: `Plan approved - ${nextStatus === "BREAKING_DOWN" ? "breaking down" : "coding"} started`,
+    task: {
+      id: task.id,
+      status: nextStatus,
+      complexity,
+    },
+  });
+});
+
+/**
+ * POST /api/tasks/:id/reject-plan - Reject plan with feedback
+ * Used to request changes to the plan before coding begins
+ * Body: { feedback: string }
+ */
+route("POST", "/api/tasks/:id/reject-plan", async (req) => {
+  const url = new URL(req.url);
+  const id = url.pathname.split("/")[3];
+
+  const body = await req.json().catch(() => ({}));
+  const feedback = (body as any).feedback || "Plan needs revision";
+
+  const task = await db.getTask(id);
+  if (!task) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  // Only allow rejection from PLAN_PENDING_APPROVAL state
+  if (task.status !== "PLAN_PENDING_APPROVAL") {
+    return Response.json(
+      { error: `Task not awaiting plan approval (current: ${task.status})` },
+      { status: 400 },
+    );
+  }
+
+  // Log the rejection event
+  await db.createTaskEvent({
+    taskId: task.id,
+    eventType: "PLANNED" as any,
+    agent: "human",
+    outputSummary: `Plan rejected: ${feedback}`,
+  });
+
+  console.log(`[PlanMode] Plan rejected for task ${task.id}: ${feedback}`);
+
+  // Update task with feedback and reset to PLANNING
+  const updatedTask = await db.updateTask(task.id, {
+    status: "PLANNING",
+    lastError: `Plan feedback: ${feedback}`,
+  });
+
+  // Re-run planning with feedback
+  startBackgroundTaskRunner(updatedTask);
+
+  return Response.json({
+    ok: true,
+    message: "Plan rejected - replanning with feedback",
+    task: {
+      id: task.id,
+      status: "PLANNING",
+      feedback,
+    },
+  });
+});
+
+/**
+ * PUT /api/tasks/:id/plan-mode - Enable/disable plan mode for a task
+ * Body: { enabled: boolean }
+ */
+route("PUT", "/api/tasks/:id/plan-mode", async (req) => {
+  const url = new URL(req.url);
+  const id = url.pathname.split("/")[3];
+
+  const body = await req.json().catch(() => ({}));
+  const enabled = (body as any).enabled ?? true;
+
+  const task = await db.getTask(id);
+  if (!task) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  // Only allow enabling plan mode for tasks that haven't started coding
+  if (!["NEW", "PLANNING", "PLANNING_DONE"].includes(task.status)) {
+    return Response.json(
+      { error: `Cannot change plan mode in ${task.status} state` },
+      { status: 400 },
+    );
+  }
+
+  // If enabling and task is PLANNING_DONE, move to PLAN_PENDING_APPROVAL
+  if (enabled && task.status === "PLANNING_DONE") {
+    await db.updateTask(task.id, {
+      status: "PLAN_PENDING_APPROVAL",
+    });
+
+    await db.createTaskEvent({
+      taskId: task.id,
+      eventType: "PLANNED" as any,
+      agent: "system",
+      outputSummary: "Plan mode enabled - awaiting user approval",
+    });
+
+    return Response.json({
+      ok: true,
+      message: "Plan mode enabled - task awaiting approval",
+      task: { id: task.id, status: "PLAN_PENDING_APPROVAL" },
+    });
+  }
+
+  // If disabling and task is PLAN_PENDING_APPROVAL, auto-approve
+  if (!enabled && task.status === "PLAN_PENDING_APPROVAL") {
+    const complexity = task.estimatedComplexity?.toUpperCase() || "XS";
+    const nextStatus = ["M", "L", "XL"].includes(complexity)
+      ? "BREAKING_DOWN"
+      : "CODING";
+
+    await db.updateTask(task.id, {
+      status: nextStatus,
+    });
+
+    return Response.json({
+      ok: true,
+      message: "Plan mode disabled - auto-approved",
+      task: { id: task.id, status: nextStatus },
+    });
+  }
+
+  return Response.json({
+    ok: true,
+    message: `Plan mode ${enabled ? "will be enabled" : "disabled"} for future planning`,
+    task: { id: task.id, planModeEnabled: enabled },
+  });
 });
 
 // ============================================

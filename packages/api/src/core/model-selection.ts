@@ -697,3 +697,157 @@ export function logSelection(
       `~$${estimatedCost.toFixed(2)}/task | ${selection.reason}`,
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FAST MODE - Replit-style quick execution
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Fast Mode Model Configuration
+ *
+ * Uses lighter, faster models for quick changes:
+ * - Planner: Skip (use minimal planning)
+ * - Coder: Grok Code Fast or DeepSeek (10-60s vs minutes)
+ * - Reviewer: Skip comprehensive review
+ * - Fixer: Light model for quick fixes
+ *
+ * Best for:
+ * - Typo fixes
+ * - Small refactors
+ * - Documentation updates
+ * - Simple bug fixes
+ * - Config changes
+ */
+export const FAST_MODE_CONFIG = {
+  planner: "deepseek/deepseek-chat", // Light planning
+  coder: "x-ai/grok-code-fast-1", // Fast coding
+  fixer: "x-ai/grok-code-fast-1", // Quick fixes
+  reviewer: null, // Skip review in fast mode
+  maxAttempts: 1, // Fail fast
+  skipReview: true,
+  estimatedTime: "10-60s",
+  avgCostPerTask: 0.02,
+} as const;
+
+/**
+ * Fast Mode Selection Result
+ */
+export interface FastModeSelection {
+  model: string;
+  skipReview: boolean;
+  maxAttempts: number;
+  reason: string;
+}
+
+/**
+ * Select models for Fast Mode execution
+ *
+ * Uses lightweight models optimized for speed over thoroughness.
+ * Skips comprehensive review step.
+ */
+export function selectFastModeModels(
+  agent: "planner" | "coder" | "fixer" | "reviewer",
+): FastModeSelection {
+  if (agent === "reviewer") {
+    return {
+      model: "", // No model needed
+      skipReview: true,
+      maxAttempts: 1,
+      reason: "Fast Mode: Review skipped for speed",
+    };
+  }
+
+  const model = FAST_MODE_CONFIG[agent];
+  return {
+    model,
+    skipReview: FAST_MODE_CONFIG.skipReview,
+    maxAttempts: FAST_MODE_CONFIG.maxAttempts,
+    reason: `Fast Mode: ${agent} → ${model} (optimized for speed)`,
+  };
+}
+
+/**
+ * Check if a task is suitable for Fast Mode
+ *
+ * Criteria:
+ * - XS or S complexity
+ * - Low or medium effort
+ * - Not a multi-file change
+ * - Not a breaking change
+ */
+export function isSuitableForFastMode(context: {
+  complexity: "XS" | "S" | "M" | "L" | "XL";
+  effort?: EffortLevel;
+  targetFiles?: string[];
+  isBreakingChange?: boolean;
+}): { suitable: boolean; reason: string } {
+  const { complexity, effort, targetFiles = [], isBreakingChange } = context;
+
+  // XL/L/M tasks are too complex
+  if (complexity === "XL" || complexity === "L" || complexity === "M") {
+    return {
+      suitable: false,
+      reason: `${complexity} complexity too high for Fast Mode`,
+    };
+  }
+
+  // High effort tasks need thorough processing
+  if (effort === "high") {
+    return {
+      suitable: false,
+      reason: "High effort tasks need thorough processing",
+    };
+  }
+
+  // Multi-file changes need careful review
+  if (targetFiles.length > 3) {
+    return {
+      suitable: false,
+      reason: `Too many files (${targetFiles.length}) for Fast Mode`,
+    };
+  }
+
+  // Breaking changes need review
+  if (isBreakingChange) {
+    return {
+      suitable: false,
+      reason: "Breaking changes require full review",
+    };
+  }
+
+  return {
+    suitable: true,
+    reason: `${complexity} ${effort || "default"} effort, ${targetFiles.length} files`,
+  };
+}
+
+/**
+ * Get Fast Mode configuration for display
+ */
+export function getFastModeInfo(): {
+  description: string;
+  models: { agent: string; model: string }[];
+  benefits: string[];
+  limitations: string[];
+} {
+  return {
+    description: "Quick, lightweight changes with faster models",
+    models: [
+      { agent: "Planner", model: FAST_MODE_CONFIG.planner },
+      { agent: "Coder", model: FAST_MODE_CONFIG.coder },
+      { agent: "Fixer", model: FAST_MODE_CONFIG.fixer },
+      { agent: "Reviewer", model: "Skipped" },
+    ],
+    benefits: [
+      "10-60 seconds vs minutes",
+      "Lower cost per task (~$0.02)",
+      "Perfect for typos, docs, small fixes",
+    ],
+    limitations: [
+      "XS/S complexity only",
+      "Max 3 target files",
+      "No breaking changes",
+      "Single retry attempt",
+    ],
+  };
+}

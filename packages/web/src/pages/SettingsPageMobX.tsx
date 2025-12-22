@@ -1,9 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { observer } from "mobx-react-lite";
 import { Save, RotateCcw, Check, AlertCircle } from "lucide-react";
 import type { AvailableModel } from "@autodev/shared";
 import { AIReviewSettings } from "@/components/settings/AIReviewSettings";
+import { AutonomyLevelCard, type AutonomyLevel } from "@/components/settings";
 import { useConfigStore } from "@/stores";
+
+const API_BASE = import.meta.env.VITE_API_URL || "";
 
 // Group models by provider/family for better dropdown organization
 interface ModelGroup {
@@ -49,58 +52,59 @@ function formatModelName(model: AvailableModel): string {
   return `${name} (${cost})`;
 }
 
-const POSITION_LABELS: Record<string, { label: string; description: string }> = {
-  planner: {
-    label: "Planner",
-    description: "Analyzes issues and creates implementation plans",
-  },
-  coder_xs_low: {
-    label: "Coder XS (Low)",
-    description: "Extra small tasks with low effort",
-  },
-  coder_xs_medium: {
-    label: "Coder XS (Medium)",
-    description: "Extra small tasks with medium effort",
-  },
-  coder_xs_high: {
-    label: "Coder XS (High)",
-    description: "Extra small tasks with high effort",
-  },
-  coder_s_low: {
-    label: "Coder S (Low)",
-    description: "Small tasks with low effort",
-  },
-  coder_s_medium: {
-    label: "Coder S (Medium)",
-    description: "Small tasks with medium effort",
-  },
-  coder_s_high: {
-    label: "Coder S (High)",
-    description: "Small tasks with high effort",
-  },
-  coder_m_low: {
-    label: "Coder M (Low)",
-    description: "Medium tasks with low effort",
-  },
-  coder_m_medium: {
-    label: "Coder M (Medium)",
-    description: "Medium tasks with medium effort",
-  },
-  coder_m_high: {
-    label: "Coder M (High)",
-    description: "Medium tasks with high effort",
-  },
-  fixer: { label: "Fixer", description: "Fixes failed tests and errors" },
-  reviewer: { label: "Reviewer", description: "Reviews generated code" },
-  escalation_1: {
-    label: "Escalation 1",
-    description: "First retry after failure",
-  },
-  escalation_2: {
-    label: "Escalation 2",
-    description: "Final fallback model",
-  },
-};
+const POSITION_LABELS: Record<string, { label: string; description: string }> =
+  {
+    planner: {
+      label: "Planner",
+      description: "Analyzes issues and creates implementation plans",
+    },
+    coder_xs_low: {
+      label: "Coder XS (Low)",
+      description: "Extra small tasks with low effort",
+    },
+    coder_xs_medium: {
+      label: "Coder XS (Medium)",
+      description: "Extra small tasks with medium effort",
+    },
+    coder_xs_high: {
+      label: "Coder XS (High)",
+      description: "Extra small tasks with high effort",
+    },
+    coder_s_low: {
+      label: "Coder S (Low)",
+      description: "Small tasks with low effort",
+    },
+    coder_s_medium: {
+      label: "Coder S (Medium)",
+      description: "Small tasks with medium effort",
+    },
+    coder_s_high: {
+      label: "Coder S (High)",
+      description: "Small tasks with high effort",
+    },
+    coder_m_low: {
+      label: "Coder M (Low)",
+      description: "Medium tasks with low effort",
+    },
+    coder_m_medium: {
+      label: "Coder M (Medium)",
+      description: "Medium tasks with medium effort",
+    },
+    coder_m_high: {
+      label: "Coder M (High)",
+      description: "Medium tasks with high effort",
+    },
+    fixer: { label: "Fixer", description: "Fixes failed tests and errors" },
+    reviewer: { label: "Reviewer", description: "Reviews generated code" },
+    escalation_1: {
+      label: "Escalation 1",
+      description: "First retry after failure",
+    },
+    escalation_2: {
+      label: "Escalation 2",
+      description: "Final fallback model",
+    },
+  };
 
 const POSITION_GROUPS = [
   { title: "Core Agents", positions: ["planner", "fixer", "reviewer"] },
@@ -121,14 +125,54 @@ const POSITION_GROUPS = [
 
 export const SettingsPageMobX = observer(function SettingsPageMobX() {
   const configStore = useConfigStore();
-  const [pendingChanges, setPendingChanges] = useState<Record<string, string>>({});
+  const [pendingChanges, setPendingChanges] = useState<Record<string, string>>(
+    {},
+  );
   const [savingPosition, setSavingPosition] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<{
     position: string;
     success: boolean;
   } | null>(null);
 
-  const { loading, saving, modelConfigs, availableModels, modelsByPosition } = configStore;
+  const { loading, saving, modelConfigs, availableModels, modelsByPosition } =
+    configStore;
+
+  // Autonomy level state
+  const [autonomyLevel, setAutonomyLevel] = useState<AutonomyLevel>("high");
+  const [autonomyLoading, setAutonomyLoading] = useState(true);
+
+  // Fetch current autonomy level on mount
+  useEffect(() => {
+    const fetchAutonomy = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/config/autonomy`);
+        if (res.ok) {
+          const data = await res.json();
+          setAutonomyLevel(data.level);
+        }
+      } catch (err) {
+        console.error("Failed to fetch autonomy level:", err);
+      } finally {
+        setAutonomyLoading(false);
+      }
+    };
+    fetchAutonomy();
+  }, []);
+
+  // Handle autonomy level change
+  const handleAutonomyChange = useCallback(async (level: AutonomyLevel) => {
+    const res = await fetch(`${API_BASE}/api/config/autonomy`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ level }),
+    });
+
+    if (!res.ok) {
+      throw new Error("Failed to update autonomy level");
+    }
+
+    setAutonomyLevel(level);
+  }, []);
 
   const handleModelChange = (position: string, modelId: string) => {
     setPendingChanges((prev) => ({ ...prev, [position]: modelId }));
@@ -168,7 +212,9 @@ export const SettingsPageMobX = observer(function SettingsPageMobX() {
 
   const hasPendingChange = (position: string) => {
     const currentConfig = modelsByPosition[position];
-    return pendingChanges[position] && pendingChanges[position] !== currentConfig;
+    return (
+      pendingChanges[position] && pendingChanges[position] !== currentConfig
+    );
   };
 
   if (loading) {
@@ -215,7 +261,9 @@ export const SettingsPageMobX = observer(function SettingsPageMobX() {
               {group.positions.map((position) => {
                 const posInfo = POSITION_LABELS[position];
                 const currentModel = getCurrentModel(position);
-                const model = availableModels.find((m) => m.id === currentModel);
+                const model = availableModels.find(
+                  (m) => m.id === currentModel,
+                );
                 const hasChange = hasPendingChange(position);
                 const isSaving = savingPosition === position;
 
@@ -250,11 +298,16 @@ export const SettingsPageMobX = observer(function SettingsPageMobX() {
                       <div className="flex items-center gap-2">
                         <select
                           value={currentModel}
-                          onChange={(e) => handleModelChange(position, e.target.value)}
+                          onChange={(e) =>
+                            handleModelChange(position, e.target.value)
+                          }
                           className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:border-blue-500 min-w-[240px]"
                         >
                           {groupModels(availableModels).map((group) => (
-                            <optgroup key={group.label} label={`── ${group.label} ──`}>
+                            <optgroup
+                              key={group.label}
+                              label={`── ${group.label} ──`}
+                            >
                               {group.models.map((m) => (
                                 <option key={m.id} value={m.id}>
                                   {formatModelName(m)}
@@ -282,7 +335,9 @@ export const SettingsPageMobX = observer(function SettingsPageMobX() {
                         {saveStatus?.position === position && (
                           <span
                             className={`flex items-center gap-1 text-sm ${
-                              saveStatus.success ? "text-emerald-400" : "text-red-400"
+                              saveStatus.success
+                                ? "text-emerald-400"
+                                : "text-red-400"
                             }`}
                           >
                             {saveStatus.success ? (
@@ -300,6 +355,15 @@ export const SettingsPageMobX = observer(function SettingsPageMobX() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Autonomy Level (Replit-style) */}
+      <div className="mt-8">
+        <AutonomyLevelCard
+          currentLevel={autonomyLevel}
+          onLevelChange={handleAutonomyChange}
+          disabled={autonomyLoading}
+        />
       </div>
 
       {/* AI Super Review Settings */}
@@ -328,7 +392,9 @@ export const SettingsPageMobX = observer(function SettingsPageMobX() {
                 {model.provider}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="font-medium text-white text-sm">{model.name}</div>
+                <div className="font-medium text-white text-sm">
+                  {model.name}
+                </div>
                 <div className="text-xs text-slate-500 mt-0.5">
                   {model.description}
                 </div>

@@ -20,6 +20,14 @@ import {
 import clsx from "clsx";
 import { DiffViewer } from "../components/diff/DiffViewer";
 import { TaskChat } from "../components/chat";
+import {
+  CheckpointTimeline,
+  TaskProgressPanel,
+  VisualTestPanel,
+  type CheckpointSummary,
+  type EffortSummary,
+} from "../components/task";
+import { PlanReviewPanel } from "../components/plans";
 import { sseService, type SSEEvent } from "@/services/sse.service";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -169,6 +177,12 @@ const statusConfig: Record<
     bg: "bg-amber-500/10",
     label: "Awaiting Batch",
   },
+  PLAN_PENDING_APPROVAL: {
+    icon: FileCode,
+    color: "text-blue-400",
+    bg: "bg-blue-500/10",
+    label: "Awaiting Approval",
+  },
   COMPLETED: {
     icon: CheckCircle,
     color: "text-emerald-400",
@@ -194,6 +208,17 @@ export const TaskDetailPageMobX = observer(function TaskDetailPageMobX() {
   const [showDiff, setShowDiff] = useState(false);
   const [sseConnected, setSseConnected] = useState(false);
 
+  // Checkpoint state
+  const [checkpoints, setCheckpoints] = useState<CheckpointSummary[]>([]);
+  const [effortSummary, setEffortSummary] = useState<
+    EffortSummary | undefined
+  >();
+  const [checkpointsLoading, setCheckpointsLoading] = useState(false);
+
+  // Visual test state
+  const [visualTestRun, setVisualTestRun] = useState<any>(null);
+  const [visualTestsLoading, setVisualTestsLoading] = useState(false);
+
   const fetchTask = useCallback(async () => {
     if (!taskId) return;
 
@@ -212,6 +237,105 @@ export const TaskDetailPageMobX = observer(function TaskDetailPageMobX() {
       setLoading(false);
     }
   }, [taskId]);
+
+  // Fetch checkpoints for the task
+  const fetchCheckpoints = useCallback(async () => {
+    if (!taskId) return;
+    setCheckpointsLoading(true);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/tasks/${taskId}/checkpoints`);
+      if (res.ok) {
+        const data = await res.json();
+        setCheckpoints(data.checkpoints || []);
+        setEffortSummary(data.effortSummary);
+      }
+    } catch (err) {
+      console.error("Failed to fetch checkpoints:", err);
+    } finally {
+      setCheckpointsLoading(false);
+    }
+  }, [taskId]);
+
+  // Rollback to a checkpoint
+  const handleRollback = useCallback(
+    async (checkpointId: string) => {
+      if (!taskId) return;
+
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/tasks/${taskId}/checkpoints/${checkpointId}/rollback`,
+          { method: "POST" },
+        );
+        if (!res.ok) {
+          throw new Error("Rollback failed");
+        }
+        // Refresh task and checkpoints after rollback
+        await Promise.all([fetchTask(), fetchCheckpoints()]);
+      } catch (err) {
+        console.error("Rollback failed:", err);
+        throw err;
+      }
+    },
+    [taskId, fetchTask, fetchCheckpoints],
+  );
+
+  // Fetch visual test runs for the task
+  const fetchVisualTests = useCallback(async () => {
+    if (!taskId) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/tasks/${taskId}/visual-tests`);
+      if (res.ok) {
+        const data = await res.json();
+        // Get the most recent test run
+        if (data.runs && data.runs.length > 0) {
+          setVisualTestRun(data.runs[0]);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch visual tests:", err);
+    }
+  }, [taskId]);
+
+  // Run visual tests
+  const handleRunVisualTests = useCallback(async () => {
+    if (!taskId || !task) return;
+
+    setVisualTestsLoading(true);
+    try {
+      // Default test cases based on task context
+      const testCases = [
+        {
+          id: "smoke-test",
+          name: "Smoke Test",
+          goal: "Verify the application loads without errors",
+          expectedOutcome: "Page loads successfully with no console errors",
+        },
+      ];
+
+      const res = await fetch(
+        `${API_BASE}/api/tasks/${taskId}/run-visual-tests`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            appUrl: "http://localhost:3000", // Default, could be configured
+            testCases,
+          }),
+        },
+      );
+
+      if (res.ok) {
+        const data = await res.json();
+        setVisualTestRun(data.testRun);
+      }
+    } catch (err) {
+      console.error("Failed to run visual tests:", err);
+    } finally {
+      setVisualTestsLoading(false);
+    }
+  }, [taskId, task]);
 
   // SSE for real-time updates
   useEffect(() => {
@@ -258,7 +382,9 @@ export const TaskDetailPageMobX = observer(function TaskDetailPageMobX() {
   // Initial fetch
   useEffect(() => {
     fetchTask();
-  }, [fetchTask]);
+    fetchCheckpoints();
+    fetchVisualTests();
+  }, [fetchTask, fetchCheckpoints, fetchVisualTests]);
 
   const handleRetry = async () => {
     if (!task) return;
@@ -464,19 +590,33 @@ export const TaskDetailPageMobX = observer(function TaskDetailPageMobX() {
             )}
           </div>
 
-          {/* Plan */}
-          {task.plan && task.plan.length > 0 && (
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-              <h3 className="text-lg font-semibold text-white mb-3">
-                Implementation Plan
-              </h3>
-              <ol className="list-decimal list-inside space-y-2 text-slate-300 text-sm">
-                {task.plan.map((step, i) => (
-                  <li key={i}>{step}</li>
-                ))}
-              </ol>
-            </div>
-          )}
+          {/* Plan - Show PlanReviewPanel when awaiting approval, otherwise show simple plan */}
+          {task.plan &&
+            task.plan.length > 0 &&
+            (task.status === "PLAN_PENDING_APPROVAL" ? (
+              <PlanReviewPanel
+                taskId={task.id}
+                taskTitle={task.githubIssueTitle}
+                plan={task.plan}
+                definitionOfDone={task.definitionOfDone}
+                targetFiles={task.targetFiles}
+                complexity={task.estimatedComplexity}
+                effort={task.estimatedEffort}
+                onApproved={fetchTask}
+                onRejected={fetchTask}
+              />
+            ) : (
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                <h3 className="text-lg font-semibold text-white mb-3">
+                  Implementation Plan
+                </h3>
+                <ol className="list-decimal list-inside space-y-2 text-slate-300 text-sm">
+                  {task.plan.map((step, i) => (
+                    <li key={i}>{step}</li>
+                  ))}
+                </ol>
+              </div>
+            ))}
 
           {/* Definition of Done */}
           {task.definitionOfDone && task.definitionOfDone.length > 0 && (
@@ -533,6 +673,23 @@ export const TaskDetailPageMobX = observer(function TaskDetailPageMobX() {
 
         {/* Right Column - Meta & Events */}
         <div className="space-y-6">
+          {/* Progress Panel (Replit-style) */}
+          <TaskProgressPanel
+            status={task.status}
+            currentAgent={events[0]?.agent}
+            plan={task.plan}
+            modifiedFiles={task.targetFiles}
+            isProcessing={isProcessing}
+          />
+
+          {/* Visual Test Panel (Replit-style App Testing) */}
+          <VisualTestPanel
+            taskId={task.id}
+            testRun={visualTestRun}
+            onRunTests={handleRunVisualTests}
+            isRunning={visualTestsLoading}
+          />
+
           {/* Task Meta */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
             <h3 className="text-lg font-semibold text-white mb-4">Details</h3>
@@ -592,6 +749,32 @@ export const TaskDetailPageMobX = observer(function TaskDetailPageMobX() {
               </div>
             </dl>
           </div>
+
+          {/* Checkpoints Timeline (Replit-style) */}
+          <CheckpointTimeline
+            taskId={task.id}
+            checkpoints={checkpoints}
+            effortSummary={effortSummary}
+            currentPhase={
+              task.status.toLowerCase().includes("planning")
+                ? "planning"
+                : task.status.toLowerCase().includes("coding")
+                  ? "coding"
+                  : task.status.toLowerCase().includes("test")
+                    ? "testing"
+                    : task.status.toLowerCase().includes("fix")
+                      ? "fixing"
+                      : task.status.toLowerCase().includes("review")
+                        ? "reviewing"
+                        : task.status === "COMPLETED"
+                          ? "completed"
+                          : task.status === "FAILED"
+                            ? "failed"
+                            : undefined
+            }
+            onRollback={handleRollback}
+            isLoading={checkpointsLoading}
+          />
 
           {/* Event Timeline */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
