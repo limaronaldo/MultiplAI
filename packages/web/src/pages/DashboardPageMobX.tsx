@@ -19,20 +19,23 @@ import {
   PendingReviewWidget,
   TasksChartWidget,
   CostChartWidget,
+  TopReposWidget,
+  ProcessingTimeWidget,
 } from "../components/dashboard/widgets";
 import { LiveActivityFeed } from "../components/live";
 import { useDashboardStore } from "@/stores";
 
 const iconMap = {
   "Total Tasks": Activity,
-  "Completed": CheckCircle,
-  "Failed": XCircle,
+  Completed: CheckCircle,
+  Failed: XCircle,
   "In Progress": Clock,
 };
 
 export const DashboardPageMobX = observer(function DashboardPageMobX() {
   const dashboardStore = useDashboardStore();
-  const { config, isCustomizing, setIsCustomizing } = useDashboardCustomization();
+  const { config, isCustomizing, setIsCustomizing } =
+    useDashboardCustomization();
 
   // Setup auto-refresh based on config
   useEffect(() => {
@@ -174,18 +177,14 @@ export const DashboardPageMobX = observer(function DashboardPageMobX() {
           </div>
         </DashboardWidget>
 
-        {/* Top Repos Placeholder */}
+        {/* Top Repos Widget */}
         <DashboardWidget id="top-repos">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 h-full flex items-center justify-center">
-            <p className="text-slate-500">Top repositories coming soon</p>
-          </div>
+          <TopReposWidget />
         </DashboardWidget>
 
-        {/* Processing Time Placeholder */}
+        {/* Task Complexity Widget */}
         <DashboardWidget id="processing-time">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 h-full flex items-center justify-center">
-            <p className="text-slate-500">Processing time stats coming soon</p>
-          </div>
+          <ProcessingTimeWidget />
         </DashboardWidget>
       </div>
 
