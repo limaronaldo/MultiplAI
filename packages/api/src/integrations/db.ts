@@ -398,34 +398,42 @@ export const db = {
     },
     taskId?: string,
     limit: number = 50,
-  ): Promise<TaskEvent[]> {
+  ): Promise<(TaskEvent & { taskStatus?: string })[]> {
     const sql = getDb();
     let results;
 
+    // Join with tasks table to get current task status for SSE updates
     if (taskId) {
       results = await sql`
-        SELECT * FROM task_events
+        SELECT e.*, t.status as task_status
+        FROM task_events e
+        LEFT JOIN tasks t ON e.task_id = t.id
         WHERE (
-          created_at > ${since.createdAt}
-          OR (created_at = ${since.createdAt} AND id > ${since.id})
+          e.created_at > ${since.createdAt}
+          OR (e.created_at = ${since.createdAt} AND e.id > ${since.id})
         )
-        AND task_id = ${taskId}
-        ORDER BY created_at ASC, id ASC
+        AND e.task_id = ${taskId}
+        ORDER BY e.created_at ASC, e.id ASC
         LIMIT ${limit}
       `;
     } else {
       results = await sql`
-        SELECT * FROM task_events
+        SELECT e.*, t.status as task_status
+        FROM task_events e
+        LEFT JOIN tasks t ON e.task_id = t.id
         WHERE (
-          created_at > ${since.createdAt}
-          OR (created_at = ${since.createdAt} AND id > ${since.id})
+          e.created_at > ${since.createdAt}
+          OR (e.created_at = ${since.createdAt} AND e.id > ${since.id})
         )
-        ORDER BY created_at ASC, id ASC
+        ORDER BY e.created_at ASC, e.id ASC
         LIMIT ${limit}
       `;
     }
 
-    return results.map(this.mapTaskEvent);
+    return results.map((row: any) => ({
+      ...this.mapTaskEvent(row),
+      taskStatus: row.task_status,
+    }));
   },
 
   // ============================================

@@ -3629,6 +3629,8 @@ route("GET", "/api/logs/stream", async (req) => {
                   level: getLogLevel(event.eventType),
                   tokensUsed: event.tokensUsed,
                   durationMs: event.durationMs,
+                  // Include current task status for real-time UI updates (RML-716)
+                  taskStatus: (event as any).taskStatus,
                 })}\n\n`,
               ),
             );

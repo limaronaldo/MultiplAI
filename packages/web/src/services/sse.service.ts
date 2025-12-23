@@ -9,6 +9,8 @@ export interface SSEEvent {
   level?: "info" | "warn" | "error" | "success";
   tokensUsed?: number;
   durationMs?: number;
+  // Current task status for real-time updates (RML-716)
+  taskStatus?: string;
 }
 
 export type SSEEventHandler = (event: SSEEvent) => void;
@@ -94,7 +96,7 @@ export class SSEService {
     const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
 
     console.log(
-      `[SSE] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`
+      `[SSE] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`,
     );
 
     setTimeout(() => {

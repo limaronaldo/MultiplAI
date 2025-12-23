@@ -435,10 +435,35 @@ export class TaskStore {
           },
           ...this.liveEvents,
         ].slice(0, 100);
+
+        // RML-716: Update task status in-place if provided (avoids full refresh)
+        if (event.taskStatus && event.taskId) {
+          const taskIndex = this.tasks.findIndex((t) => t.id === event.taskId);
+          if (taskIndex !== -1) {
+            const currentStatus = this.tasks[taskIndex].status;
+            if (currentStatus !== event.taskStatus) {
+              this.tasks[taskIndex] = {
+                ...this.tasks[taskIndex],
+                status: event.taskStatus as TaskStatus,
+                updated_at: event.timestamp || new Date().toISOString(),
+              };
+            }
+          }
+        }
       });
 
-      // Debounce task refresh (avoid hammering API on rapid events)
-      this.debouncedRefresh();
+      // Only do full refresh for terminal events or if task not found locally
+      const terminalEvents = [
+        "PR_OPENED",
+        "COMPLETED",
+        "FAILED",
+        "BATCH_PR_CREATED",
+      ];
+      const taskExists = this.tasks.some((t) => t.id === event.taskId);
+
+      if (!taskExists || terminalEvents.includes(event.eventType || "")) {
+        this.debouncedRefresh();
+      }
     }
   }
 
