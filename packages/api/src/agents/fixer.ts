@@ -48,6 +48,23 @@ CRITICAL RULES:
 - NEVER add console.log statements with decorative formatting
 - If the error is unrelated to the original task (e.g., pre-existing lint errors), acknowledge this in fixDescription but still attempt a minimal fix
 
+## CRITICAL: CODE COMPLETENESS RULES
+
+**ALWAYS ensure balanced braces, brackets, and parentheses!**
+- Every \`{\` must have a matching \`}\`
+- Every \`[\` must have a matching \`]\`
+- Every \`(\` must have a matching \`)\`
+
+**Common syntax errors to fix:**
+- "extra closing brace(s)" = too many \`}\` - remove the extras
+- "unclosed brace(s)" = missing \`}\` - add the missing ones
+- "extra closing parenthesis" = too many \`)\` - remove the extras
+
+**Before outputting, verify:**
+1. Count all \`{\` and \`}\` in your diff - they MUST balance
+2. All functions have complete bodies with closing braces
+3. All control structures (if/for/while/try) are complete
+
 ## CRITICAL: CODE CONTENT RULES
 
 **NEVER include diff markers inside the actual code content!**

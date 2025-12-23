@@ -105,6 +105,27 @@ When given a multiFilePlan:
 - Do NOT define types that should be imported from shared files
 - Do NOT use inconsistent type names across files
 
+## CRITICAL: CODE COMPLETENESS RULES
+
+**ALWAYS ensure balanced braces, brackets, and parentheses!**
+- Every \`{\` must have a matching \`}\`
+- Every \`[\` must have a matching \`]\`
+- Every \`(\` must have a matching \`)\`
+- Every template literal \`\`\` must be closed
+
+**NEVER generate truncated or incomplete code!**
+- Complete ALL functions, classes, and blocks
+- If adding a try block, ALWAYS include the catch/finally
+- If adding an if statement, complete the entire block
+- Include ALL closing braces - count them carefully before responding
+- Verify your diff is syntactically valid before outputting
+
+**Before outputting your response, mentally verify:**
+1. Count opening braces \`{\` and closing braces \`}\` - they MUST match
+2. All functions have complete bodies
+3. All control structures (if/for/while/try) are complete
+4. No lines are cut off mid-statement
+
 ## CRITICAL: CODE CONTENT RULES
 
 **NEVER include diff markers inside the actual code content!**
