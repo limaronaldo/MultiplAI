@@ -1,4 +1,5 @@
-import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import { useEffect, useState } from "react";
+import { observer } from "mobx-react-lite";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   RefreshCw,
@@ -10,34 +11,14 @@ import {
   ChevronsUpDown,
   Plus,
   X,
+  ExternalLink,
 } from "lucide-react";
-import type { TaskSummary, TaskStatus } from "@autodev/shared";
+import type { TaskStatus } from "@autodev/shared";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { ToastContainer, useToast } from "@/components/common/Toast";
-import {
-  AdvancedFilters,
-  FilterState,
-  defaultFilterState,
-} from "@/components/filters/AdvancedFilters";
-
-// Normalize API response from camelCase to snake_case
-function normalizeTask(task: Record<string, unknown>): TaskSummary {
-  return {
-    id: task.id as string,
-    github_repo: (task.githubRepo || task.github_repo) as string,
-    github_issue_number: (task.githubIssueNumber ||
-      task.github_issue_number) as number,
-    github_issue_title: (task.githubIssueTitle ||
-      task.github_issue_title) as string,
-    status: task.status as TaskStatus,
-    attempt_count: (task.attemptCount || task.attempt_count || 0) as number,
-    max_attempts: (task.maxAttempts || task.max_attempts || 3) as number,
-    pr_number: (task.prNumber || task.pr_number) as number | undefined,
-    pr_url: (task.prUrl || task.pr_url) as string | undefined,
-    created_at: (task.createdAt || task.created_at) as string,
-    updated_at: (task.updatedAt || task.updated_at) as string,
-  };
-}
+import { AdvancedFilters } from "@/components/filters/AdvancedFilters";
+import { LiveActivityFeed } from "@/components/live";
+import { useTaskStore, type SortField, type StatusFilter } from "@/stores";
 
 function getStatusColor(status: TaskStatus): string {
   switch (status) {
@@ -56,10 +37,7 @@ function getStatusColor(status: TaskStatus): string {
   }
 }
 
-type ActionType = "retry" | "rerun" | "cancel" | "start";
-type SortField = "issue" | "status" | "title" | "attempts" | "created";
-type SortDirection = "asc" | "desc";
-type StatusFilter = "all" | "active" | "completed" | "failed";
+type ActionType = "retry" | "rerun" | "cancel";
 
 interface PendingAction {
   type: ActionType;
@@ -67,79 +45,16 @@ interface PendingAction {
   taskTitle: string;
 }
 
-interface Repository {
-  id: string;
-  owner: string;
-  repo: string;
-  full_name: string;
-}
-
-// Storage key for persisting UI state
-const TASKS_UI_STATE_KEY = "autodev-tasks-ui-state";
-
-interface PersistedUIState {
-  scrollPosition: number;
-  search: string;
-  statusFilter: StatusFilter;
-  sortField: SortField;
-  sortDirection: SortDirection;
-  advancedFilters: FilterState;
-}
-
-function loadPersistedState(): Partial<PersistedUIState> {
-  try {
-    const stored = sessionStorage.getItem(TASKS_UI_STATE_KEY);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-  } catch {
-    // Ignore parse errors
-  }
-  return {};
-}
-
-function savePersistedState(state: Partial<PersistedUIState>) {
-  try {
-    const existing = loadPersistedState();
-    sessionStorage.setItem(
-      TASKS_UI_STATE_KEY,
-      JSON.stringify({ ...existing, ...state }),
-    );
-  } catch {
-    // Ignore storage errors
-  }
-}
-
-export function TasksPage() {
+export const TasksPage = observer(function TasksPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const hasRestoredScroll = useRef(false);
+  const taskStore = useTaskStore();
+  const toast = useToast();
 
-  // Load persisted state on mount
-  const persistedState = useMemo(() => loadPersistedState(), []);
-
-  const [tasks, setTasks] = useState<TaskSummary[]>([]);
-  const [repositories, setRepositories] = useState<Repository[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // Local UI state
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(
     null,
   );
-  const [search, setSearch] = useState(persistedState.search || "");
-  const [sortField, setSortField] = useState<SortField>(
-    persistedState.sortField || "issue",
-  );
-  const [sortDirection, setSortDirection] = useState<SortDirection>(
-    persistedState.sortDirection || "desc",
-  );
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>(
-    persistedState.statusFilter || "all",
-  );
-  const [advancedFilters, setAdvancedFilters] = useState<FilterState>(
-    persistedState.advancedFilters || defaultFilterState,
-  );
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newIssue, setNewIssue] = useState({
@@ -148,191 +63,40 @@ export function TasksPage() {
     body: "",
     autoProcess: true,
   });
-  const toast = useToast();
 
-  // Persist UI state changes
-  const persistState = useCallback(() => {
-    const scrollPosition = containerRef.current?.scrollTop || window.scrollY;
-    savePersistedState({
-      scrollPosition,
-      search,
-      statusFilter,
-      sortField,
-      sortDirection,
-      advancedFilters,
-    });
-  }, [search, statusFilter, sortField, sortDirection, advancedFilters]);
-
-  // Save state when navigating away
-  useEffect(() => {
-    return () => {
-      persistState();
-    };
-  }, [persistState]);
-
-  // Restore scroll position after tasks load
-  useEffect(() => {
-    if (
-      !loading &&
-      tasks.length > 0 &&
-      !hasRestoredScroll.current &&
-      persistedState.scrollPosition
-    ) {
-      hasRestoredScroll.current = true;
-      // Use requestAnimationFrame to ensure DOM is ready
-      requestAnimationFrame(() => {
-        window.scrollTo(0, persistedState.scrollPosition);
-      });
-    }
-  }, [loading, tasks.length, persistedState.scrollPosition]);
-
-  // Get selected repo from URL params
+  // Sync URL params with store
   const selectedRepo = searchParams.get("repo") || "all";
 
-  const fetchTasks = () => {
-    setLoading(true);
-    fetch("/api/tasks")
-      .then((res) => res.json())
-      .then((data) => {
-        const rawTasks = Array.isArray(data) ? data : data.tasks || [];
-        setTasks(rawTasks.map(normalizeTask));
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  };
-
-  const fetchRepositories = () => {
-    fetch("/api/repositories")
-      .then((res) => res.json())
-      .then((data) => {
-        setRepositories(data.repositories || []);
-      })
-      .catch(() => {});
-  };
-
-  const fetchModels = () => {
-    fetch("/api/config/models")
-      .then((res) => res.json())
-      .then((data) => {
-        const models = (data.availableModels || []).map(
-          (m: { id: string }) => m.id,
-        );
-        setAvailableModels(models);
-      })
-      .catch(() => {});
-  };
-
   useEffect(() => {
-    fetchTasks();
-    fetchRepositories();
-    fetchModels();
-    const interval = setInterval(fetchTasks, 10000);
-    return () => clearInterval(interval);
-  }, []);
+    taskStore.setSelectedRepo(selectedRepo);
+  }, [selectedRepo, taskStore]);
 
-  // Get unique repos with task counts
-  const repoTabs = useMemo(() => {
-    const repoCounts: Record<string, number> = {};
-    tasks.forEach((t) => {
-      const repo = t.github_repo;
-      repoCounts[repo] = (repoCounts[repo] || 0) + 1;
-    });
-
-    return Object.entries(repoCounts)
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .map(([repo, count]) => ({
-        repo,
-        name: repo.split("/")[1] || repo,
-        count,
-      }));
-  }, [tasks]);
-
-  // Status filter counts
-  const statusCounts = useMemo(() => {
-    const counts = { all: 0, active: 0, completed: 0, failed: 0 };
-    tasks.forEach((t) => {
-      counts.all++;
-      if (
-        t.status === "COMPLETED" ||
-        t.status === "PR_CREATED" ||
-        t.status === "WAITING_HUMAN"
-      ) {
-        counts.completed++;
-      } else if (
-        t.status === "FAILED" ||
-        t.status === "TESTS_FAILED" ||
-        t.status === "REVIEW_REJECTED"
-      ) {
-        counts.failed++;
-      } else {
-        counts.active++;
-      }
-    });
-    return counts;
-  }, [tasks]);
+  const setSelectedRepo = (repo: string) => {
+    taskStore.setSelectedRepo(repo);
+    if (repo === "all") {
+      searchParams.delete("repo");
+    } else {
+      searchParams.set("repo", repo);
+    }
+    setSearchParams(searchParams);
+  };
 
   // Action handlers
-  const canStart = (status: TaskStatus) => status === "NEW";
-
-  const canRetry = (status: TaskStatus) =>
-    status === "FAILED" ||
-    status === "TESTS_FAILED" ||
-    status === "REVIEW_REJECTED";
-
-  const canRerun = (status: TaskStatus) =>
-    status === "COMPLETED" ||
-    status === "PR_CREATED" ||
-    status === "WAITING_HUMAN";
-
-  const canCancel = (status: TaskStatus) =>
-    !["COMPLETED", "FAILED", "WAITING_HUMAN", "NEW"].includes(status);
-
   const handleAction = async () => {
     if (!pendingAction) return;
 
     const { type, taskId, taskTitle } = pendingAction;
-    setActionLoading(taskId);
     setPendingAction(null);
 
-    try {
-      let endpoint = "";
-      let body: Record<string, unknown> | undefined;
+    const result = await taskStore.performAction(type, taskId);
 
-      switch (type) {
-        case "start":
-        case "retry":
-        case "rerun":
-          endpoint = `/api/tasks/${taskId}/process`;
-          break;
-        case "cancel":
-          endpoint = `/api/tasks/${taskId}/reject`;
-          body = { feedback: "Cancelled by user from dashboard" };
-          break;
-      }
-
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: body ? JSON.stringify(body) : undefined,
-      });
-
-      if (!response.ok) {
-        const error = await response
-          .json()
-          .catch(() => ({ error: "Unknown error" }));
-        throw new Error(error.error || `Failed to ${type} task`);
-      }
-
+    if (result.success) {
       toast.success(
         `Task ${type} initiated`,
         `#${taskTitle.substring(0, 30)}${taskTitle.length > 30 ? "..." : ""}`,
       );
-      fetchTasks();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      toast.error(`Failed to ${type} task`, message);
-    } finally {
-      setActionLoading(null);
+    } else {
+      toast.error(`Failed to ${type} task`, result.error || "Unknown error");
     }
   };
 
@@ -343,47 +107,23 @@ export function TasksPage() {
     }
 
     setCreating(true);
-    try {
-      const response = await fetch("/api/issues", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newIssue),
-      });
+    const result = await taskStore.createIssue(newIssue);
 
-      if (!response.ok) {
-        const error = await response
-          .json()
-          .catch(() => ({ error: "Unknown error" }));
-        throw new Error(error.error || "Failed to create issue");
-      }
-
-      const data = await response.json();
+    if (result.success && result.data) {
       toast.success(
         "Issue created",
-        `#${data.issue.number}: ${data.issue.title.substring(0, 30)}...`,
+        `#${result.data.number}: ${result.data.title.substring(0, 30)}...`,
       );
-
       setShowCreateModal(false);
       setNewIssue({ repo: "", title: "", body: "", autoProcess: true });
-      fetchTasks();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      toast.error("Failed to create issue", message);
-    } finally {
-      setCreating(false);
+    } else {
+      toast.error("Failed to create issue", result.error || "Unknown error");
     }
+    setCreating(false);
   };
 
   const getConfirmConfig = (type: ActionType) => {
     switch (type) {
-      case "start":
-        return {
-          title: "Start Task",
-          message:
-            "This will begin processing the task with AutoDev. Continue?",
-          confirmLabel: "Start",
-          variant: "default" as const,
-        };
       case "retry":
         return {
           title: "Retry Task",
@@ -409,156 +149,50 @@ export function TasksPage() {
     }
   };
 
-  // Handle sorting
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
-    } else {
-      setSortField(field);
-      setSortDirection("desc");
-    }
-  };
-
   const SortIcon = ({ field }: { field: SortField }) => {
-    if (sortField !== field) {
+    if (taskStore.sortField !== field) {
       return <ChevronsUpDown className="w-3 h-3 opacity-40" />;
     }
-    return sortDirection === "asc" ? (
+    return taskStore.sortDirection === "asc" ? (
       <ChevronUp className="w-3 h-3" />
     ) : (
       <ChevronDown className="w-3 h-3" />
     );
   };
 
-  // Filter and sort tasks
-  const filteredTasks = useMemo(() => {
-    let result = tasks;
-
-    // Filter by repo tab
-    if (selectedRepo !== "all") {
-      result = result.filter((t) => t.github_repo === selectedRepo);
-    }
-
-    // Filter by status (quick filter)
-    if (statusFilter !== "all") {
-      result = result.filter((t) => {
-        if (statusFilter === "completed") {
-          return (
-            t.status === "COMPLETED" ||
-            t.status === "PR_CREATED" ||
-            t.status === "WAITING_HUMAN"
-          );
-        } else if (statusFilter === "failed") {
-          return (
-            t.status === "FAILED" ||
-            t.status === "TESTS_FAILED" ||
-            t.status === "REVIEW_REJECTED"
-          );
-        } else if (statusFilter === "active") {
-          return ![
-            "COMPLETED",
-            "FAILED",
-            "TESTS_FAILED",
-            "REVIEW_REJECTED",
-            "PR_CREATED",
-            "WAITING_HUMAN",
-          ].includes(t.status);
-        }
-        return true;
-      });
-    }
-
-    // Advanced filters - Date Range
-    if (advancedFilters.dateRange.start) {
-      result = result.filter(
-        (t) => new Date(t.created_at) >= advancedFilters.dateRange.start!,
-      );
-    }
-    if (advancedFilters.dateRange.end) {
-      result = result.filter(
-        (t) => new Date(t.created_at) <= advancedFilters.dateRange.end!,
-      );
-    }
-
-    // Advanced filters - Status tags (overrides quick filter if set)
-    if (advancedFilters.statuses.length > 0) {
-      result = result.filter((t) =>
-        advancedFilters.statuses.includes(t.status),
-      );
-    }
-
-    // Advanced filters - Complexity (requires extended task data)
-    // Note: This would need API to return estimated_complexity field
-    // if (advancedFilters.complexity.length > 0) {
-    //   result = result.filter((t) =>
-    //     advancedFilters.complexity.includes(t.estimated_complexity || "")
-    //   );
-    // }
-
-    // Search filter
-    if (search) {
-      const searchLower = search.toLowerCase();
-      result = result.filter((task) => {
-        const matchesTitle = task.github_issue_title
-          .toLowerCase()
-          .includes(searchLower);
-        const matchesRepo = task.github_repo
-          .toLowerCase()
-          .includes(searchLower);
-        const matchesIssue = `#${task.github_issue_number}`.includes(search);
-        return matchesTitle || matchesRepo || matchesIssue;
-      });
-    }
-
-    // Sort
-    result = [...result].sort((a, b) => {
-      let comparison = 0;
-      switch (sortField) {
-        case "issue":
-          comparison = a.github_issue_number - b.github_issue_number;
-          break;
-        case "status":
-          comparison = a.status.localeCompare(b.status);
-          break;
-        case "title":
-          comparison = a.github_issue_title.localeCompare(b.github_issue_title);
-          break;
-        case "attempts":
-          comparison = a.attempt_count - b.attempt_count;
-          break;
-        case "created":
-          comparison =
-            new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-          break;
-      }
-      return sortDirection === "asc" ? comparison : -comparison;
-    });
-
-    return result;
-  }, [
+  const {
     tasks,
-    selectedRepo,
+    filteredTasks,
+    loading,
+    actionLoading,
+    repoTabs,
+    statusCounts,
+    repositories,
+    availableModels,
     statusFilter,
     search,
-    sortField,
-    sortDirection,
     advancedFilters,
-  ]);
-
-  const setSelectedRepo = (repo: string) => {
-    if (repo === "all") {
-      searchParams.delete("repo");
-    } else {
-      searchParams.set("repo", repo);
-    }
-    setSearchParams(searchParams);
-  };
+  } = taskStore;
 
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-white">Tasks</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-white">Queue</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            AI processing status for your issues
+          </p>
+        </div>
         <div className="flex items-center gap-2">
+          <a
+            href="https://github.com/issues?q=is%3Aopen+label%3Aauto-dev"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-3 py-2 text-sm text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+          >
+            <ExternalLink className="w-4 h-4" />
+            All Issues
+          </a>
           <button
             onClick={() => setShowCreateModal(true)}
             className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
@@ -567,14 +201,16 @@ export function TasksPage() {
             New Issue
           </button>
           <button
-            onClick={fetchTasks}
+            onClick={() => taskStore.fetchTasks()}
             className="flex items-center gap-2 px-3 py-2 text-sm text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-            Refresh
           </button>
         </div>
       </div>
+
+      {/* Live Activity Feed */}
+      <LiveActivityFeed maxEvents={5} className="mb-6" />
 
       {/* Repository Tabs */}
       <div className="flex items-center gap-1 mb-4 overflow-x-auto pb-2 border-b border-slate-800">
@@ -617,7 +253,7 @@ export function TasksPage() {
             (status) => (
               <button
                 key={status}
-                onClick={() => setStatusFilter(status)}
+                onClick={() => taskStore.setStatusFilter(status)}
                 className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
                   statusFilter === status
                     ? status === "completed"
@@ -643,7 +279,7 @@ export function TasksPage() {
         <input
           type="text"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => taskStore.setSearch(e.target.value)}
           placeholder="Search by title, repo, or issue #..."
           className="flex-1 max-w-md px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
         />
@@ -652,7 +288,7 @@ export function TasksPage() {
       {/* Advanced Filters */}
       <AdvancedFilters
         filters={advancedFilters}
-        onChange={setAdvancedFilters}
+        onChange={(filters) => taskStore.setAdvancedFilters(filters)}
         availableModels={availableModels}
         className="mb-4"
       />
@@ -695,7 +331,7 @@ export function TasksPage() {
                 <tr className="border-b border-slate-800 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   <th className="px-4 py-3">
                     <button
-                      onClick={() => handleSort("issue")}
+                      onClick={() => taskStore.toggleSort("issue")}
                       className="flex items-center gap-1 hover:text-white transition-colors"
                     >
                       Issue <SortIcon field="issue" />
@@ -703,7 +339,7 @@ export function TasksPage() {
                   </th>
                   <th className="px-4 py-3">
                     <button
-                      onClick={() => handleSort("status")}
+                      onClick={() => taskStore.toggleSort("status")}
                       className="flex items-center gap-1 hover:text-white transition-colors"
                     >
                       Status <SortIcon field="status" />
@@ -711,7 +347,7 @@ export function TasksPage() {
                   </th>
                   <th className="px-4 py-3">
                     <button
-                      onClick={() => handleSort("title")}
+                      onClick={() => taskStore.toggleSort("title")}
                       className="flex items-center gap-1 hover:text-white transition-colors"
                     >
                       Title <SortIcon field="title" />
@@ -722,7 +358,7 @@ export function TasksPage() {
                   )}
                   <th className="px-4 py-3 text-center">
                     <button
-                      onClick={() => handleSort("attempts")}
+                      onClick={() => taskStore.toggleSort("attempts")}
                       className="flex items-center gap-1 hover:text-white transition-colors mx-auto"
                     >
                       Attempts <SortIcon field="attempts" />
@@ -786,22 +422,7 @@ export function TasksPage() {
                           <RefreshCw className="w-4 h-4 animate-spin text-slate-400" />
                         ) : (
                           <>
-                            {canStart(task.status) && (
-                              <button
-                                onClick={() =>
-                                  setPendingAction({
-                                    type: "start",
-                                    taskId: task.id,
-                                    taskTitle: task.github_issue_title,
-                                  })
-                                }
-                                className="p-1.5 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 rounded transition-colors"
-                                title="Start"
-                              >
-                                <Play className="w-4 h-4" />
-                              </button>
-                            )}
-                            {canRetry(task.status) && (
+                            {taskStore.canRetry(task.status) && (
                               <button
                                 onClick={() =>
                                   setPendingAction({
@@ -816,7 +437,7 @@ export function TasksPage() {
                                 <RotateCcw className="w-4 h-4" />
                               </button>
                             )}
-                            {canRerun(task.status) && (
+                            {taskStore.canRerun(task.status) && (
                               <button
                                 onClick={() =>
                                   setPendingAction({
@@ -831,7 +452,7 @@ export function TasksPage() {
                                 <Play className="w-4 h-4" />
                               </button>
                             )}
-                            {canCancel(task.status) && (
+                            {taskStore.canCancel(task.status) && (
                               <button
                                 onClick={() =>
                                   setPendingAction({
@@ -992,4 +613,4 @@ export function TasksPage() {
       <ToastContainer toasts={toast.toasts} onDismiss={toast.dismissToast} />
     </div>
   );
-}
+});

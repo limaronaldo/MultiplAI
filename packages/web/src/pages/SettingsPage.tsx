@@ -1,12 +1,12 @@
-import { useEffect, useState } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { observer } from "mobx-react-lite";
 import { Save, RotateCcw, Check, AlertCircle } from "lucide-react";
-import type { AvailableModel, ModelConfig } from "@autodev/shared";
+import type { AvailableModel } from "@autodev/shared";
 import { AIReviewSettings } from "@/components/settings/AIReviewSettings";
+import { AutonomyLevelCard, type AutonomyLevel } from "@/components/settings";
+import { useConfigStore } from "@/stores";
 
-interface ModelConfigResponse {
-  configs: ModelConfig[];
-  availableModels: AvailableModel[];
-}
+const API_BASE = import.meta.env.VITE_API_URL || "";
 
 // Group models by provider/family for better dropdown organization
 interface ModelGroup {
@@ -38,7 +38,6 @@ function groupModels(models: AvailableModel[]): ModelGroup[] {
 }
 
 function formatModelName(model: AvailableModel): string {
-  // Shorter, cleaner names for dropdown
   const name = model.name
     .replace("Claude ", "")
     .replace("GPT-5.1 Codex ", "")
@@ -124,28 +123,55 @@ const POSITION_GROUPS = [
   { title: "Escalation", positions: ["escalation_1", "escalation_2"] },
 ];
 
-export function SettingsPage() {
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState<string | null>(null);
-  const [configs, setConfigs] = useState<ModelConfig[]>([]);
-  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
+export const SettingsPage = observer(function SettingsPage() {
+  const configStore = useConfigStore();
   const [pendingChanges, setPendingChanges] = useState<Record<string, string>>(
     {},
   );
+  const [savingPosition, setSavingPosition] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<{
     position: string;
     success: boolean;
   } | null>(null);
 
+  const { loading, saving, modelConfigs, availableModels, modelsByPosition } =
+    configStore;
+
+  // Autonomy level state
+  const [autonomyLevel, setAutonomyLevel] = useState<AutonomyLevel>("high");
+  const [autonomyLoading, setAutonomyLoading] = useState(true);
+
+  // Fetch current autonomy level on mount
   useEffect(() => {
-    fetch("/api/config/models")
-      .then((res) => res.json())
-      .then((data: ModelConfigResponse) => {
-        setConfigs(data.configs);
-        setAvailableModels(data.availableModels);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    const fetchAutonomy = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/config/autonomy`);
+        if (res.ok) {
+          const data = await res.json();
+          setAutonomyLevel(data.level);
+        }
+      } catch (err) {
+        console.error("Failed to fetch autonomy level:", err);
+      } finally {
+        setAutonomyLoading(false);
+      }
+    };
+    fetchAutonomy();
+  }, []);
+
+  // Handle autonomy level change
+  const handleAutonomyChange = useCallback(async (level: AutonomyLevel) => {
+    const res = await fetch(`${API_BASE}/api/config/autonomy`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ level }),
+    });
+
+    if (!res.ok) {
+      throw new Error("Failed to update autonomy level");
+    }
+
+    setAutonomyLevel(level);
   }, []);
 
   const handleModelChange = (position: string, modelId: string) => {
@@ -156,67 +182,38 @@ export function SettingsPage() {
     const modelId = pendingChanges[position];
     if (!modelId) return;
 
-    setSaving(position);
-    try {
-      const res = await fetch("/api/config/models", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ position, modelId }),
-      });
+    setSavingPosition(position);
+    const result = await configStore.updateModelConfig(position, modelId);
 
-      if (res.ok) {
-        setConfigs((prev) =>
-          prev.map((c) =>
-            c.position === position
-              ? { ...c, modelId, updatedAt: new Date().toISOString() }
-              : c,
-          ),
-        );
-        setPendingChanges((prev) => {
-          const next = { ...prev };
-          delete next[position];
-          return next;
-        });
-        setSaveStatus({ position, success: true });
-      } else {
-        setSaveStatus({ position, success: false });
-      }
-    } catch {
+    if (result.success) {
+      setPendingChanges((prev) => {
+        const next = { ...prev };
+        delete next[position];
+        return next;
+      });
+      setSaveStatus({ position, success: true });
+    } else {
       setSaveStatus({ position, success: false });
     }
-    setSaving(null);
+
+    setSavingPosition(null);
     setTimeout(() => setSaveStatus(null), 2000);
   };
 
   const handleReset = async () => {
     if (!confirm("Reset all model configurations to defaults?")) return;
-
-    try {
-      await fetch("/api/config/models/reset", { method: "POST" });
-      // Reload configs
-      const res = await fetch("/api/config/models");
-      const data: ModelConfigResponse = await res.json();
-      setConfigs(data.configs);
-      setPendingChanges({});
-    } catch (e) {
-      console.error("Failed to reset", e);
-    }
-  };
-
-  const getConfigForPosition = (position: string) => {
-    return configs.find((c) => c.position === position);
+    await configStore.resetToDefaults();
+    setPendingChanges({});
   };
 
   const getCurrentModel = (position: string) => {
-    return (
-      pendingChanges[position] || getConfigForPosition(position)?.modelId || ""
-    );
+    return pendingChanges[position] || modelsByPosition[position] || "";
   };
 
   const hasPendingChange = (position: string) => {
-    const config = getConfigForPosition(position);
+    const currentConfig = modelsByPosition[position];
     return (
-      pendingChanges[position] && pendingChanges[position] !== config?.modelId
+      pendingChanges[position] && pendingChanges[position] !== currentConfig
     );
   };
 
@@ -242,9 +239,10 @@ export function SettingsPage() {
         </div>
         <button
           onClick={handleReset}
-          className="flex items-center gap-2 px-3 py-2 text-sm text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+          disabled={saving}
+          className="flex items-center gap-2 px-3 py-2 text-sm text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
         >
-          <RotateCcw className="w-4 h-4" />
+          <RotateCcw className={`w-4 h-4 ${saving ? "animate-spin" : ""}`} />
           Reset to Defaults
         </button>
       </div>
@@ -267,6 +265,7 @@ export function SettingsPage() {
                   (m) => m.id === currentModel,
                 );
                 const hasChange = hasPendingChange(position);
+                const isSaving = savingPosition === position;
 
                 return (
                   <div key={position} className="px-5 py-4">
@@ -321,10 +320,10 @@ export function SettingsPage() {
                         {hasChange && (
                           <button
                             onClick={() => handleSave(position)}
-                            disabled={saving === position}
+                            disabled={isSaving}
                             className="flex items-center gap-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
                           >
-                            {saving === position ? (
+                            {isSaving ? (
                               <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                             ) : (
                               <Save className="w-4 h-4" />
@@ -356,6 +355,15 @@ export function SettingsPage() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Autonomy Level (Replit-style) */}
+      <div className="mt-8">
+        <AutonomyLevelCard
+          currentLevel={autonomyLevel}
+          onLevelChange={handleAutonomyChange}
+          disabled={autonomyLoading}
+        />
       </div>
 
       {/* AI Super Review Settings */}
@@ -400,4 +408,4 @@ export function SettingsPage() {
       </div>
     </div>
   );
-}
+});

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { observer } from "mobx-react-lite";
 import {
   Activity,
   CheckCircle,
@@ -7,7 +8,6 @@ import {
   Settings,
   RefreshCw,
 } from "lucide-react";
-import type { DashboardStats } from "@autodev/shared";
 import {
   useDashboardCustomization,
   DashboardWidget,
@@ -19,50 +19,39 @@ import {
   PendingReviewWidget,
   TasksChartWidget,
   CostChartWidget,
+  TopReposWidget,
+  ProcessingTimeWidget,
+  ModelComparisonWidget,
 } from "../components/dashboard/widgets";
+import { LiveActivityFeed } from "../components/live";
+import { useDashboardStore } from "@/stores";
 
-const API_BASE = import.meta.env.VITE_API_URL || "";
+const iconMap = {
+  "Total Tasks": Activity,
+  Completed: CheckCircle,
+  Failed: XCircle,
+  "In Progress": Clock,
+};
 
-export function DashboardPage() {
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+export const DashboardPage = observer(function DashboardPage() {
+  const dashboardStore = useDashboardStore();
   const { config, isCustomizing, setIsCustomizing } =
     useDashboardCustomization();
 
-  const fetchStats = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/stats`);
-      const data = await res.json();
-      setStats(data);
-    } catch (err) {
-      console.error("Failed to fetch stats:", err);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+  // Setup auto-refresh based on config
+  useEffect(() => {
+    if (config.autoRefresh) {
+      dashboardStore.startAutoRefresh(config.refreshInterval);
+    } else {
+      dashboardStore.stopAutoRefresh();
     }
-  };
 
-  useEffect(() => {
-    fetchStats();
-  }, []);
+    return () => {
+      dashboardStore.stopAutoRefresh();
+    };
+  }, [config.autoRefresh, config.refreshInterval, dashboardStore]);
 
-  // Auto-refresh based on config
-  useEffect(() => {
-    if (!config.autoRefresh) return;
-
-    const interval = setInterval(() => {
-      setRefreshing(true);
-      fetchStats();
-    }, config.refreshInterval * 1000);
-
-    return () => clearInterval(interval);
-  }, [config.autoRefresh, config.refreshInterval]);
-
-  const handleRefresh = () => {
-    setRefreshing(true);
-    fetchStats();
-  };
+  const { loading, refreshing, statCards, successRate } = dashboardStore;
 
   if (loading) {
     return (
@@ -79,42 +68,6 @@ export function DashboardPage() {
     );
   }
 
-  const statCards = [
-    {
-      label: "Total Tasks",
-      value: stats?.total ?? 0,
-      icon: Activity,
-      color: "text-blue-400",
-      bg: "bg-blue-500/10",
-    },
-    {
-      label: "Completed",
-      value: stats?.completed ?? 0,
-      icon: CheckCircle,
-      color: "text-emerald-400",
-      bg: "bg-emerald-500/10",
-    },
-    {
-      label: "Failed",
-      value: stats?.failed ?? 0,
-      icon: XCircle,
-      color: "text-red-400",
-      bg: "bg-red-500/10",
-    },
-    {
-      label: "In Progress",
-      value: stats?.in_progress ?? 0,
-      icon: Clock,
-      color: "text-amber-400",
-      bg: "bg-amber-500/10",
-    },
-  ];
-
-  // Get visible widgets sorted by order
-  const visibleWidgets = config.widgets
-    .filter((w) => w.visible)
-    .sort((a, b) => a.order - b.order);
-
   return (
     <div className="p-8">
       {/* Header */}
@@ -122,7 +75,7 @@ export function DashboardPage() {
         <h1 className="text-2xl font-bold text-white">Dashboard</h1>
         <div className="flex items-center gap-2">
           <button
-            onClick={handleRefresh}
+            onClick={() => dashboardStore.refresh()}
             disabled={refreshing}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm text-slate-400 hover:bg-slate-800 transition-colors disabled:opacity-50"
           >
@@ -148,20 +101,23 @@ export function DashboardPage() {
         {/* Stats Summary Widget */}
         <DashboardWidget id="stats-summary">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {statCards.map(({ label, value, icon: Icon, color, bg }) => (
-              <div
-                key={label}
-                className="bg-slate-900 border border-slate-800 rounded-xl p-5"
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm text-slate-400">{label}</span>
-                  <div className={`p-2 rounded-lg ${bg}`}>
-                    <Icon className={`w-5 h-5 ${color}`} />
+            {statCards.map(({ label, value, color, bg }) => {
+              const Icon = iconMap[label as keyof typeof iconMap] || Activity;
+              return (
+                <div
+                  key={label}
+                  className="bg-slate-900 border border-slate-800 rounded-xl p-5"
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm text-slate-400">{label}</span>
+                    <div className={`p-2 rounded-lg ${bg}`}>
+                      <Icon className={`w-5 h-5 ${color}`} />
+                    </div>
                   </div>
+                  <div className="text-3xl font-bold text-white">{value}</div>
                 </div>
-                <div className="text-3xl font-bold text-white">{value}</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </DashboardWidget>
 
@@ -175,14 +131,19 @@ export function DashboardPage() {
               <div className="flex-1 h-4 bg-slate-800 rounded-full overflow-hidden">
                 <div
                   className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                  style={{ width: `${stats?.success_rate ?? 0}%` }}
+                  style={{ width: `${successRate}%` }}
                 />
               </div>
               <span className="text-2xl font-bold text-emerald-400">
-                {stats?.success_rate ?? 0}%
+                {successRate}%
               </span>
             </div>
           </div>
+        </DashboardWidget>
+
+        {/* Live Activity Feed */}
+        <DashboardWidget id="live-activity">
+          <LiveActivityFeed maxEvents={5} showClear={true} />
         </DashboardWidget>
 
         {/* Recent Tasks Widget */}
@@ -210,25 +171,19 @@ export function DashboardPage() {
           <CostChartWidget />
         </DashboardWidget>
 
-        {/* Model Comparison Placeholder */}
+        {/* Model Comparison Widget */}
         <DashboardWidget id="model-comparison">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 h-64 flex items-center justify-center">
-            <p className="text-slate-500">Model comparison chart coming soon</p>
-          </div>
+          <ModelComparisonWidget />
         </DashboardWidget>
 
-        {/* Top Repos Placeholder */}
+        {/* Top Repos Widget */}
         <DashboardWidget id="top-repos">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 h-full flex items-center justify-center">
-            <p className="text-slate-500">Top repositories coming soon</p>
-          </div>
+          <TopReposWidget />
         </DashboardWidget>
 
-        {/* Processing Time Placeholder */}
+        {/* Task Complexity Widget */}
         <DashboardWidget id="processing-time">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 h-full flex items-center justify-center">
-            <p className="text-slate-500">Processing time stats coming soon</p>
-          </div>
+          <ProcessingTimeWidget />
         </DashboardWidget>
       </div>
 
@@ -238,4 +193,4 @@ export function DashboardPage() {
       )}
     </div>
   );
-}
+});

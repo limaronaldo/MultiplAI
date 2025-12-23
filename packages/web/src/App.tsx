@@ -2,10 +2,10 @@ import { Routes, Route, Navigate, useParams } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { ErrorBoundary } from "@/components/error";
 import { StoreProvider } from "@/stores";
-import { DashboardPageMobX as DashboardPage } from "@/pages/DashboardPageMobX";
-import { TasksPageMobX as TasksPage } from "@/pages/TasksPageMobX";
-import { TaskDetailPageMobX as TaskDetailPage } from "@/pages/TaskDetailPageMobX";
-import { SettingsPageMobX as SettingsPage } from "@/pages/SettingsPageMobX";
+import { DashboardPage } from "@/pages/DashboardPage";
+import { TasksPage } from "@/pages/TasksPage";
+import { TaskDetailPage } from "@/pages/TaskDetailPage";
+import { SettingsPage } from "@/pages/SettingsPage";
 import { PlansPage } from "@/pages/PlansPage";
 import { PlanCanvasPage } from "@/pages/PlanCanvasPage";
 
