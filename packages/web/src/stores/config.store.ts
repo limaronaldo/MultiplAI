@@ -3,6 +3,8 @@ import type { ModelConfig, AvailableModel } from "@autodev/shared";
 
 export type { ModelConfig, AvailableModel };
 
+const API_BASE = import.meta.env.VITE_API_URL || "";
+
 export interface AIReviewConfig {
   copilotEnabled: boolean;
   codexEnabled: boolean;
@@ -87,7 +89,7 @@ export class ConfigStore {
     this.error = null;
 
     try {
-      const res = await fetch("/api/config/models");
+      const res = await fetch(`${API_BASE}/api/config/models`);
       if (!res.ok) {
         throw new Error("Failed to fetch model configurations");
       }
@@ -114,7 +116,7 @@ export class ConfigStore {
     this.error = null;
 
     try {
-      const res = await fetch("/api/config/models", {
+      const res = await fetch(`${API_BASE}/api/config/models`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ position, modelId }),
@@ -148,7 +150,7 @@ export class ConfigStore {
     this.error = null;
 
     try {
-      const res = await fetch("/api/config/models/reset", {
+      const res = await fetch(`${API_BASE}/api/config/models/reset`, {
         method: "POST",
       });
 

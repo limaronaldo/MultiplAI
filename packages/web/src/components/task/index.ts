@@ -9,3 +9,5 @@ export type {
 } from "./CheckpointTimeline";
 export { TaskProgressPanel } from "./TaskProgressPanel";
 export { VisualTestPanel } from "./VisualTestPanel";
+export { BreakdownPanel } from "./BreakdownPanel";
+export { TraceTimeline } from "./TraceTimeline";

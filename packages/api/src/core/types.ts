@@ -396,7 +396,14 @@ export const FixerOutputSchema = z.object({
 export type FixerOutput = z.infer<typeof FixerOutputSchema>;
 
 export const ReviewerOutputSchema = z.object({
-  verdict: z.enum(["APPROVE", "REQUEST_CHANGES", "NEEDS_DISCUSSION"]),
+  // Accept both "APPROVE" and "APPROVED" - LLMs sometimes return the past tense
+  verdict: z.enum([
+    "APPROVE",
+    "APPROVED",
+    "REQUEST_CHANGES",
+    "NEEDS_CHANGES",
+    "NEEDS_DISCUSSION",
+  ]),
   summary: z.string(),
   comments: z.array(
     z.object({

@@ -276,22 +276,25 @@ export class OpenAIDirectClient {
       max_output_tokens: params.maxTokens,
     };
 
-    // GPT-5.2 specific parameters (from GPT-5 prompting guide best practices)
-    if (isGPT52) {
-      // Reasoning effort: default "high", use "xhigh" for Fixer agent
+    // Codex models (GPT-5.1-Codex and GPT-5.2-Codex) - optimized for long autonomous coding
+    // GPT-5.2-Codex: reasoning.effort supports "high", but text.verbosity only supports "medium"
+    // GPT-5.1-Codex-Mini supports: medium, high
+    // GPT-5.1-Codex-Max supports: low, medium, high, xhigh
+    // IMPORTANT: Check isCodex BEFORE isGPT52 since gpt-5.2-codex matches both
+    if (isCodex) {
+      const effort = effectiveEffort || "high";
+      requestParams.reasoning = { effort };
+      // GPT-5.2-Codex only supports text.verbosity: "medium" (not "high")
+      const isGPT52Codex = baseModel.startsWith("gpt-5.2-codex");
+      if (isGPT52Codex) {
+        requestParams.text = { verbosity: "medium" };
+      }
+    } else if (isGPT52) {
+      // GPT-5.2 base models (not Codex) - support high verbosity
       const effort = effectiveEffort || "high";
       requestParams.reasoning = { effort };
       // High verbosity for detailed code output
       requestParams.text = { verbosity: "high" };
-    }
-
-    // Codex models (GPT-5.1-Codex-Max/Mini) - optimized for long autonomous coding
-    // Per Codex-Max guide: "medium" for interactive, "high/xhigh" for hard tasks
-    // Codex-Mini only supports: medium, high
-    // Codex-Max supports: low, medium, high, xhigh
-    if (isCodex) {
-      const effort = effectiveEffort || "high";
-      requestParams.reasoning = { effort };
     }
 
     // Pass previous_response_id to reuse reasoning context between turns

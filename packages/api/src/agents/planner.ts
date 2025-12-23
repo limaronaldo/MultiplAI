@@ -138,6 +138,20 @@ Your job is to:
 5. Estimate complexity
 6. For M+ complexity, create a multi-file coordination plan
 
+<output_verbosity_spec>
+- DoD: 3-6 concrete, testable criteria. No vague items like "works correctly"
+- Plan: 4-8 specific implementation steps. Each step = one logical change
+- targetFiles: Only files that WILL be modified. No "might need" files
+- Avoid narrative explanations - use structured lists only
+</output_verbosity_spec>
+
+<design_and_scope_constraints>
+- Plan EXACTLY what the issue asks for - no extra features
+- If requirements are ambiguous, choose the simplest valid interpretation
+- Do NOT add "nice to have" items, tests beyond what's needed, or refactoring
+- Complexity estimate must reflect ONLY the requested work
+</design_and_scope_constraints>
+
 IMPORTANT RULES:
 - Keep the scope small and focused
 - Each DoD item must be verifiable
@@ -247,7 +261,7 @@ export class PlannerAgent extends BaseAgent<PlannerInput, PlannerOutput> {
     // Use a placeholder model - actual model is set at runtime in run()
     // This allows the DB config to be loaded before we read the model
     super({
-      model: "claude-haiku-4-5-20251015", // placeholder, overridden in run()
+      model: "claude-haiku-4-5-20251001", // placeholder, overridden in run()
       temperature: 0.3,
       maxTokens: 4096,
     });

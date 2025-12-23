@@ -528,7 +528,7 @@ MULTI_AGENT_MODE=true
 // Anthropic Direct API
 "claude-opus-4-5-20251101"   → AnthropicClient
 "claude-sonnet-4-5-20250929" → AnthropicClient
-"claude-haiku-4-5-20251015"  → AnthropicClient
+"claude-haiku-4-5-20251001"  → AnthropicClient
 
 // OpenAI Direct API (Chat Completions)
 "gpt-4.1", "gpt-4o", "o1", "o3-mini" → OpenAIClient

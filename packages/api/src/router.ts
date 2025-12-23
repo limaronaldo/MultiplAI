@@ -30,6 +30,7 @@ import { VisualTestRunner } from "./agents/computer-use/visual-test-runner";
 import { VisualTestCaseSchema } from "./agents/computer-use/types";
 import { z } from "zod";
 import { getCheckpointStore } from "./core/memory/checkpoints";
+import { BreakdownAgent, type SubIssue } from "./agents/breakdown";
 
 // Validation helpers
 const UUID_REGEX =
@@ -1585,7 +1586,7 @@ const AVAILABLE_MODELS = [
     capabilities: ["reasoning", "coding", "analysis"],
   },
   {
-    id: "claude-haiku-4-5-20251015",
+    id: "claude-haiku-4-5-20251001",
     name: "Claude Haiku 4.5",
     provider: "anthropic" as const,
     costPerTask: 0.006,
@@ -2791,6 +2792,118 @@ route("GET", "/api/tasks/:id/effort", async (req) => {
 });
 
 /**
+ * GET /api/tasks/:id/traces - Get agent traces for a task
+ * Returns full trace tree with timing, tokens, cost, and gate results
+ */
+route("GET", "/api/tasks/:id/traces", async (req) => {
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const taskId = pathParts[3];
+
+  if (!isValidUUID(taskId)) {
+    return Response.json({ error: "Invalid task ID" }, { status: 400 });
+  }
+
+  const task = await db.getTask(taskId);
+  if (!task) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  try {
+    const { getTaskTraces, getTaskTraceStats } = await import("./core/tracing");
+
+    const [traces, stats] = await Promise.all([
+      getTaskTraces(taskId),
+      getTaskTraceStats(taskId),
+    ]);
+
+    return Response.json({
+      taskId,
+      traces,
+      stats,
+    });
+  } catch (error) {
+    console.error("[Traces] Failed to fetch traces:", error);
+    return Response.json({ error: "Failed to fetch traces" }, { status: 500 });
+  }
+});
+
+/**
+ * GET /api/tasks/:id/traces/tree - Get hierarchical trace tree for a task
+ * Returns nested trace structure for tree visualization
+ */
+route("GET", "/api/tasks/:id/traces/tree", async (req) => {
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const taskId = pathParts[3];
+
+  if (!isValidUUID(taskId)) {
+    return Response.json({ error: "Invalid task ID" }, { status: 400 });
+  }
+
+  const task = await db.getTask(taskId);
+  if (!task) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  try {
+    const { getTaskTraceTree, getTaskTraceStats } =
+      await import("./core/tracing");
+
+    const [tree, stats] = await Promise.all([
+      getTaskTraceTree(taskId),
+      getTaskTraceStats(taskId),
+    ]);
+
+    return Response.json({
+      taskId,
+      tree,
+      stats,
+    });
+  } catch (error) {
+    console.error("[Traces] Failed to fetch trace tree:", error);
+    return Response.json(
+      { error: "Failed to fetch trace tree" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/tasks/:id/gates - Get gate validation history for a task
+ */
+route("GET", "/api/tasks/:id/gates", async (req) => {
+  const url = new URL(req.url);
+  const pathParts = url.pathname.split("/");
+  const taskId = pathParts[3];
+
+  if (!isValidUUID(taskId)) {
+    return Response.json({ error: "Invalid task ID" }, { status: 400 });
+  }
+
+  const task = await db.getTask(taskId);
+  if (!task) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  try {
+    const { getTaskGateHistory } = await import("./core/gates");
+    const gates = await getTaskGateHistory(taskId);
+
+    return Response.json({
+      taskId,
+      gates,
+    });
+  } catch (error) {
+    console.error("[Gates] Failed to fetch gate history:", error);
+    return Response.json(
+      { error: "Failed to fetch gate history" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
  * POST /api/tasks/:id/process - Trigger task processing
  *
  * Query params:
@@ -3120,6 +3233,235 @@ route("PUT", "/api/tasks/:id/plan-mode", async (req) => {
   });
 });
 
+/**
+ * POST /api/tasks/:id/breakdown - Break down an XL task into smaller issues
+ * Used when a task is too complex (XL) and needs to be split
+ * Returns suggested sub-issues that can be created on GitHub
+ */
+route("POST", "/api/tasks/:id/breakdown", async (req) => {
+  const url = new URL(req.url);
+  const id = url.pathname.split("/")[3];
+
+  const task = await db.getTask(id);
+  if (!task) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  // Check if task has error about complexity
+  const isXLComplexity =
+    task.estimatedComplexity === "XL" ||
+    task.lastError?.includes("COMPLEXITY_TOO_HIGH") ||
+    task.lastError?.includes("XL");
+
+  if (!isXLComplexity && task.status !== "FAILED") {
+    return Response.json(
+      {
+        error:
+          "Breakdown is only available for XL complexity tasks or failed tasks",
+      },
+      { status: 400 },
+    );
+  }
+
+  // Log the breakdown request
+  await db.createTaskEvent({
+    taskId: task.id,
+    eventType: "BREAKDOWN_REQUESTED" as any,
+    agent: "human",
+    outputSummary: "User requested breakdown of XL task",
+  });
+
+  console.log(`[Breakdown] Breaking down XL task ${task.id}`);
+
+  try {
+    // Get repo context
+    const github = new GitHubClient();
+    const repoContext = await github.getRepoContext(task.githubRepo, []);
+
+    // Run breakdown agent
+    const breakdownAgent = new BreakdownAgent();
+    const breakdown = await breakdownAgent.run({
+      issueTitle: task.githubIssueTitle,
+      issueBody: task.githubIssueBody || "",
+      repoContext,
+      estimatedComplexity: "XL",
+    });
+
+    // Log success
+    await db.createTaskEvent({
+      taskId: task.id,
+      eventType: "BREAKDOWN_COMPLETE" as any,
+      agent: "breakdown",
+      outputSummary: `Created ${breakdown.subIssues.length} sub-issues`,
+      metadata: {
+        subIssueCount: breakdown.subIssues.length,
+        executionOrder: breakdown.executionOrder,
+      },
+    });
+
+    return Response.json({
+      ok: true,
+      message: `Task broken down into ${breakdown.subIssues.length} sub-issues`,
+      breakdown: {
+        subIssues: breakdown.subIssues,
+        executionOrder: breakdown.executionOrder,
+        parallelGroups: breakdown.parallelGroups,
+        reasoning: breakdown.reasoning,
+      },
+      task: {
+        id: task.id,
+        title: task.githubIssueTitle,
+        repo: task.githubRepo,
+        issueNumber: task.githubIssueNumber,
+      },
+    });
+  } catch (error) {
+    console.error(`[Breakdown] Failed to break down task ${task.id}:`, error);
+
+    await db.createTaskEvent({
+      taskId: task.id,
+      eventType: "BREAKDOWN_FAILED" as any,
+      agent: "breakdown",
+      outputSummary: error instanceof Error ? error.message : "Unknown error",
+    });
+
+    return Response.json(
+      {
+        error: "Failed to break down task",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/tasks/:id/breakdown/create-issues - Create GitHub issues from breakdown
+ * Body: { subIssues: SubIssue[], closeParent?: boolean }
+ */
+route("POST", "/api/tasks/:id/breakdown/create-issues", async (req) => {
+  const url = new URL(req.url);
+  const id = url.pathname.split("/")[3];
+
+  const body = await req.json().catch(() => ({}));
+  const { subIssues, closeParent = false } = body as {
+    subIssues: SubIssue[];
+    closeParent?: boolean;
+  };
+
+  if (!subIssues || !Array.isArray(subIssues) || subIssues.length === 0) {
+    return Response.json(
+      { error: "Missing or empty subIssues array" },
+      { status: 400 },
+    );
+  }
+
+  const task = await db.getTask(id);
+  if (!task) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  console.log(
+    `[Breakdown] Creating ${subIssues.length} GitHub issues for task ${task.id}`,
+  );
+
+  try {
+    const github = new GitHubClient();
+    const [owner, repo] = task.githubRepo.split("/");
+    const createdIssues: Array<{ number: number; title: string; url: string }> =
+      [];
+
+    // Create issues in execution order
+    for (const subIssue of subIssues) {
+      const issueBody = `## Parent Issue
+This issue was automatically created from #${task.githubIssueNumber} which was too complex (XL) to process automatically.
+
+## Description
+${subIssue.description}
+
+## Target Files
+${subIssue.targetFiles.map((f) => `- \`${f}\``).join("\n")}
+
+## Acceptance Criteria
+${subIssue.acceptanceCriteria.map((c) => `- [ ] ${c}`).join("\n")}
+
+## Dependencies
+${
+  subIssue.dependsOn.length > 0
+    ? subIssue.dependsOn.map((d) => `- Depends on: ${d}`).join("\n")
+    : "None - can be worked on independently"
+}
+
+---
+_Complexity: ${subIssue.complexity} | Auto-generated by AutoDev_
+`;
+
+      const issue = await github.createIssue(owner, repo, {
+        title: subIssue.title,
+        body: issueBody,
+        labels: ["auto-dev", `complexity:${subIssue.complexity.toLowerCase()}`],
+      });
+
+      createdIssues.push({
+        number: issue.number,
+        title: subIssue.title,
+        url: issue.html_url,
+      });
+    }
+
+    // Optionally close the parent issue
+    if (closeParent) {
+      await github.addComment(
+        task.githubRepo,
+        task.githubIssueNumber,
+        `## Issue Decomposed
+
+This issue was too complex (XL) and has been broken down into ${createdIssues.length} smaller issues:
+
+${createdIssues.map((i) => `- #${i.number} - ${i.title}`).join("\n")}
+
+Closing this issue as it has been replaced by the smaller issues above.
+
+---
+_Auto-generated by AutoDev_`,
+      );
+      await github.closeIssue(task.githubRepo, task.githubIssueNumber);
+
+      // Mark the task as completed
+      await db.updateTask(task.id, {
+        status: "COMPLETED",
+        lastError: undefined,
+      });
+    }
+
+    // Log the issue creation
+    await db.createTaskEvent({
+      taskId: task.id,
+      eventType: "ISSUES_CREATED" as any,
+      agent: "breakdown",
+      outputSummary: `Created ${createdIssues.length} GitHub issues`,
+      metadata: { createdIssues },
+    });
+
+    return Response.json({
+      ok: true,
+      message: `Created ${createdIssues.length} GitHub issues`,
+      createdIssues,
+      parentClosed: closeParent,
+    });
+  } catch (error) {
+    console.error(`[Breakdown] Failed to create issues:`, error);
+
+    return Response.json(
+      {
+        error: "Failed to create GitHub issues",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    );
+  }
+});
+
 // ============================================
 // Jobs API
 // ============================================
@@ -3399,7 +3741,7 @@ route("POST", "/api/jobs/:id/cancel", async (req) => {
 const TOKEN_COSTS: Record<string, { input: number; output: number }> = {
   "claude-opus-4-5-20251101": { input: 5, output: 25 },
   "claude-sonnet-4-5-20250929": { input: 3, output: 15 },
-  "claude-haiku-4-5-20251015": { input: 1, output: 5 }, // Fixed: was 0.8/4, correct is 1/5
+  "claude-haiku-4-5-20251001": { input: 1, output: 5 }, // Fixed: was 0.8/4, correct is 1/5
   "claude-haiku-4-5-20250514": { input: 1, output: 5 }, // Added: same pricing as newer version
   "claude-sonnet-4-20250514": { input: 3, output: 15 },
   "claude-3-5-sonnet-20241022": { input: 3, output: 15 },

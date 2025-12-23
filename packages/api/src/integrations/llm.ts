@@ -60,7 +60,7 @@ const MODEL_PROVIDERS: Record<string, LLMProvider> = {
   // Anthropic models
   "claude-opus-4-5-20251101": "anthropic",
   "claude-sonnet-4-5-20250929": "anthropic",
-  "claude-haiku-4-5-20251015": "anthropic",
+  "claude-haiku-4-5-20251001": "anthropic",
 
   // OpenAI GPT-4.1 family (2025)
   "gpt-4.1": "openai",
@@ -296,7 +296,7 @@ export const AVAILABLE_MODELS = {
   anthropic: {
     "claude-opus-4-5-20251101": "Most capable, best for complex coding",
     "claude-sonnet-4-5-20250929": "Balanced speed/quality",
-    "claude-haiku-4-5-20251015": "Fast and cheap",
+    "claude-haiku-4-5-20251001": "Fast and cheap",
   },
   openai: {
     // GPT-4.1 family (April 2025)

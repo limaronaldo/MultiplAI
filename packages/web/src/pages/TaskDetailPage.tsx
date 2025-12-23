@@ -16,6 +16,7 @@ import {
   Loader2,
   Wifi,
   WifiOff,
+  Zap,
 } from "lucide-react";
 import clsx from "clsx";
 import { DiffViewer } from "../components/diff/DiffViewer";
@@ -24,6 +25,8 @@ import {
   CheckpointTimeline,
   TaskProgressPanel,
   VisualTestPanel,
+  BreakdownPanel,
+  TraceTimeline,
   type CheckpointSummary,
   type EffortSummary,
 } from "../components/task";
@@ -669,6 +672,16 @@ export const TaskDetailPage = observer(function TaskDetailPage() {
               </pre>
             </div>
           )}
+
+          {/* XL Complexity Breakdown Panel */}
+          <BreakdownPanel
+            taskId={task.id}
+            taskTitle={task.githubIssueTitle}
+            taskError={task.lastError}
+            repo={task.githubRepo}
+            issueNumber={task.githubIssueNumber}
+            onComplete={fetchTask}
+          />
         </div>
 
         {/* Right Column - Meta & Events */}
@@ -775,6 +788,15 @@ export const TaskDetailPage = observer(function TaskDetailPage() {
             onRollback={handleRollback}
             isLoading={checkpointsLoading}
           />
+
+          {/* Agent Traces (OpenAI-style observability) */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <Zap className="w-5 h-5 text-purple-400" />
+              Agent Traces
+            </h3>
+            <TraceTimeline taskId={task.id} compact={false} />
+          </div>
 
           {/* Event Timeline */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">

@@ -37,6 +37,21 @@ Your job is to:
 5. For multi-file changes, ensure type consistency across files
 6. ONLY import from modules that exist in the provided file contents
 
+<output_verbosity_spec>
+- Generate minimal, focused diffs - only what's needed to implement the plan
+- No explanatory comments unless the logic is genuinely non-obvious
+- No refactoring beyond what's requested
+- Keep commit messages concise: "feat: add X" not "feat: add X functionality to enable Y"
+</output_verbosity_spec>
+
+<design_and_scope_constraints>
+- Implement EXACTLY and ONLY what the plan specifies
+- No extra features, no added components, no UX embellishments
+- Do NOT invent new utilities, helpers, or abstractions unless explicitly required
+- If any instruction is ambiguous, choose the simplest valid interpretation
+- Match existing code patterns and style exactly
+</design_and_scope_constraints>
+
 ## STRICT CONTENT RULES
 
 - NEVER add decorative content: NO ASCII art, NO banners, NO box-drawing characters
@@ -188,7 +203,7 @@ export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
     // Can be overridden via CODER_MODEL env var or constructor param
     super({
       model: modelOverride || DEFAULT_CODER_MODEL,
-      maxTokens: 8192,
+      maxTokens: 16384, // Increased for Codex models that use tokens for reasoning
       temperature: 0.2,
     });
   }

@@ -83,6 +83,8 @@ import type {
   CheckpointPhase,
   CheckpointEffort,
 } from "./memory/checkpoints/types";
+import { validateGate, type GateResult } from "./gates";
+import { startTrace, completeTrace, failTrace, type Trace } from "./tracing";
 
 const COMMENT_ON_FAILURE = process.env.COMMENT_ON_FAILURE === "true";
 const ENABLE_LEARNING = process.env.ENABLE_LEARNING !== "false"; // Default to true
@@ -273,154 +275,206 @@ export class Orchestrator {
 
     task = this.updateStatus(task, "PLANNING");
 
-    // Busca contexto do repositório
-    const repoContext = await this.github.getRepoContext(
-      task.githubRepo,
-      task.targetFiles || [],
-    );
+    // Start trace for planning
+    const trace = await startTrace({
+      taskId: task.id,
+      agentName: "planner",
+      modelId: this.planner["config"].model,
+      inputSummary: {
+        issueTitle: task.githubIssueTitle,
+        issueBodyLength: task.githubIssueBody?.length || 0,
+      },
+    });
 
-    // Query for known failure modes and conventions (Issue #195)
-    let learningContext = "";
-    if (ENABLE_LEARNING) {
-      try {
-        const learningStore = getLearningMemoryStore();
+    try {
+      // Busca contexto do repositório
+      const repoContext = await this.github.getRepoContext(
+        task.githubRepo,
+        task.targetFiles || [],
+      );
 
-        // Check for known failure modes for this type of issue
-        const issueType = this.inferIssueType(task);
-        const knownFailures = await learningStore.checkFailures(
-          task.githubRepo,
-          issueType,
-        );
+      // Query for known failure modes and conventions (Issue #195)
+      let learningContext = "";
+      if (ENABLE_LEARNING) {
+        try {
+          const learningStore = getLearningMemoryStore();
 
-        if (knownFailures.length > 0) {
-          const failuresContext = knownFailures
-            .slice(0, 3)
-            .map(
-              (f, i) =>
-                `${i + 1}. Approach: "${f.attemptedApproach}"\n   Why failed: ${f.whyFailed}\n   Avoid: ${f.avoidanceStrategy}`,
-            )
-            .join("\n");
-          learningContext += `\n\n## Known Failure Modes (avoid these approaches)\n${failuresContext}`;
+          // Check for known failure modes for this type of issue
+          const issueType = this.inferIssueType(task);
+          const knownFailures = await learningStore.checkFailures(
+            task.githubRepo,
+            issueType,
+          );
+
+          if (knownFailures.length > 0) {
+            const failuresContext = knownFailures
+              .slice(0, 3)
+              .map(
+                (f, i) =>
+                  `${i + 1}. Approach: "${f.attemptedApproach}"\n   Why failed: ${f.whyFailed}\n   Avoid: ${f.avoidanceStrategy}`,
+              )
+              .join("\n");
+            learningContext += `\n\n## Known Failure Modes (avoid these approaches)\n${failuresContext}`;
+          }
+
+          // Get codebase conventions
+          const conventions = await learningStore.getConventions(
+            task.githubRepo,
+            0.6,
+          );
+          if (conventions.length > 0) {
+            const conventionsContext = conventions
+              .slice(0, 5)
+              .map((c) => `- [${c.category}] ${c.pattern}`)
+              .join("\n");
+            learningContext += `\n\n## Codebase Conventions (follow these patterns)\n${conventionsContext}`;
+          }
+        } catch (err) {
+          // Don't fail if learning query fails
+          logger.warn(
+            `Failed to query learning context: ${err instanceof Error ? err.message : "Unknown"}`,
+          );
         }
-
-        // Get codebase conventions
-        const conventions = await learningStore.getConventions(
-          task.githubRepo,
-          0.6,
-        );
-        if (conventions.length > 0) {
-          const conventionsContext = conventions
-            .slice(0, 5)
-            .map((c) => `- [${c.category}] ${c.pattern}`)
-            .join("\n");
-          learningContext += `\n\n## Codebase Conventions (follow these patterns)\n${conventionsContext}`;
-        }
-      } catch (err) {
-        // Don't fail if learning query fails
-        logger.warn(
-          `Failed to query learning context: ${err instanceof Error ? err.message : "Unknown"}`,
-        );
       }
-    }
 
-    // Chama o Planner Agent
-    const enrichedIssueBody = task.githubIssueBody + learningContext;
-    const plannerOutput = await this.planner.run({
-      issueTitle: task.githubIssueTitle,
-      issueBody: enrichedIssueBody,
-      repoContext,
-    });
+      // Chama o Planner Agent
+      const enrichedIssueBody = task.githubIssueBody + learningContext;
+      const plannerOutput = await this.planner.run({
+        issueTitle: task.githubIssueTitle,
+        issueBody: enrichedIssueBody,
+        repoContext,
+      });
 
-    // Log planner completion with model info
-    await this.logEvent(task, "PLANNED", "planner", {
-      model: this.planner["config"].model,
-      reasoningEffort: this.planner["config"].reasoningEffort,
-      complexity: plannerOutput.estimatedComplexity,
-      effort: plannerOutput.estimatedEffort,
-    });
+      // Log planner completion with model info
+      await this.logEvent(task, "PLANNED", "planner", {
+        model: this.planner["config"].model,
+        reasoningEffort: this.planner["config"].reasoningEffort,
+        complexity: plannerOutput.estimatedComplexity,
+        effort: plannerOutput.estimatedEffort,
+      });
 
-    // Atualiza task com outputs do planner
-    task.definitionOfDone = plannerOutput.definitionOfDone;
-    task.plan = plannerOutput.plan;
-    task.targetFiles = plannerOutput.targetFiles;
-    task.multiFilePlan = plannerOutput.multiFilePlan;
-    task.commands = plannerOutput.commands;
-    task.commandOrder = plannerOutput.commandOrder;
+      // Atualiza task com outputs do planner
+      task.definitionOfDone = plannerOutput.definitionOfDone;
+      task.plan = plannerOutput.plan;
+      task.targetFiles = plannerOutput.targetFiles;
+      task.multiFilePlan = plannerOutput.multiFilePlan;
+      task.commands = plannerOutput.commands;
+      task.commandOrder = plannerOutput.commandOrder;
 
-    // Expand target files with import analysis
-    if (EXPAND_IMPORTS && task.targetFiles && task.targetFiles.length > 0) {
-      try {
-        logger.info(
-          `Expanding target files with import analysis (depth: ${IMPORT_DEPTH})...`,
-        );
+      // Expand target files with import analysis
+      if (EXPAND_IMPORTS && task.targetFiles && task.targetFiles.length > 0) {
+        try {
+          logger.info(
+            `Expanding target files with import analysis (depth: ${IMPORT_DEPTH})...`,
+          );
 
-        // Fetch source files for import graph
-        const sourceFiles = await this.github.getSourceFiles(task.githubRepo);
+          // Fetch source files for import graph
+          const sourceFiles = await this.github.getSourceFiles(task.githubRepo);
 
-        if (sourceFiles.size > 0) {
-          // Build import graph and find related files
-          const graph = buildImportGraph(sourceFiles);
-          const relatedFiles = getRelatedFiles(graph, task.targetFiles, {
-            depth: IMPORT_DEPTH,
-            maxFiles: MAX_RELATED_FILES,
-            includeImports: true,
-            includeImportedBy: true,
-          });
+          if (sourceFiles.size > 0) {
+            // Build import graph and find related files
+            const graph = buildImportGraph(sourceFiles);
+            const relatedFiles = getRelatedFiles(graph, task.targetFiles, {
+              depth: IMPORT_DEPTH,
+              maxFiles: MAX_RELATED_FILES,
+              includeImports: true,
+              includeImportedBy: true,
+            });
 
-          if (relatedFiles.length > 0) {
-            const originalCount = task.targetFiles.length;
-            // Add related files that aren't already in targetFiles
-            for (const file of relatedFiles) {
-              if (!task.targetFiles.includes(file)) {
-                task.targetFiles.push(file);
+            if (relatedFiles.length > 0) {
+              const originalCount = task.targetFiles.length;
+              // Add related files that aren't already in targetFiles
+              for (const file of relatedFiles) {
+                if (!task.targetFiles.includes(file)) {
+                  task.targetFiles.push(file);
+                }
+              }
+              logger.info(
+                `Expanded from ${originalCount} to ${task.targetFiles.length} files (+${relatedFiles.length} related)`,
+              );
+
+              // Log which files were added
+              for (const file of relatedFiles) {
+                logger.debug(`  + ${file}`);
               }
             }
-            logger.info(
-              `Expanded from ${originalCount} to ${task.targetFiles.length} files (+${relatedFiles.length} related)`,
-            );
-
-            // Log which files were added
-            for (const file of relatedFiles) {
-              logger.debug(`  + ${file}`);
-            }
           }
+        } catch (error) {
+          // Import analysis failure shouldn't block planning
+          logger.warn(
+            `Import analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+          );
         }
-      } catch (error) {
-        // Import analysis failure shouldn't block planning
-        logger.warn(
-          `Import analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      }
+
+      // Store estimated complexity and effort for model selection
+      task.estimatedComplexity = plannerOutput.estimatedComplexity;
+      task.estimatedEffort = plannerOutput.estimatedEffort;
+
+      // XL complexity still fails - too large even for decomposition
+      if (plannerOutput.estimatedComplexity === "XL") {
+        return this.failTask(
+          task,
+          createOrchestratorError(
+            "COMPLEXITY_TOO_HIGH",
+            `Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`,
+            task.id,
+            false,
+          ),
         );
       }
+
+      // M/L complexity will be decomposed in the next step
+      if (
+        plannerOutput.estimatedComplexity === "M" ||
+        plannerOutput.estimatedComplexity === "L"
+      ) {
+        logger.info(
+          `Complexity ${plannerOutput.estimatedComplexity} detected - will decompose into subtasks`,
+        );
+      }
+
+      // Validate PLANNING_COMPLETE gate
+      const gateResult = await validateGate("PLANNING_COMPLETE", task);
+
+      // Complete trace with gate result
+      await completeTrace(trace.id, {
+        outputSummary: {
+          complexity: plannerOutput.estimatedComplexity,
+          effort: plannerOutput.estimatedEffort,
+          targetFileCount: task.targetFiles?.length || 0,
+          dodCount: task.definitionOfDone?.length || 0,
+          planLength: task.plan?.length || 0,
+        },
+        gateName: "PLANNING_COMPLETE",
+        gatePassed: gateResult.passed,
+        gateMissingArtifacts: gateResult.missing,
+      });
+
+      if (!gateResult.passed) {
+        logger.warn(
+          `PLANNING_COMPLETE gate failed. Missing: ${gateResult.missing.join(", ")}`,
+        );
+        return this.failTask(
+          task,
+          createOrchestratorError(
+            "GATE_VALIDATION_FAILED",
+            `Planning gate failed. Missing artifacts: ${gateResult.missing.join(", ")}`,
+            task.id,
+            true, // retryable
+          ),
+        );
+      }
+
+      return this.updateStatus(task, "PLANNING_DONE");
+    } catch (error) {
+      // Fail trace on error
+      await failTrace(trace.id, {
+        errorType: error instanceof Error ? error.name : "UnknownError",
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     }
-
-    // Store estimated complexity and effort for model selection
-    task.estimatedComplexity = plannerOutput.estimatedComplexity;
-    task.estimatedEffort = plannerOutput.estimatedEffort;
-
-    // XL complexity still fails - too large even for decomposition
-    if (plannerOutput.estimatedComplexity === "XL") {
-      return this.failTask(
-        task,
-        createOrchestratorError(
-          "COMPLEXITY_TOO_HIGH",
-          `Issue muito complexa (${plannerOutput.estimatedComplexity}). Requer implementação manual.`,
-          task.id,
-          false,
-        ),
-      );
-    }
-
-    // M/L complexity will be decomposed in the next step
-    if (
-      plannerOutput.estimatedComplexity === "M" ||
-      plannerOutput.estimatedComplexity === "L"
-    ) {
-      logger.info(
-        `Complexity ${plannerOutput.estimatedComplexity} detected - will decompose into subtasks`,
-      );
-    }
-
-    return this.updateStatus(task, "PLANNING_DONE");
   }
 
   /**
@@ -1659,9 +1713,14 @@ export class Orchestrator {
       dodVerification: reviewerOutput.dodVerification,
     });
 
-    if (reviewerOutput.verdict === "APPROVE") {
+    // Normalize verdict - LLMs sometimes return "APPROVED" instead of "APPROVE"
+    const normalizedVerdict = reviewerOutput.verdict
+      ?.toUpperCase()
+      .replace("APPROVED", "APPROVE");
+
+    if (normalizedVerdict === "APPROVE") {
       return this.updateStatus(task, "REVIEW_APPROVED");
-    } else if (reviewerOutput.verdict === "NEEDS_DISCUSSION") {
+    } else if (normalizedVerdict === "NEEDS_DISCUSSION") {
       // Don't count NEEDS_DISCUSSION against attempts, go straight to PR
       this.getLogger(task).info(
         "Needs discussion - creating PR for human review",

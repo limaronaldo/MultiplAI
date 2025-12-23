@@ -1232,6 +1232,19 @@ export class GitHubClient {
   }
 
   /**
+   * Close an issue
+   */
+  async closeIssue(fullName: string, issueNumber: number): Promise<void> {
+    const { owner, repo } = this.parseRepo(fullName);
+    await this.octokit.rest.issues.update({
+      owner,
+      repo,
+      issue_number: issueNumber,
+      state: "closed",
+    });
+  }
+
+  /**
    * Get a single issue by number
    */
   async getIssue(
