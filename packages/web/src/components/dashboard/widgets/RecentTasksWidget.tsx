@@ -5,10 +5,10 @@ import clsx from "clsx";
 
 interface Task {
   id: string;
-  github_issue_title: string;
-  github_repo: string;
+  githubIssueTitle: string;
+  githubRepo: string;
   status: string;
-  updated_at: string;
+  updatedAt: string;
 }
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -100,9 +100,9 @@ export function RecentTasksWidget() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-white truncate">
-                    {task.github_issue_title}
+                    {task.githubIssueTitle}
                   </p>
-                  <p className="text-xs text-slate-500">{task.github_repo}</p>
+                  <p className="text-xs text-slate-500">{task.githubRepo}</p>
                 </div>
               </Link>
             );
