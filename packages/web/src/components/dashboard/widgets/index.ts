@@ -5,3 +5,4 @@ export { TasksChartWidget } from "./TasksChartWidget";
 export { CostChartWidget } from "./CostChartWidget";
 export { TopReposWidget } from "./TopReposWidget";
 export { ProcessingTimeWidget } from "./ProcessingTimeWidget";
+export { ModelComparisonWidget } from "./ModelComparisonWidget";

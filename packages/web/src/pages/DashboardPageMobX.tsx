@@ -21,6 +21,7 @@ import {
   CostChartWidget,
   TopReposWidget,
   ProcessingTimeWidget,
+  ModelComparisonWidget,
 } from "../components/dashboard/widgets";
 import { LiveActivityFeed } from "../components/live";
 import { useDashboardStore } from "@/stores";
@@ -170,11 +171,9 @@ export const DashboardPageMobX = observer(function DashboardPageMobX() {
           <CostChartWidget />
         </DashboardWidget>
 
-        {/* Model Comparison Placeholder */}
+        {/* Model Comparison Widget */}
         <DashboardWidget id="model-comparison">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 h-64 flex items-center justify-center">
-            <p className="text-slate-500">Model comparison chart coming soon</p>
-          </div>
+          <ModelComparisonWidget />
         </DashboardWidget>
 
         {/* Top Repos Widget */}
