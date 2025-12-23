@@ -54,8 +54,12 @@ function getPhaseFromStatus(status: string): PhaseId | null {
   if (statusUpper.includes("PLANNING") || statusUpper === "NEW") {
     return "planning";
   }
-  if (statusUpper.includes("CODING") || statusUpper.includes("FIXING") ||
-      statusUpper.includes("BREAKING") || statusUpper.includes("ORCHESTRAT")) {
+  if (
+    statusUpper.includes("CODING") ||
+    statusUpper.includes("FIXING") ||
+    statusUpper.includes("BREAKING") ||
+    statusUpper.includes("ORCHESTRAT")
+  ) {
     return "coding";
   }
   if (statusUpper.includes("TEST") || statusUpper.includes("VISUAL")) {
@@ -64,8 +68,11 @@ function getPhaseFromStatus(status: string): PhaseId | null {
   if (statusUpper.includes("REVIEW")) {
     return "reviewing";
   }
-  if (statusUpper.includes("PR") || statusUpper.includes("WAITING") ||
-      statusUpper === "COMPLETED") {
+  if (
+    statusUpper.includes("PR") ||
+    statusUpper.includes("WAITING") ||
+    statusUpper === "COMPLETED"
+  ) {
     return "pr";
   }
   return null;
@@ -84,7 +91,11 @@ function getCompletedPhases(currentPhase: PhaseId | null): Set<PhaseId> {
 }
 
 // Calculate overall progress percentage
-function calculateProgress(status: string, completedSteps?: number, totalSteps?: number): number {
+function calculateProgress(
+  status: string,
+  completedSteps?: number,
+  totalSteps?: number,
+): number {
   // If we have step info, use it for granular progress
   if (completedSteps !== undefined && totalSteps && totalSteps > 0) {
     return Math.round((completedSteps / totalSteps) * 100);
@@ -95,7 +106,11 @@ function calculateProgress(status: string, completedSteps?: number, totalSteps?:
 
   if (statusUpper === "NEW") return 0;
   if (statusUpper.includes("PLANNING")) return 15;
-  if (statusUpper === "PLANNING_DONE" || statusUpper === "PLAN_PENDING_APPROVAL") return 20;
+  if (
+    statusUpper === "PLANNING_DONE" ||
+    statusUpper === "PLAN_PENDING_APPROVAL"
+  )
+    return 20;
   if (statusUpper.includes("BREAKING")) return 25;
   if (statusUpper.includes("CODING")) return 40;
   if (statusUpper === "CODING_DONE") return 50;
@@ -136,10 +151,13 @@ export function TaskProgressPanel({
   isProcessing = false,
 }: TaskProgressPanelProps) {
   const currentPhase = useMemo(() => getPhaseFromStatus(status), [status]);
-  const completedPhases = useMemo(() => getCompletedPhases(currentPhase), [currentPhase]);
+  const completedPhases = useMemo(
+    () => getCompletedPhases(currentPhase),
+    [currentPhase],
+  );
   const progress = useMemo(
     () => calculateProgress(status, completedSteps, totalSteps),
-    [status, completedSteps, totalSteps]
+    [status, completedSteps, totalSteps],
   );
 
   const isTerminal = status === "COMPLETED" || status === "FAILED";
@@ -167,10 +185,12 @@ export function TaskProgressPanel({
                 {formatAgentName(currentAgent)} working...
               </span>
             )}
-            <span className={clsx(
-              "text-sm font-medium",
-              progress === 100 ? "text-emerald-400" : "text-blue-400"
-            )}>
+            <span
+              className={clsx(
+                "text-sm font-medium",
+                progress === 100 ? "text-emerald-400" : "text-blue-400",
+              )}
+            >
               {progress}%
             </span>
           </div>
@@ -184,7 +204,7 @@ export function TaskProgressPanel({
               progress === 100
                 ? "bg-emerald-500"
                 : "bg-gradient-to-r from-blue-500 to-purple-500",
-              isActive && "animate-pulse"
+              isActive && "animate-pulse",
             )}
             style={{ width: `${progress}%` }}
           />
@@ -204,16 +224,18 @@ export function TaskProgressPanel({
               key={phase.id}
               className={clsx(
                 "flex items-center gap-3",
-                isPending && "opacity-50"
+                isPending && "opacity-50",
               )}
             >
               {/* Status indicator */}
-              <div className={clsx(
-                "flex items-center justify-center w-6 h-6 rounded-full",
-                isCompleted && "bg-emerald-500/20",
-                isCurrent && "bg-blue-500/20",
-                isPending && "bg-slate-800"
-              )}>
+              <div
+                className={clsx(
+                  "flex items-center justify-center w-6 h-6 rounded-full",
+                  isCompleted && "bg-emerald-500/20",
+                  isCurrent && "bg-blue-500/20",
+                  isPending && "bg-slate-800",
+                )}
+              >
                 {isCompleted ? (
                   <CheckCircle className="w-4 h-4 text-emerald-400" />
                 ) : isCurrent && isActive ? (
@@ -227,18 +249,22 @@ export function TaskProgressPanel({
 
               {/* Phase info */}
               <div className="flex items-center gap-2 flex-1">
-                <Icon className={clsx(
-                  "w-4 h-4",
-                  isCompleted && "text-emerald-400",
-                  isCurrent && "text-blue-400",
-                  isPending && "text-slate-500"
-                )} />
-                <span className={clsx(
-                  "text-sm",
-                  isCompleted && "text-slate-300",
-                  isCurrent && "text-white font-medium",
-                  isPending && "text-slate-500"
-                )}>
+                <Icon
+                  className={clsx(
+                    "w-4 h-4",
+                    isCompleted && "text-emerald-400",
+                    isCurrent && "text-blue-400",
+                    isPending && "text-slate-500",
+                  )}
+                />
+                <span
+                  className={clsx(
+                    "text-sm",
+                    isCompleted && "text-slate-300",
+                    isCurrent && "text-white font-medium",
+                    isPending && "text-slate-500",
+                  )}
+                >
                   {phase.label}
                 </span>
               </div>
@@ -255,7 +281,7 @@ export function TaskProgressPanel({
       </div>
 
       {/* Modified files (if any) */}
-      {modifiedFiles.length > 0 && (
+      {modifiedFiles && modifiedFiles.length > 0 && (
         <div className="px-5 py-3 border-t border-slate-800 bg-slate-800/30">
           <div className="flex items-center gap-2 text-xs text-slate-400 mb-2">
             <FileText className="w-3 h-3" />
