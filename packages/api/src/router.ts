@@ -682,6 +682,11 @@ const API_ENDPOINTS = [
     path: "/api/tasks/cleanup",
     description: "Clean up stale tasks",
   },
+  {
+    method: "DELETE",
+    path: "/api/tasks/failed",
+    description: "Delete all failed tasks",
+  },
   { method: "GET", path: "/api/jobs", description: "List jobs" },
   { method: "GET", path: "/api/jobs/:id", description: "Get job details" },
   { method: "POST", path: "/api/jobs", description: "Create new job" },
@@ -1275,6 +1280,76 @@ route("POST", "/api/tasks/cleanup", async (req) => {
     console.error("[Cleanup] Error:", error);
     return Response.json(
       { error: "Failed to cleanup stale tasks", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * DELETE /api/tasks/failed - Delete all failed tasks
+ * Query params:
+ *   - dryRun: if "true", only report what would be deleted (default: false)
+ *   - olderThanDays: only delete tasks older than N days (default: 0 = all)
+ */
+route("DELETE", "/api/tasks/failed", async (req) => {
+  const url = new URL(req.url);
+  const dryRun = url.searchParams.get("dryRun") === "true";
+  const olderThanDays = parseInt(
+    url.searchParams.get("olderThanDays") || "0",
+    10,
+  );
+
+  try {
+    const sql = (await import("./integrations/db")).getDb();
+
+    let cutoffDate: Date | null = null;
+    if (olderThanDays > 0) {
+      cutoffDate = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+    }
+
+    // Count failed tasks
+    const countQuery = cutoffDate
+      ? sql`SELECT COUNT(*) as count FROM tasks WHERE status = 'FAILED' AND created_at < ${cutoffDate}`
+      : sql`SELECT COUNT(*) as count FROM tasks WHERE status = 'FAILED'`;
+
+    const [{ count }] = await countQuery;
+
+    if (count === 0) {
+      return Response.json({
+        message: "No failed tasks to delete",
+        deleted: 0,
+      });
+    }
+
+    if (dryRun) {
+      return Response.json({
+        message: "Dry run - would delete failed tasks",
+        wouldDelete: parseInt(count),
+        olderThanDays: olderThanDays || "all",
+      });
+    }
+
+    // Delete task_events first (foreign key)
+    const deleteEventsQuery = cutoffDate
+      ? sql`DELETE FROM task_events WHERE task_id IN (SELECT id FROM tasks WHERE status = 'FAILED' AND created_at < ${cutoffDate})`
+      : sql`DELETE FROM task_events WHERE task_id IN (SELECT id FROM tasks WHERE status = 'FAILED')`;
+    await deleteEventsQuery;
+
+    // Delete tasks
+    const deleteTasksQuery = cutoffDate
+      ? sql`DELETE FROM tasks WHERE status = 'FAILED' AND created_at < ${cutoffDate}`
+      : sql`DELETE FROM tasks WHERE status = 'FAILED'`;
+    const result = await deleteTasksQuery;
+
+    return Response.json({
+      message: "Deleted failed tasks",
+      deleted: result.count || parseInt(count),
+      olderThanDays: olderThanDays || "all",
+    });
+  } catch (error) {
+    console.error("[Delete Failed Tasks] Error:", error);
+    return Response.json(
+      { error: "Failed to delete tasks", details: String(error) },
       { status: 500 },
     );
   }
