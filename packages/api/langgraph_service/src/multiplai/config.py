@@ -6,7 +6,7 @@ loading values from environment variables and .env files.
 
 from functools import lru_cache
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings  # type: ignore[import-not-found]
 
 
 class Settings(BaseSettings):

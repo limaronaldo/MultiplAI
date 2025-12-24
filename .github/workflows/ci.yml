@@ -13,15 +13,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
         with:
-          bun-version: latest
+          node-version: "20"
+          cache: "pnpm"
 
       - name: Install dependencies
-        run: bun install
+        run: pnpm install
 
       - name: Type check
-        run: bun run typecheck
+        run: pnpm run typecheck
 
   test:
     name: Test
@@ -29,12 +32,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: pnpm install
 
       - name: Run tests
         run: bun test || echo "No tests found"
@@ -44,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: langgraph_service
+        working-directory: packages/api/langgraph_service
     steps:
       - uses: actions/checkout@v4
 
@@ -69,7 +79,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: langgraph_service
+        working-directory: packages/api/langgraph_service
     steps:
       - uses: actions/checkout@v4
 
