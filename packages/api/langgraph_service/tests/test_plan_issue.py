@@ -1,13 +1,17 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
-from multiplai.nodes.plan_issue import plan_issue, PlanModel
+
+from multiplai.nodes.plan_issue import PlanModel, plan_issue
 from multiplai.types import GraphState
+
 
 @pytest.fixture
 def mock_settings():
     with patch("multiplai.nodes.plan_issue.get_settings") as mock:
         mock.return_value.anthropic_api_key = "dummy_key"
         yield mock
+
 
 @pytest.fixture
 def mock_chat_anthropic():
@@ -20,22 +24,19 @@ def mock_chat_anthropic():
 
         yield structured_llm
 
+
 @pytest.mark.asyncio
 async def test_plan_issue_success(mock_settings, mock_chat_anthropic):
     state: GraphState = {
-        "issue": {
-            "title": "Test Issue",
-            "body": "Description",
-            "number": 1
-        },
-        "status": "new"
+        "issue": {"title": "Test Issue", "body": "Description", "number": 1},
+        "status": "new",
     }
 
     expected_plan = PlanModel(
         definition_of_done=["Done"],
         steps=["Step"],
         target_files=["file.py"],
-        estimated_complexity="low"
+        estimated_complexity="low",
     )
 
     # Mock the return value of ainvoke
@@ -47,6 +48,7 @@ async def test_plan_issue_success(mock_settings, mock_chat_anthropic):
     assert new_state["plan"]["definition_of_done"] == ["Done"]
 
     mock_chat_anthropic.ainvoke.assert_called_once()
+
 
 @pytest.mark.asyncio
 async def test_plan_issue_error(mock_settings, mock_chat_anthropic):
