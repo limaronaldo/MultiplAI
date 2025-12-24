@@ -13,24 +13,11 @@ from __future__ import annotations
 import copy
 import inspect
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Dict, Optional, TypedDict
+from typing import Any, Awaitable, Callable, Dict, Optional
 
+from multiplai.types import GraphState
 
 END = "__end__"
-
-
-class GraphState(TypedDict, total=False):
-    """Shared graph state.
-
-    This is a pragmatic schema for tests and basic usage.
-    """
-
-    status: str
-    context: Dict[str, Any]
-    plan: Dict[str, Any]
-    execution_result: Dict[str, Any]
-    pr_url: str
-    trace: list[str]
 
 
 class MemorySaver:
@@ -47,7 +34,10 @@ class MemorySaver:
         self._store[thread_id] = copy.deepcopy(state)
 
 
-NodeFn = Callable[[GraphState], Dict[str, Any] | GraphState | None | Awaitable[Dict[str, Any] | GraphState | None]]
+NodeFn = Callable[
+    [GraphState],
+    Dict[str, Any] | GraphState | None | Awaitable[Dict[str, Any] | GraphState | None],
+]
 
 
 @dataclass(frozen=True)
@@ -57,7 +47,9 @@ class _CompiledGraph:
     entry_point: str
     checkpointer: MemorySaver
 
-    async def ainvoke(self, state: GraphState, config: Optional[Dict[str, Any]] = None) -> GraphState:
+    async def ainvoke(
+        self, state: GraphState, config: Optional[Dict[str, Any]] = None
+    ) -> GraphState:
         current = self.entry_point
         thread_id = "default"
         if config is not None:
@@ -77,7 +69,8 @@ class _CompiledGraph:
                 result = await result
             if result:
                 # Treat the node output as a partial state update.
-                working_state.update(result)  # type: ignore[arg-type]
+                for key, value in result.items():
+                    working_state[key] = value  # type: ignore[literal-required]
             self.checkpointer.put(thread_id, working_state)
 
             current = self.edges.get(current, END)
@@ -92,7 +85,7 @@ class StateGraph:
     sufficient for wiring, compilation, and testing of node sequencing.
     """
 
-    def __init__(self, state_schema: type[GraphState]) -> None:
+    def __init__(self, state_schema: type) -> None:
         self._state_schema = state_schema
         self._nodes: Dict[str, NodeFn] = {}
         self._edges: Dict[str, str] = {}
@@ -138,7 +131,12 @@ async def plan_issue(state: GraphState) -> Dict[str, Any]:
     _append_trace(state, "plan_issue")
     return {
         "status": "planned",
-        "plan": {"steps": ["execute", "create_pr"]},
+        "plan": {
+            "steps": ["execute", "create_pr"],
+            "definition_of_done": [],
+            "target_files": [],
+            "estimated_complexity": "low",
+        },
     }
 
 

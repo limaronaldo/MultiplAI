@@ -4,11 +4,12 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel  # type: ignore[import-not-found]
 
 
 class TaskStatus(str, Enum):
     """Status values for task execution lifecycle."""
+
     NEW = "NEW"
     PLANNING = "PLANNING"
     PLANNING_DONE = "PLANNING_DONE"
@@ -29,6 +30,7 @@ class TaskStatus(str, Enum):
 
 class JobStatus(str, Enum):
     """Status values for job execution."""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -38,6 +40,7 @@ class JobStatus(str, Enum):
 
 class Task(BaseModel):
     """Represents a single task in the system."""
+
     id: str
     status: TaskStatus
     github_repo: str
@@ -52,6 +55,7 @@ class Task(BaseModel):
 
 class Job(BaseModel):
     """Represents a job containing multiple tasks."""
+
     id: str
     status: JobStatus
     task_ids: list[str]
@@ -63,6 +67,7 @@ class Job(BaseModel):
 
 class ExecutionPlan(BaseModel):
     """Represents a plan for executing a task."""
+
     steps: list[str]
     target_files: list[str]
     estimated_complexity: str

@@ -7,14 +7,14 @@ to an LLM client (e.g., Anthropic) to generate real patches.
 
 from __future__ import annotations
 
-from typing import Any, Dict, TypeAlias
-
-from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_anthropic import ChatAnthropic  # type: ignore[import-not-found]
+from langchain_core.messages import (  # type: ignore[import-not-found]
+    HumanMessage,
+    SystemMessage,
+)
 
 from multiplai.config import get_settings
-
-GraphState: TypeAlias = Dict[str, Any]
+from multiplai.types import GraphState
 
 
 async def execute_issue(state: GraphState) -> GraphState:
@@ -41,10 +41,10 @@ async def execute_issue(state: GraphState) -> GraphState:
     target_files = state.get("target_files")
 
     if not target_files:
-        new_state: GraphState = dict(state)
-        new_state["status"] = "error"
-        new_state["error"] = "No target_files specified; unable to execute issue."
-        return new_state
+        error_state = GraphState(**state)
+        error_state["status"] = "error"
+        error_state["error"] = "No target_files specified; unable to execute issue."
+        return error_state
 
     # Read the content of the target files
     file_contents = {}
@@ -53,15 +53,15 @@ async def execute_issue(state: GraphState) -> GraphState:
             with open(file_path, "r", encoding="utf-8") as f:
                 file_contents[file_path] = f.read()
         except FileNotFoundError:
-            new_state: GraphState = dict(state)
-            new_state["status"] = "error"
-            new_state["error"] = f"File not found: {file_path}"
-            return new_state
+            error_state = GraphState(**state)
+            error_state["status"] = "error"
+            error_state["error"] = f"File not found: {file_path}"
+            return error_state
         except Exception as e:
-            new_state: GraphState = dict(state)
-            new_state["status"] = "error"
-            new_state["error"] = f"Error reading file {file_path}: {e}"
-            return new_state
+            error_state = GraphState(**state)
+            error_state["status"] = "error"
+            error_state["error"] = f"Error reading file {file_path}: {e}"
+            return error_state
 
     settings = get_settings()
     llm = ChatAnthropic(
@@ -105,12 +105,12 @@ async def execute_issue(state: GraphState) -> GraphState:
         unified_diff = unified_diff.strip()
 
     except Exception as e:
-        new_state: GraphState = dict(state)
-        new_state["status"] = "error"
-        new_state["error"] = f"Error generating patch: {e}"
-        return new_state
+        error_state = GraphState(**state)
+        error_state["status"] = "error"
+        error_state["error"] = f"Error generating patch: {e}"
+        return error_state
 
-    new_state: GraphState = dict(state)
-    new_state["diff"] = unified_diff
-    new_state["status"] = "executed"
-    return new_state
+    success_state = GraphState(**state)
+    success_state["diff"] = unified_diff
+    success_state["status"] = "executed"
+    return success_state

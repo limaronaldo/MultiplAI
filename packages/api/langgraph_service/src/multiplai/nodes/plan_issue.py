@@ -7,11 +7,14 @@ implementation plan from the current graph state.
 from __future__ import annotations
 
 import os
-from typing import List, Literal, Any
+from typing import Any, List, Literal
 
-from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel, Field
+from langchain_anthropic import ChatAnthropic  # type: ignore[import-not-found]
+from langchain_core.messages import (  # type: ignore[import-not-found]
+    HumanMessage,
+    SystemMessage,
+)
+from pydantic import BaseModel, Field  # type: ignore[import-not-found]
 
 from multiplai.config import get_settings
 from multiplai.types import GraphState, Plan
@@ -34,10 +37,17 @@ class PlanModel(BaseModel):
 
 def _get_repository_context(root_dir: str = ".") -> str:
     """Generate a simple tree view of the repository files."""
-    tree = []
+    tree: List[str] = []
     # Limit depth or excluded dirs could be improved
     exclude_dirs = {
-        "__pycache__", ".git", ".github", "node_modules", "dist", "build", ".venv", "venv"
+        "__pycache__",
+        ".git",
+        ".github",
+        "node_modules",
+        "dist",
+        "build",
+        ".venv",
+        "venv",
     }
 
     # Try to list mostly src/ files to fit in context window
@@ -55,7 +65,12 @@ def _get_repository_context(root_dir: str = ".") -> str:
         tree.append(f"{indent}{os.path.basename(root)}/")
 
         for f in files:
-            if f.endswith(".py") or f.endswith(".md") or f.endswith(".ts") or f.endswith(".json"):
+            if (
+                f.endswith(".py")
+                or f.endswith(".md")
+                or f.endswith(".ts")
+                or f.endswith(".json")
+            ):
                 tree.append(f"{indent}  {f}")
                 count += 1
 
@@ -86,29 +101,29 @@ async def plan_issue(state: GraphState) -> GraphState:
 
     # Extract issue details robustly
     issue_data: Any = state.get("issue")
-    title = ""
-    body = ""
-    number = ""
+    title: str = ""
+    body: str = ""
+    number: str = ""
 
     if issue_data:
         # Check if it's an object with attributes
         if hasattr(issue_data, "title"):
-            title = issue_data.title
-            body = getattr(issue_data, "body", "")
-            number = getattr(issue_data, "number", "")
+            title = str(issue_data.title)
+            body = str(getattr(issue_data, "body", ""))
+            number = str(getattr(issue_data, "number", ""))
         # Check if it's a dict
         elif isinstance(issue_data, dict):
-            title = issue_data.get("title", "")
-            body = issue_data.get("body", "")
-            number = issue_data.get("number", "")
+            title = str(issue_data.get("title", ""))
+            body = str(issue_data.get("body", ""))
+            number = str(issue_data.get("number", ""))
 
     # Fallback to flat state properties if issue object didn't provide data
     if not title:
-        title = state.get("issue_title", "Unknown Title")
+        title = str(state.get("issue_title", "Unknown Title"))
     if not body:
-        body = state.get("issue_body", "No description provided.")
+        body = str(state.get("issue_body", "No description provided."))
     if not number:
-        number = state.get("issue_number", "Unknown")
+        number = str(state.get("issue_number", "Unknown"))
 
     # Generate file context
     # Assume we are in the package root or similar.
@@ -144,10 +159,12 @@ async def plan_issue(state: GraphState) -> GraphState:
         # result is an instance of PlanModel
         plan: Plan = result.model_dump()  # type: ignore[assignment]
     except Exception as e:
-        return {
-            **state,
-            "status": "error",
-            "error": f"Failed to generate plan: {str(e)}",
-        }
+        error_state = GraphState(**state)
+        error_state["status"] = "error"
+        error_state["error"] = f"Failed to generate plan: {str(e)}"
+        return error_state
 
-    return {**state, "status": "planned", "plan": plan}
+    success_state = GraphState(**state)
+    success_state["status"] = "planned"
+    success_state["plan"] = plan
+    return success_state
