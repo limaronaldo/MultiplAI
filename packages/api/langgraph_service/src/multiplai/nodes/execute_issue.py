@@ -64,9 +64,7 @@ async def execute_issue(state: GraphState) -> GraphState:
             return error_state
 
     settings = get_settings()
-    llm = ChatAnthropic(
-        api_key=settings.anthropic_api_key, model="claude-3-5-sonnet-20240620"
-    )
+    llm = ChatAnthropic(api_key=settings.anthropic_api_key, model="claude-3-5-sonnet-20240620")
 
     system_prompt = (
         "You are an expert software engineer. Your task is to generate a unified diff "
@@ -88,7 +86,7 @@ async def execute_issue(state: GraphState) -> GraphState:
         response = await llm.ainvoke(messages)
         unified_diff = response.content
         if isinstance(unified_diff, list):
-            # Handle case where content might be list of blocks (though unlikely for text model without tools)
+            # Handle case where content might be list of blocks
             unified_diff = "\n".join(
                 [block.text for block in unified_diff if hasattr(block, "text")]
             )
