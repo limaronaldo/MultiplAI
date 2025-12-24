@@ -2726,4 +2726,114 @@ The CI workflow (`.github/workflows/ci.yml`) now properly:
 
 ---
 
+## Session Update: 2025-12-24 (Part 2) - Chat-to-Plan Feature
+
+### Completed This Session
+
+#### Chat-to-Plan Feature ✅
+
+Implemented a full conversational AI interface for creating implementation plans through natural dialogue.
+
+**How It Works:**
+1. **Select Repository** - User picks which repo to plan for
+2. **Start Conversation** - AI asks about what user wants to build
+3. **Discovery Phase** - AI gathers requirements through questions
+4. **Scoping Phase** - AI helps define boundaries and components
+5. **Planning Phase** - AI generates draft cards (issues) from discussion
+6. **Refining Phase** - User can edit, select/deselect cards
+7. **Convert to Plan** - Creates a Plan with PlanCards from selected drafts
+
+### New Files Created
+
+**Backend (packages/api):**
+
+| File | Purpose |
+|------|---------|
+| `src/lib/migrations/019_plan_conversations.sql` | Database schema for conversations, messages, draft cards |
+| `src/agents/plan-conversation.ts` | PlanConversationAgent with phase-aware prompts |
+
+**Frontend (packages/web):**
+
+| File | Purpose |
+|------|---------|
+| `src/pages/AIPlanBuilderPage.tsx` | Full chat UI with repo selector, conversation list, cards panel |
+
+### Database Tables Added
+
+```sql
+-- Conversations with phase tracking
+plan_conversations (id, github_repo, plan_id, title, phase, status)
+
+-- Message history with AI metadata
+plan_conversation_messages (id, conversation_id, role, content, model, generated_cards)
+
+-- Draft cards generated during conversation
+plan_draft_cards (id, conversation_id, title, description, complexity, is_selected)
+```
+
+### API Endpoints Added
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/plan-conversations` | Create new conversation |
+| GET | `/api/plan-conversations` | List conversations (filter by repo/status) |
+| GET | `/api/plan-conversations/:id` | Get conversation with messages and cards |
+| POST | `/api/plan-conversations/:id/messages` | Send message, get AI response |
+| PATCH | `/api/plan-conversations/:id` | Update conversation phase/status |
+| PATCH | `/api/plan-draft-cards/:id` | Update draft card (title, complexity, selected) |
+| DELETE | `/api/plan-draft-cards/:id` | Delete draft card |
+| POST | `/api/plan-conversations/:id/convert` | Convert selected cards to Plan |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `packages/api/src/router.ts` | Added 8 plan conversation endpoints |
+| `packages/api/src/integrations/db.ts` | Added plan conversation database functions |
+| `packages/web/src/App.tsx` | Added `/plans/ai-builder` route |
+| `packages/web/src/pages/PlansPage.tsx` | Added "AI Plan Builder" button |
+
+### UI Features
+
+- **Split-panel layout**: Chat on left, draft cards on right
+- **Conversation sidebar**: List of previous conversations
+- **Phase indicator**: Shows current phase with description
+- **Suggested follow-ups**: Quick response buttons
+- **Card selection**: Checkbox to include/exclude cards
+- **Complexity badges**: XS/S/M/L/XL with colors
+- **Markdown rendering**: AI responses formatted properly
+- **Dark mode support**: Full theme compatibility
+
+### Conversation Phases
+
+| Phase | Goal |
+|-------|------|
+| **Discovery** | Understand what user wants to build |
+| **Scoping** | Define boundaries and identify components |
+| **Planning** | Generate specific, actionable cards |
+| **Refining** | Polish plan based on user feedback |
+| **Complete** | Ready to create issues |
+
+### Current System Status
+
+| Component | Status |
+|-----------|--------|
+| **Chat-to-Plan** | ✅ Implemented |
+| **AI Plan Builder Page** | ✅ `/plans/ai-builder` |
+| **Database Migration** | ✅ `019_plan_conversations.sql` |
+| **PlansPage Button** | ✅ Purple "AI Plan Builder" button |
+
+### How to Use
+
+1. Go to **Plans** page
+2. Click **"AI Plan Builder"** (purple button)
+3. Select a repository
+4. Click **"+ New Conversation"**
+5. Describe what you want to build
+6. AI will ask questions and generate cards
+7. Review and select cards you want
+8. Click **"Create Plan"** to finalize
+
+---
+
 _Last updated: 2025-12-24 UTC_
