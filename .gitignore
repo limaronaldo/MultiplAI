@@ -34,3 +34,4 @@ coverage/
 .turbo/
 
 plane-preview/
+__pycache__/
