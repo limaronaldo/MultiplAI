@@ -7301,6 +7301,443 @@ route("GET", "/api/visual-tests/:runId", async (req) => {
 });
 
 // ============================================
+// Plan Conversations (Chat-to-Plan)
+// ============================================
+
+import {
+  PlanConversationAgent,
+  PlanConversationInputSchema,
+} from "./agents/plan-conversation";
+
+/**
+ * POST /api/plan-conversations - Create a new plan conversation
+ * Body: { githubRepo: string, title?: string }
+ */
+route("POST", "/api/plan-conversations", async (req) => {
+  try {
+    const body = await req.json();
+    const { githubRepo, title } = body as {
+      githubRepo: string;
+      title?: string;
+    };
+
+    if (!githubRepo || !isValidRepo(githubRepo)) {
+      return Response.json(
+        { error: "Invalid repository format. Expected: owner/repo" },
+        { status: 400 },
+      );
+    }
+
+    const conversation = await db.createPlanConversation({
+      githubRepo,
+      title: title || `Plan for ${githubRepo}`,
+      phase: "discovery",
+      status: "active",
+    });
+
+    console.log(
+      `[PlanConversation] Created conversation ${conversation.id} for ${githubRepo}`,
+    );
+
+    return Response.json({ conversation });
+  } catch (error) {
+    console.error("[PlanConversation] Error creating conversation:", error);
+    return Response.json(
+      { error: "Failed to create conversation", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/plan-conversations - List plan conversations
+ * Query: ?repo=owner/repo&status=active
+ */
+route("GET", "/api/plan-conversations", async (req) => {
+  try {
+    const url = new URL(req.url);
+    const repo = url.searchParams.get("repo");
+    const status = url.searchParams.get("status");
+
+    const conversations = await db.listPlanConversations({
+      githubRepo: repo || undefined,
+      status: status || undefined,
+    });
+
+    return Response.json({
+      conversations,
+      count: conversations.length,
+    });
+  } catch (error) {
+    console.error("[PlanConversation] Error listing conversations:", error);
+    return Response.json(
+      { error: "Failed to list conversations", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/plan-conversations/:id - Get a plan conversation with messages and cards
+ */
+route("GET", "/api/plan-conversations/:id", async (req) => {
+  const url = new URL(req.url);
+  const conversationId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(conversationId)) {
+    return Response.json({ error: "Invalid conversation ID" }, { status: 400 });
+  }
+
+  try {
+    const conversation = await db.getPlanConversation(conversationId);
+    if (!conversation) {
+      return Response.json(
+        { error: "Conversation not found" },
+        { status: 404 },
+      );
+    }
+
+    const messages = await db.getPlanConversationMessages(conversationId);
+    const draftCards = await db.getPlanDraftCards(conversationId);
+
+    return Response.json({
+      conversation,
+      messages,
+      draftCards,
+    });
+  } catch (error) {
+    console.error("[PlanConversation] Error getting conversation:", error);
+    return Response.json(
+      { error: "Failed to get conversation", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/plan-conversations/:id/messages - Send a message in a plan conversation
+ * Body: { message: string }
+ */
+route("POST", "/api/plan-conversations/:id/messages", async (req) => {
+  const url = new URL(req.url);
+  const conversationId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(conversationId)) {
+    return Response.json({ error: "Invalid conversation ID" }, { status: 400 });
+  }
+
+  try {
+    const body = await req.json();
+    const { message } = body as { message: string };
+
+    if (!message || message.trim().length === 0) {
+      return Response.json({ error: "Message is required" }, { status: 400 });
+    }
+
+    // Get conversation
+    const conversation = await db.getPlanConversation(conversationId);
+    if (!conversation) {
+      return Response.json(
+        { error: "Conversation not found" },
+        { status: 404 },
+      );
+    }
+
+    // Save user message
+    await db.savePlanConversationMessage({
+      conversationId,
+      role: "user",
+      content: message,
+    });
+
+    // Get conversation history
+    const history = await db.getPlanConversationMessages(conversationId);
+    const existingCards = await db.getPlanDraftCards(conversationId);
+
+    // Build input for agent
+    const agentInput = {
+      conversationId,
+      githubRepo: conversation.githubRepo,
+      message,
+      phase: conversation.phase as
+        | "discovery"
+        | "scoping"
+        | "planning"
+        | "refining"
+        | "complete",
+      context: {
+        conversationHistory: history.slice(-10).map((m) => ({
+          role: m.role as "user" | "assistant" | "system",
+          content: m.content,
+        })),
+        existingCards: existingCards.map((c) => ({
+          id: c.id,
+          title: c.title,
+          description: c.description || "",
+          complexity: c.complexity,
+          isSelected: c.isSelected,
+        })),
+      },
+    };
+
+    // Run PlanConversationAgent
+    const agent = new PlanConversationAgent();
+    const startTime = Date.now();
+    const result = await agent.run(agentInput);
+    const durationMs = Date.now() - startTime;
+
+    // Save assistant response
+    const assistantMessage = await db.savePlanConversationMessage({
+      conversationId,
+      role: "assistant",
+      content: result.response,
+      model: agent.agentConfig.model,
+      durationMs,
+      generatedCards: result.generatedCards,
+    });
+
+    // Save generated cards as draft cards
+    if (result.generatedCards && result.generatedCards.length > 0) {
+      for (const card of result.generatedCards) {
+        await db.createPlanDraftCard({
+          conversationId,
+          messageId: assistantMessage.id,
+          title: card.title,
+          description: card.description,
+          complexity: card.complexity,
+          sortOrder: existingCards.length,
+          isSelected: true,
+        });
+      }
+    }
+
+    // Update conversation phase if changed
+    if (result.phase !== conversation.phase) {
+      await db.updatePlanConversation(conversationId, {
+        phase: result.phase,
+      });
+    }
+
+    // Get updated cards
+    const updatedCards = await db.getPlanDraftCards(conversationId);
+
+    console.log(
+      `[PlanConversation] Responded in ${durationMs}ms, phase=${result.phase}, newCards=${result.generatedCards?.length || 0}`,
+    );
+
+    return Response.json({
+      response: result.response,
+      phase: result.phase,
+      generatedCards: result.generatedCards,
+      suggestedFollowUps: result.suggestedFollowUps,
+      planSummary: result.planSummary,
+      draftCards: updatedCards,
+    });
+  } catch (error) {
+    console.error("[PlanConversation] Error sending message:", error);
+    return Response.json(
+      { error: "Failed to send message", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * PATCH /api/plan-conversations/:id - Update a conversation
+ * Body: { status?: string, phase?: string, title?: string, planId?: string }
+ */
+route("PATCH", "/api/plan-conversations/:id", async (req) => {
+  const url = new URL(req.url);
+  const conversationId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(conversationId)) {
+    return Response.json({ error: "Invalid conversation ID" }, { status: 400 });
+  }
+
+  try {
+    const body = await req.json();
+    const { status, phase, title, planId } = body as {
+      status?: string;
+      phase?: string;
+      title?: string;
+      planId?: string;
+    };
+
+    const conversation = await db.getPlanConversation(conversationId);
+    if (!conversation) {
+      return Response.json(
+        { error: "Conversation not found" },
+        { status: 404 },
+      );
+    }
+
+    const updated = await db.updatePlanConversation(conversationId, {
+      status,
+      phase,
+      title,
+      planId,
+    });
+
+    return Response.json({ conversation: updated });
+  } catch (error) {
+    console.error("[PlanConversation] Error updating conversation:", error);
+    return Response.json(
+      { error: "Failed to update conversation", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * PATCH /api/plan-draft-cards/:id - Update a draft card
+ * Body: { title?: string, description?: string, complexity?: string, isSelected?: boolean }
+ */
+route("PATCH", "/api/plan-draft-cards/:id", async (req) => {
+  const url = new URL(req.url);
+  const cardId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(cardId)) {
+    return Response.json({ error: "Invalid card ID" }, { status: 400 });
+  }
+
+  try {
+    const body = await req.json();
+    const { title, description, complexity, isSelected } = body as {
+      title?: string;
+      description?: string;
+      complexity?: string;
+      isSelected?: boolean;
+    };
+
+    const updated = await db.updatePlanDraftCard(cardId, {
+      title,
+      description,
+      complexity,
+      isSelected,
+    });
+
+    if (!updated) {
+      return Response.json({ error: "Card not found" }, { status: 404 });
+    }
+
+    return Response.json({ card: updated });
+  } catch (error) {
+    console.error("[PlanConversation] Error updating card:", error);
+    return Response.json(
+      { error: "Failed to update card", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * DELETE /api/plan-draft-cards/:id - Delete a draft card
+ */
+route("DELETE", "/api/plan-draft-cards/:id", async (req) => {
+  const url = new URL(req.url);
+  const cardId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(cardId)) {
+    return Response.json({ error: "Invalid card ID" }, { status: 400 });
+  }
+
+  try {
+    await db.deletePlanDraftCard(cardId);
+    return Response.json({ success: true });
+  } catch (error) {
+    console.error("[PlanConversation] Error deleting card:", error);
+    return Response.json(
+      { error: "Failed to delete card", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/plan-conversations/:id/convert - Convert draft cards to a plan
+ * Creates a Plan and PlanCards from the selected draft cards
+ */
+route("POST", "/api/plan-conversations/:id/convert", async (req) => {
+  const url = new URL(req.url);
+  const conversationId = url.pathname.split("/")[3];
+
+  if (!isValidUUID(conversationId)) {
+    return Response.json({ error: "Invalid conversation ID" }, { status: 400 });
+  }
+
+  try {
+    const body = await req.json();
+    const { planName, planDescription } = body as {
+      planName?: string;
+      planDescription?: string;
+    };
+
+    const conversation = await db.getPlanConversation(conversationId);
+    if (!conversation) {
+      return Response.json(
+        { error: "Conversation not found" },
+        { status: 404 },
+      );
+    }
+
+    // Get selected draft cards
+    const draftCards = await db.getPlanDraftCards(conversationId);
+    const selectedCards = draftCards.filter((c) => c.isSelected);
+
+    if (selectedCards.length === 0) {
+      return Response.json(
+        { error: "No cards selected for the plan" },
+        { status: 400 },
+      );
+    }
+
+    // Create the plan
+    const plan = await db.createPlan({
+      name:
+        planName || conversation.title || `Plan for ${conversation.githubRepo}`,
+      description: planDescription,
+      github_repo: conversation.githubRepo,
+      status: "draft",
+    });
+
+    // Create plan cards from draft cards
+    for (let i = 0; i < selectedCards.length; i++) {
+      const draft = selectedCards[i];
+      await db.createPlanCard({
+        plan_id: plan.id,
+        title: draft.title,
+        description: draft.description || undefined,
+        complexity: draft.complexity,
+        sort_order: i,
+      });
+    }
+
+    // Link conversation to plan and mark as converted
+    await db.updatePlanConversation(conversationId, {
+      planId: plan.id,
+      status: "converted",
+      phase: "complete",
+    });
+
+    console.log(
+      `[PlanConversation] Converted conversation ${conversationId} to plan ${plan.id} with ${selectedCards.length} cards`,
+    );
+
+    return Response.json({
+      plan,
+      cardCount: selectedCards.length,
+      message: "Plan created successfully",
+    });
+  } catch (error) {
+    console.error("[PlanConversation] Error converting to plan:", error);
+    return Response.json(
+      { error: "Failed to convert to plan", details: String(error) },
+      { status: 500 },
+    );
+  }
+});
+
+// ============================================
 // Router
 // ============================================
 

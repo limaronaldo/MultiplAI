@@ -2261,4 +2261,348 @@ export const db = {
       createdAt: r.created_at,
     }));
   },
+
+  // ============================================
+  // Plan Conversations (Chat-to-Plan)
+  // ============================================
+
+  async createPlanConversation(data: {
+    githubRepo: string;
+    title?: string;
+    phase?: string;
+    status?: string;
+  }): Promise<{
+    id: string;
+    githubRepo: string;
+    title: string;
+    phase: string;
+    status: string;
+    createdAt: Date;
+  }> {
+    const sql = getDb();
+    const [result] = await sql`
+      INSERT INTO plan_conversations (github_repo, title, phase, status)
+      VALUES (
+        ${data.githubRepo},
+        ${data.title || `Plan for ${data.githubRepo}`},
+        ${data.phase || "discovery"},
+        ${data.status || "active"}
+      )
+      RETURNING *
+    `;
+    return {
+      id: result.id,
+      githubRepo: result.github_repo,
+      title: result.title,
+      phase: result.phase,
+      status: result.status,
+      createdAt: result.created_at,
+    };
+  },
+
+  async getPlanConversation(id: string): Promise<{
+    id: string;
+    githubRepo: string;
+    planId: string | null;
+    title: string;
+    phase: string;
+    status: string;
+    createdAt: Date;
+    updatedAt: Date;
+  } | null> {
+    const sql = getDb();
+    const [result] = await sql`
+      SELECT * FROM plan_conversations WHERE id = ${id}
+    `;
+    if (!result) return null;
+    return {
+      id: result.id,
+      githubRepo: result.github_repo,
+      planId: result.plan_id,
+      title: result.title,
+      phase: result.phase,
+      status: result.status,
+      createdAt: result.created_at,
+      updatedAt: result.updated_at,
+    };
+  },
+
+  async listPlanConversations(filters?: {
+    githubRepo?: string;
+    status?: string;
+  }): Promise<
+    Array<{
+      id: string;
+      githubRepo: string;
+      planId: string | null;
+      title: string;
+      phase: string;
+      status: string;
+      messageCount: number;
+      cardCount: number;
+      createdAt: Date;
+      updatedAt: Date;
+    }>
+  > {
+    const sql = getDb();
+    let query;
+
+    if (filters?.githubRepo && filters?.status) {
+      query = sql`
+        SELECT pc.*,
+          (SELECT COUNT(*) FROM plan_conversation_messages WHERE conversation_id = pc.id) as message_count,
+          (SELECT COUNT(*) FROM plan_draft_cards WHERE conversation_id = pc.id AND is_selected = true) as card_count
+        FROM plan_conversations pc
+        WHERE pc.github_repo = ${filters.githubRepo} AND pc.status = ${filters.status}
+        ORDER BY pc.updated_at DESC
+      `;
+    } else if (filters?.githubRepo) {
+      query = sql`
+        SELECT pc.*,
+          (SELECT COUNT(*) FROM plan_conversation_messages WHERE conversation_id = pc.id) as message_count,
+          (SELECT COUNT(*) FROM plan_draft_cards WHERE conversation_id = pc.id AND is_selected = true) as card_count
+        FROM plan_conversations pc
+        WHERE pc.github_repo = ${filters.githubRepo}
+        ORDER BY pc.updated_at DESC
+      `;
+    } else if (filters?.status) {
+      query = sql`
+        SELECT pc.*,
+          (SELECT COUNT(*) FROM plan_conversation_messages WHERE conversation_id = pc.id) as message_count,
+          (SELECT COUNT(*) FROM plan_draft_cards WHERE conversation_id = pc.id AND is_selected = true) as card_count
+        FROM plan_conversations pc
+        WHERE pc.status = ${filters.status}
+        ORDER BY pc.updated_at DESC
+      `;
+    } else {
+      query = sql`
+        SELECT pc.*,
+          (SELECT COUNT(*) FROM plan_conversation_messages WHERE conversation_id = pc.id) as message_count,
+          (SELECT COUNT(*) FROM plan_draft_cards WHERE conversation_id = pc.id AND is_selected = true) as card_count
+        FROM plan_conversations pc
+        ORDER BY pc.updated_at DESC
+      `;
+    }
+
+    const results = await query;
+    return results.map((r: any) => ({
+      id: r.id,
+      githubRepo: r.github_repo,
+      planId: r.plan_id,
+      title: r.title,
+      phase: r.phase,
+      status: r.status,
+      messageCount: parseInt(r.message_count) || 0,
+      cardCount: parseInt(r.card_count) || 0,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  },
+
+  async updatePlanConversation(
+    id: string,
+    updates: {
+      status?: string;
+      phase?: string;
+      title?: string;
+      planId?: string;
+    },
+  ): Promise<{
+    id: string;
+    githubRepo: string;
+    planId: string | null;
+    title: string;
+    phase: string;
+    status: string;
+  }> {
+    const sql = getDb();
+    const setClauses: string[] = [];
+    const values: any[] = [];
+
+    if (updates.status !== undefined) {
+      const [result] = await sql`
+        UPDATE plan_conversations SET status = ${updates.status}, updated_at = NOW() WHERE id = ${id} RETURNING *
+      `;
+      if (!result) throw new Error("Conversation not found");
+    }
+    if (updates.phase !== undefined) {
+      await sql`UPDATE plan_conversations SET phase = ${updates.phase}, updated_at = NOW() WHERE id = ${id}`;
+    }
+    if (updates.title !== undefined) {
+      await sql`UPDATE plan_conversations SET title = ${updates.title}, updated_at = NOW() WHERE id = ${id}`;
+    }
+    if (updates.planId !== undefined) {
+      await sql`UPDATE plan_conversations SET plan_id = ${updates.planId}, updated_at = NOW() WHERE id = ${id}`;
+    }
+
+    const [result] =
+      await sql`SELECT * FROM plan_conversations WHERE id = ${id}`;
+    return {
+      id: result.id,
+      githubRepo: result.github_repo,
+      planId: result.plan_id,
+      title: result.title,
+      phase: result.phase,
+      status: result.status,
+    };
+  },
+
+  async savePlanConversationMessage(data: {
+    conversationId: string;
+    role: string;
+    content: string;
+    model?: string;
+    tokensUsed?: number;
+    durationMs?: number;
+    generatedCards?: any[];
+  }): Promise<{ id: string; createdAt: Date }> {
+    const sql = getDb();
+    const [result] = await sql`
+      INSERT INTO plan_conversation_messages (conversation_id, role, content, model, tokens_used, duration_ms, generated_cards)
+      VALUES (
+        ${data.conversationId},
+        ${data.role},
+        ${data.content},
+        ${data.model || null},
+        ${data.tokensUsed || null},
+        ${data.durationMs || null},
+        ${data.generatedCards ? JSON.stringify(data.generatedCards) : null}
+      )
+      RETURNING id, created_at
+    `;
+    return { id: result.id, createdAt: result.created_at };
+  },
+
+  async getPlanConversationMessages(conversationId: string): Promise<
+    Array<{
+      id: string;
+      role: string;
+      content: string;
+      model: string | null;
+      tokensUsed: number | null;
+      durationMs: number | null;
+      generatedCards: any[] | null;
+      createdAt: Date;
+    }>
+  > {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM plan_conversation_messages
+      WHERE conversation_id = ${conversationId}
+      ORDER BY created_at ASC
+    `;
+    return results.map((r: any) => ({
+      id: r.id,
+      role: r.role,
+      content: r.content,
+      model: r.model,
+      tokensUsed: r.tokens_used,
+      durationMs: r.duration_ms,
+      generatedCards: r.generated_cards,
+      createdAt: r.created_at,
+    }));
+  },
+
+  async createPlanDraftCard(data: {
+    conversationId: string;
+    messageId?: string;
+    title: string;
+    description?: string;
+    complexity?: string;
+    sortOrder?: number;
+    isSelected?: boolean;
+  }): Promise<{ id: string }> {
+    const sql = getDb();
+    const [result] = await sql`
+      INSERT INTO plan_draft_cards (conversation_id, message_id, title, description, complexity, sort_order, is_selected)
+      VALUES (
+        ${data.conversationId},
+        ${data.messageId || null},
+        ${data.title},
+        ${data.description || null},
+        ${data.complexity || "M"},
+        ${data.sortOrder || 0},
+        ${data.isSelected !== false}
+      )
+      RETURNING id
+    `;
+    return { id: result.id };
+  },
+
+  async getPlanDraftCards(conversationId: string): Promise<
+    Array<{
+      id: string;
+      messageId: string | null;
+      title: string;
+      description: string | null;
+      complexity: string;
+      sortOrder: number;
+      isSelected: boolean;
+      createdAt: Date;
+    }>
+  > {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM plan_draft_cards
+      WHERE conversation_id = ${conversationId}
+      ORDER BY sort_order ASC, created_at ASC
+    `;
+    return results.map((r: any) => ({
+      id: r.id,
+      messageId: r.message_id,
+      title: r.title,
+      description: r.description,
+      complexity: r.complexity,
+      sortOrder: r.sort_order,
+      isSelected: r.is_selected,
+      createdAt: r.created_at,
+    }));
+  },
+
+  async updatePlanDraftCard(
+    id: string,
+    updates: {
+      title?: string;
+      description?: string;
+      complexity?: string;
+      isSelected?: boolean;
+    },
+  ): Promise<{
+    id: string;
+    title: string;
+    description: string | null;
+    complexity: string;
+    isSelected: boolean;
+  } | null> {
+    const sql = getDb();
+
+    if (updates.title !== undefined) {
+      await sql`UPDATE plan_draft_cards SET title = ${updates.title}, updated_at = NOW() WHERE id = ${id}`;
+    }
+    if (updates.description !== undefined) {
+      await sql`UPDATE plan_draft_cards SET description = ${updates.description}, updated_at = NOW() WHERE id = ${id}`;
+    }
+    if (updates.complexity !== undefined) {
+      await sql`UPDATE plan_draft_cards SET complexity = ${updates.complexity}, updated_at = NOW() WHERE id = ${id}`;
+    }
+    if (updates.isSelected !== undefined) {
+      await sql`UPDATE plan_draft_cards SET is_selected = ${updates.isSelected}, updated_at = NOW() WHERE id = ${id}`;
+    }
+
+    const [result] = await sql`SELECT * FROM plan_draft_cards WHERE id = ${id}`;
+    if (!result) return null;
+
+    return {
+      id: result.id,
+      title: result.title,
+      description: result.description,
+      complexity: result.complexity,
+      isSelected: result.is_selected,
+    };
+  },
+
+  async deletePlanDraftCard(id: string): Promise<void> {
+    const sql = getDb();
+    await sql`DELETE FROM plan_draft_cards WHERE id = ${id}`;
+  },
 };
