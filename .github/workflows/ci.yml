@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: langgraph_service
+        working-directory: packages/api/langgraph_service
     steps:
       - uses: actions/checkout@v4
 
@@ -69,7 +69,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: langgraph_service
+        working-directory: packages/api/langgraph_service
     steps:
       - uses: actions/checkout@v4
 
