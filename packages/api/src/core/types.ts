@@ -159,7 +159,7 @@ export const SubtaskStatusSchema = z.object({
   id: z.string(),
   childTaskId: z.string().uuid().nullable(),
   status: SubtaskStatusTypeSchema,
-  diff: z.string().nullable(),
+  diff: z.string().nullable().optional(), // Can be missing, null, or string
   attempts: z.number().int().min(0),
   targetFiles: z.array(z.string()).optional(),
   acceptanceCriteria: z.array(z.string()).optional(),
@@ -529,7 +529,16 @@ export interface TaskEvent {
     | "BATCH_PR_CREATED" // Batch merge PR created (Issue #403)
     | "VISUAL_TESTING_STARTED" // Visual tests started (Issue #245)
     | "VISUAL_TESTING_COMPLETED" // Visual tests completed (Issue #245)
-    | "VISUAL_TESTING_ERROR"; // Visual testing error (Issue #245)
+    | "VISUAL_TESTING_ERROR" // Visual testing error (Issue #245)
+    // AutoGen-inspired patterns (RML-725 to RML-732)
+    | "HANDOFF_REQUESTED" // Human-in-the-loop handoff requested
+    | "HANDOFF_RESPONDED" // Human responded to handoff
+    | "HUMAN_APPROVED" // Human approved the action
+    | "HUMAN_REJECTED" // Human rejected the action
+    | "CHECKPOINT_CREATED" // State persistence checkpoint created
+    | "RECOVERED_FROM_CHECKPOINT" // Task recovered from checkpoint
+    | "AGENT_SELECTED" // Dynamic agent selection (SelectorGroupChat)
+    | "SWARM_HANDOFF"; // Swarm orchestration handoff
   agent?: string;
   inputSummary?: string;
   outputSummary?: string;

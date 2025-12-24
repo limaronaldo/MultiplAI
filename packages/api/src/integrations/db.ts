@@ -1876,4 +1876,389 @@ export const db = {
       status: result.status,
     };
   },
+
+  // ============================================
+  // AutoGen Pattern Support (MoA, Debate, Swarm)
+  // ============================================
+
+  async createMoARun(data: {
+    id: string;
+    taskId: string;
+    layers: number;
+    proposersPerLayer: number;
+    proposerModels: string[];
+    aggregatorModel: string;
+    status: "running" | "completed" | "failed";
+    finalDiff?: string;
+    proposerResults?: any[];
+    aggregationReasoning?: string;
+    totalTokens?: number;
+    estimatedCost?: number;
+  }): Promise<void> {
+    const sql = getDb();
+    await sql`
+      INSERT INTO moa_runs (
+        id, task_id, layers, proposers_per_layer, proposer_models,
+        aggregator_model, status, final_diff, proposer_results,
+        aggregation_reasoning, total_tokens, estimated_cost
+      ) VALUES (
+        ${data.id}, ${data.taskId}, ${data.layers}, ${data.proposersPerLayer},
+        ${JSON.stringify(data.proposerModels)}, ${data.aggregatorModel}, ${data.status},
+        ${data.finalDiff || null}, ${JSON.stringify(data.proposerResults || [])},
+        ${data.aggregationReasoning || null}, ${data.totalTokens || null},
+        ${data.estimatedCost || null}
+      )
+    `;
+  },
+
+  async getMoARuns(taskId: string): Promise<
+    Array<{
+      id: string;
+      layers: number;
+      proposersPerLayer: number;
+      proposerModels: string[];
+      aggregatorModel: string;
+      status: string;
+      finalDiff?: string;
+      totalTokens?: number;
+      estimatedCost?: number;
+      createdAt: Date;
+      completedAt?: Date;
+    }>
+  > {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM moa_runs WHERE task_id = ${taskId} ORDER BY created_at DESC
+    `;
+    return results.map((r: any) => ({
+      id: r.id,
+      layers: r.layers,
+      proposersPerLayer: r.proposers_per_layer,
+      proposerModels: r.proposer_models,
+      aggregatorModel: r.aggregator_model,
+      status: r.status,
+      finalDiff: r.final_diff,
+      totalTokens: r.total_tokens,
+      estimatedCost: r.estimated_cost,
+      createdAt: r.created_at,
+      completedAt: r.completed_at,
+    }));
+  },
+
+  async createDebateSession(data: {
+    id: string;
+    taskId: string;
+    solverCount: number;
+    maxRounds: number;
+    topology: "full" | "sparse" | "ring";
+    aggregationMethod: "majority" | "weighted" | "llm";
+    status: "running" | "completed" | "failed";
+    finalDiff?: string;
+    consensusScore?: number;
+    selectedSolver?: number;
+  }): Promise<void> {
+    const sql = getDb();
+    await sql`
+      INSERT INTO debate_sessions (
+        id, task_id, solver_count, max_rounds, topology,
+        aggregation_method, status, final_diff, consensus_score, selected_solver
+      ) VALUES (
+        ${data.id}, ${data.taskId}, ${data.solverCount}, ${data.maxRounds},
+        ${data.topology}, ${data.aggregationMethod}, ${data.status},
+        ${data.finalDiff || null}, ${data.consensusScore || null},
+        ${data.selectedSolver || null}
+      )
+    `;
+  },
+
+  async getDebateSessions(taskId: string): Promise<
+    Array<{
+      id: string;
+      solverCount: number;
+      maxRounds: number;
+      topology: string;
+      aggregationMethod: string;
+      status: string;
+      finalDiff?: string;
+      consensusScore?: number;
+      selectedSolver?: number;
+      createdAt: Date;
+      completedAt?: Date;
+    }>
+  > {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM debate_sessions WHERE task_id = ${taskId} ORDER BY created_at DESC
+    `;
+    return results.map((r: any) => ({
+      id: r.id,
+      solverCount: r.solver_count,
+      maxRounds: r.max_rounds,
+      topology: r.topology,
+      aggregationMethod: r.aggregation_method,
+      status: r.status,
+      finalDiff: r.final_diff,
+      consensusScore: r.consensus_score,
+      selectedSolver: r.selected_solver,
+      createdAt: r.created_at,
+      completedAt: r.completed_at,
+    }));
+  },
+
+  async createSwarmRun(data: {
+    id: string;
+    taskId: string;
+    startAgent: string;
+    status: "running" | "completed" | "failed";
+    maxIterations: number;
+  }): Promise<void> {
+    const sql = getDb();
+    await sql`
+      INSERT INTO swarm_runs (id, task_id, start_agent, status, max_iterations)
+      VALUES (${data.id}, ${data.taskId}, ${data.startAgent}, ${data.status}, ${data.maxIterations})
+    `;
+  },
+
+  async updateSwarmRun(
+    id: string,
+    updates: {
+      currentAgent?: string;
+      finalAgent?: string;
+      status?: "running" | "completed" | "failed";
+      iterations?: number;
+      handoffChain?: string[];
+      sharedState?: Record<string, unknown>;
+      error?: string;
+      completedAt?: Date;
+    },
+  ): Promise<void> {
+    const sql = getDb();
+    const setClauses: string[] = [];
+    const values: any[] = [];
+
+    if (updates.currentAgent !== undefined) {
+      await sql`UPDATE swarm_runs SET current_agent = ${updates.currentAgent} WHERE id = ${id}`;
+    }
+    if (updates.finalAgent !== undefined) {
+      await sql`UPDATE swarm_runs SET final_agent = ${updates.finalAgent} WHERE id = ${id}`;
+    }
+    if (updates.status !== undefined) {
+      await sql`UPDATE swarm_runs SET status = ${updates.status} WHERE id = ${id}`;
+    }
+    if (updates.iterations !== undefined) {
+      await sql`UPDATE swarm_runs SET iterations = ${updates.iterations} WHERE id = ${id}`;
+    }
+    if (updates.handoffChain !== undefined) {
+      await sql`UPDATE swarm_runs SET handoff_chain = ${JSON.stringify(updates.handoffChain)} WHERE id = ${id}`;
+    }
+    if (updates.sharedState !== undefined) {
+      await sql`UPDATE swarm_runs SET shared_state = ${JSON.stringify(updates.sharedState)} WHERE id = ${id}`;
+    }
+    if (updates.error !== undefined) {
+      await sql`UPDATE swarm_runs SET error = ${updates.error} WHERE id = ${id}`;
+    }
+    if (updates.completedAt !== undefined) {
+      await sql`UPDATE swarm_runs SET completed_at = ${updates.completedAt} WHERE id = ${id}`;
+    }
+  },
+
+  async getSwarmRuns(taskId: string): Promise<
+    Array<{
+      id: string;
+      startAgent: string;
+      currentAgent?: string;
+      finalAgent?: string;
+      status: string;
+      iterations: number;
+      handoffChain: string[];
+      error?: string;
+      createdAt: Date;
+      completedAt?: Date;
+    }>
+  > {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM swarm_runs WHERE task_id = ${taskId} ORDER BY created_at DESC
+    `;
+    return results.map((r: any) => ({
+      id: r.id,
+      startAgent: r.start_agent,
+      currentAgent: r.current_agent,
+      finalAgent: r.final_agent,
+      status: r.status,
+      iterations: r.iterations,
+      handoffChain: r.handoff_chain || [],
+      error: r.error,
+      createdAt: r.created_at,
+      completedAt: r.completed_at,
+    }));
+  },
+
+  async createHandoffRequest(data: {
+    id: string;
+    taskId: string;
+    type:
+      | "approval"
+      | "decision"
+      | "clarification"
+      | "review"
+      | "escalation"
+      | "custom";
+    fromAgent: string;
+    title: string;
+    message: string;
+    options?: string[];
+    context?: Record<string, unknown>;
+    priority?: "low" | "medium" | "high" | "urgent";
+    deadline?: Date;
+  }): Promise<void> {
+    const sql = getDb();
+    await sql`
+      INSERT INTO handoff_requests (
+        id, task_id, type, from_agent, title, message,
+        options, context, priority, deadline
+      ) VALUES (
+        ${data.id}, ${data.taskId}, ${data.type}, ${data.fromAgent},
+        ${data.title}, ${data.message}, ${JSON.stringify(data.options || [])},
+        ${JSON.stringify(data.context || {})}, ${data.priority || "medium"},
+        ${data.deadline || null}
+      )
+    `;
+  },
+
+  async getHandoffRequests(
+    taskId: string,
+    status?: string,
+  ): Promise<
+    Array<{
+      id: string;
+      type: string;
+      fromAgent: string;
+      title: string;
+      message: string;
+      options: string[];
+      priority: string;
+      status: string;
+      response?: any;
+      createdAt: Date;
+    }>
+  > {
+    const sql = getDb();
+    const results = status
+      ? await sql`SELECT * FROM handoff_requests WHERE task_id = ${taskId} AND status = ${status} ORDER BY created_at DESC`
+      : await sql`SELECT * FROM handoff_requests WHERE task_id = ${taskId} ORDER BY created_at DESC`;
+
+    return results.map((r: any) => ({
+      id: r.id,
+      type: r.type,
+      fromAgent: r.from_agent,
+      title: r.title,
+      message: r.message,
+      options: r.options || [],
+      priority: r.priority,
+      status: r.status,
+      response: r.response,
+      createdAt: r.created_at,
+    }));
+  },
+
+  async respondToHandoff(
+    handoffId: string,
+    response: {
+      choice?: string;
+      feedback?: string;
+      action?: string;
+    },
+  ): Promise<void> {
+    const sql = getDb();
+    await sql`
+      UPDATE handoff_requests
+      SET status = 'responded', response = ${JSON.stringify(response)}, updated_at = NOW()
+      WHERE id = ${handoffId}
+    `;
+  },
+
+  async createTerminationEvent(data: {
+    id: string;
+    taskId: string;
+    conditionName: string;
+    reason: string;
+    terminationType?: "success" | "failure" | "timeout" | "budget" | "custom";
+    context?: Record<string, unknown>;
+  }): Promise<void> {
+    const sql = getDb();
+    await sql`
+      INSERT INTO termination_events (id, task_id, condition_name, reason, termination_type, context)
+      VALUES (${data.id}, ${data.taskId}, ${data.conditionName}, ${data.reason},
+              ${data.terminationType || null}, ${JSON.stringify(data.context || {})})
+    `;
+  },
+
+  async getTerminationEvents(taskId: string): Promise<
+    Array<{
+      id: string;
+      conditionName: string;
+      reason: string;
+      terminationType?: string;
+      context: Record<string, unknown>;
+      createdAt: Date;
+    }>
+  > {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM termination_events WHERE task_id = ${taskId} ORDER BY created_at DESC
+    `;
+    return results.map((r: any) => ({
+      id: r.id,
+      conditionName: r.condition_name,
+      reason: r.reason,
+      terminationType: r.termination_type,
+      context: r.context || {},
+      createdAt: r.created_at,
+    }));
+  },
+
+  async createAgentSelection(data: {
+    id: string;
+    taskId: string;
+    turn: number;
+    selectedAgent: string;
+    confidence: number;
+    reasoning?: string;
+    availableAgents?: string[];
+    contextSummary?: string;
+  }): Promise<void> {
+    const sql = getDb();
+    await sql`
+      INSERT INTO agent_selections (id, task_id, turn, selected_agent, confidence, reasoning, available_agents, context_summary)
+      VALUES (${data.id}, ${data.taskId}, ${data.turn}, ${data.selectedAgent}, ${data.confidence},
+              ${data.reasoning || null}, ${JSON.stringify(data.availableAgents || [])}, ${data.contextSummary || null})
+    `;
+  },
+
+  async getAgentSelections(taskId: string): Promise<
+    Array<{
+      id: string;
+      turn: number;
+      selectedAgent: string;
+      confidence: number;
+      reasoning?: string;
+      availableAgents: string[];
+      createdAt: Date;
+    }>
+  > {
+    const sql = getDb();
+    const results = await sql`
+      SELECT * FROM agent_selections WHERE task_id = ${taskId} ORDER BY turn ASC
+    `;
+    return results.map((r: any) => ({
+      id: r.id,
+      turn: r.turn,
+      selectedAgent: r.selected_agent,
+      confidence: r.confidence,
+      reasoning: r.reasoning,
+      availableAgents: r.available_agents || [],
+      createdAt: r.created_at,
+    }));
+  },
 };

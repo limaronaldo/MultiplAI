@@ -19,7 +19,7 @@
  * }
  */
 
-import { db } from "../integrations/db";
+import { getDb } from "../integrations/db";
 import type { Task } from "./types";
 
 export interface TraceInput {
@@ -81,7 +81,13 @@ export interface TraceTree {
  * Start a new trace for an agent execution
  */
 export async function startTrace(input: TraceInput): Promise<Trace> {
-  const query = `
+  const sql = getDb();
+  const inputSummary = input.inputSummary
+    ? JSON.stringify(input.inputSummary)
+    : null;
+  const metadata = input.metadata ? JSON.stringify(input.metadata) : null;
+
+  const result = await sql`
     INSERT INTO agent_traces (
       task_id,
       parent_trace_id,
@@ -91,21 +97,20 @@ export async function startTrace(input: TraceInput): Promise<Trace> {
       input_content,
       metadata,
       status
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'running')
+    ) VALUES (
+      ${input.taskId},
+      ${input.parentTraceId || null},
+      ${input.agentName},
+      ${input.modelId || null},
+      ${inputSummary},
+      ${input.inputContent || null},
+      ${metadata},
+      'running'
+    )
     RETURNING *
   `;
 
-  const result = await db.query(query, [
-    input.taskId,
-    input.parentTraceId || null,
-    input.agentName,
-    input.modelId || null,
-    input.inputSummary ? JSON.stringify(input.inputSummary) : null,
-    input.inputContent || null,
-    input.metadata ? JSON.stringify(input.metadata) : null,
-  ]);
-
-  return mapRowToTrace(result.rows[0]);
+  return mapRowToTrace(result[0]);
 }
 
 /**
@@ -113,38 +118,31 @@ export async function startTrace(input: TraceInput): Promise<Trace> {
  */
 export async function completeTrace(
   traceId: string,
-  completion: TraceCompletion
+  completion: TraceCompletion,
 ): Promise<Trace> {
-  const query = `
+  const sql = getDb();
+  const outputSummary = completion.outputSummary
+    ? JSON.stringify(completion.outputSummary)
+    : null;
+
+  const result = await sql`
     UPDATE agent_traces
     SET
       status = 'completed',
       completed_at = now(),
-      input_tokens = COALESCE($2, input_tokens),
-      output_tokens = COALESCE($3, output_tokens),
-      cost_usd = COALESCE($4, cost_usd),
-      output_summary = COALESCE($5, output_summary),
-      output_content = COALESCE($6, output_content),
-      gate_name = COALESCE($7, gate_name),
-      gate_passed = COALESCE($8, gate_passed),
-      gate_missing_artifacts = COALESCE($9, gate_missing_artifacts)
-    WHERE id = $1
+      input_tokens = COALESCE(${completion.inputTokens || null}, input_tokens),
+      output_tokens = COALESCE(${completion.outputTokens || null}, output_tokens),
+      cost_usd = COALESCE(${completion.costUsd || null}, cost_usd),
+      output_summary = COALESCE(${outputSummary}, output_summary),
+      output_content = COALESCE(${completion.outputContent || null}, output_content),
+      gate_name = COALESCE(${completion.gateName || null}, gate_name),
+      gate_passed = COALESCE(${completion.gatePassed ?? null}, gate_passed),
+      gate_missing_artifacts = COALESCE(${completion.gateMissingArtifacts || null}, gate_missing_artifacts)
+    WHERE id = ${traceId}
     RETURNING *
   `;
 
-  const result = await db.query(query, [
-    traceId,
-    completion.inputTokens || null,
-    completion.outputTokens || null,
-    completion.costUsd || null,
-    completion.outputSummary ? JSON.stringify(completion.outputSummary) : null,
-    completion.outputContent || null,
-    completion.gateName || null,
-    completion.gatePassed ?? null,
-    completion.gateMissingArtifacts || null,
-  ]);
-
-  return mapRowToTrace(result.rows[0]);
+  return mapRowToTrace(result[0]);
 }
 
 /**
@@ -152,62 +150,60 @@ export async function completeTrace(
  */
 export async function failTrace(
   traceId: string,
-  failure: TraceFailure
+  failure: TraceFailure,
 ): Promise<Trace> {
-  const query = `
+  const sql = getDb();
+
+  const result = await sql`
     UPDATE agent_traces
     SET
       status = 'failed',
       completed_at = now(),
-      error_type = $2,
-      error_message = $3
-    WHERE id = $1
+      error_type = ${failure.errorType},
+      error_message = ${failure.errorMessage}
+    WHERE id = ${traceId}
     RETURNING *
   `;
 
-  const result = await db.query(query, [
-    traceId,
-    failure.errorType,
-    failure.errorMessage,
-  ]);
-
-  return mapRowToTrace(result.rows[0]);
+  return mapRowToTrace(result[0]);
 }
 
 /**
  * Skip a trace (agent was not needed)
  */
-export async function skipTrace(traceId: string, reason: string): Promise<Trace> {
-  const query = `
+export async function skipTrace(
+  traceId: string,
+  reason: string,
+): Promise<Trace> {
+  const sql = getDb();
+  const outputSummary = JSON.stringify({ skipReason: reason });
+
+  const result = await sql`
     UPDATE agent_traces
     SET
       status = 'skipped',
       completed_at = now(),
-      output_summary = $2
-    WHERE id = $1
+      output_summary = ${outputSummary}
+    WHERE id = ${traceId}
     RETURNING *
   `;
 
-  const result = await db.query(query, [
-    traceId,
-    JSON.stringify({ skipReason: reason }),
-  ]);
-
-  return mapRowToTrace(result.rows[0]);
+  return mapRowToTrace(result[0]);
 }
 
 /**
  * Get all traces for a task
  */
 export async function getTaskTraces(taskId: string): Promise<Trace[]> {
-  const query = `
+  const sql = getDb();
+
+  const result = await sql`
     SELECT * FROM agent_traces
-    WHERE task_id = $1
+    WHERE task_id = ${taskId}
     ORDER BY started_at ASC
   `;
 
-  const result = await db.query(query, [taskId]);
-  return result.rows.map(mapRowToTrace);
+  return result.map(mapRowToTrace);
 }
 
 /**
@@ -231,7 +227,9 @@ export async function getTaskTraceStats(taskId: string): Promise<{
   agentsUsed: string[];
   modelsUsed: string[];
 }> {
-  const query = `
+  const sql = getDb();
+
+  const result = await sql`
     SELECT
       COUNT(*)::int as trace_count,
       COALESCE(SUM(duration_ms), 0)::int as total_duration_ms,
@@ -242,11 +240,10 @@ export async function getTaskTraceStats(taskId: string): Promise<{
       array_agg(DISTINCT agent_name) as agents_used,
       array_agg(DISTINCT model_id) FILTER (WHERE model_id IS NOT NULL) as models_used
     FROM agent_traces
-    WHERE task_id = $1
+    WHERE task_id = ${taskId}
   `;
 
-  const result = await db.query(query, [taskId]);
-  const row = result.rows[0];
+  const row = result[0];
 
   return {
     traceCount: row.trace_count,
@@ -265,7 +262,11 @@ export async function getTaskTraceStats(taskId: string): Promise<{
  */
 export async function withTracing<T>(
   input: TraceInput,
-  fn: () => Promise<{ result: T; tokens?: { input: number; output: number }; cost?: number }>
+  fn: () => Promise<{
+    result: T;
+    tokens?: { input: number; output: number };
+    cost?: number;
+  }>,
 ): Promise<T> {
   const trace = await startTrace(input);
 
@@ -299,7 +300,9 @@ function mapRowToTrace(row: Record<string, unknown>): Trace {
     agentName: row.agent_name as string,
     parentTraceId: row.parent_trace_id as string | undefined,
     startedAt: new Date(row.started_at as string),
-    completedAt: row.completed_at ? new Date(row.completed_at as string) : undefined,
+    completedAt: row.completed_at
+      ? new Date(row.completed_at as string)
+      : undefined,
     durationMs: row.duration_ms as number | undefined,
     inputTokens: (row.input_tokens as number) || 0,
     outputTokens: (row.output_tokens as number) || 0,

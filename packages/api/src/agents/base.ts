@@ -111,6 +111,10 @@ export abstract class BaseAgent<TInput, TOutput> {
       jsonStr = jsonStr.slice(firstBrace, lastBrace + 1);
     }
 
+    // Pre-process: Try to escape diff content before parsing
+    // This handles the common case where LLMs return diffs with literal newlines
+    jsonStr = this.escapeDiffContent(jsonStr);
+
     // If it starts with { and doesn't end with }, try to find the JSON object
     if (jsonStr.startsWith("{") && !jsonStr.endsWith("}")) {
       // Try to find the last complete JSON by finding balanced braces
@@ -182,6 +186,17 @@ export abstract class BaseAgent<TInput, TOutput> {
         console.error("Extracted JSON length:", jsonStr.length);
         console.error("First 500 chars:", jsonStr.slice(0, 500));
         console.error("Last 500 chars:", jsonStr.slice(-500));
+
+        // Log the actual parse error for debugging
+        try {
+          JSON.parse(jsonStr);
+        } catch (parseError) {
+          console.error(
+            "[parseJSON] Actual parse error:",
+            (parseError as Error).message,
+          );
+        }
+
         throw new Error(
           `Failed to parse JSON from LLM response. First 200 chars: ${textStr.slice(0, 200)}...`,
         );
@@ -232,6 +247,67 @@ export abstract class BaseAgent<TInput, TOutput> {
     }
 
     return lastComma;
+  }
+
+  /**
+   * Escape diff content that contains literal newlines
+   * LLMs often return diffs with actual newlines instead of escaped \n
+   */
+  private escapeDiffContent(jsonStr: string): string {
+    // Find "diff": " pattern and extract until the next JSON key
+    const diffPattern = /"diff"\s*:\s*"/;
+    const diffMatch = jsonStr.match(diffPattern);
+
+    if (!diffMatch || diffMatch.index === undefined) {
+      return jsonStr; // No diff field, return as-is
+    }
+
+    const diffStart = diffMatch.index + diffMatch[0].length;
+
+    // Find the end of the diff value by looking for:
+    // 1. ",\s*"commitMessage" or ",\s*"filesModified" or similar keys
+    // 2. "\s*} at the end of the object
+    const endPatterns = [
+      /"\s*,\s*"commitMessage"/,
+      /"\s*,\s*"filesModified"/,
+      /"\s*,\s*"fixDescription"/,
+      /"\s*,\s*"notes"/,
+      /"\s*,\s*"summary"/,
+      /"\s*,\s*"explanation"/,
+      /"\s*\}/,
+    ];
+
+    let diffEnd = -1;
+    const searchArea = jsonStr.slice(diffStart);
+
+    for (const pattern of endPatterns) {
+      const match = searchArea.match(pattern);
+      if (match && match.index !== undefined) {
+        const pos = diffStart + match.index;
+        if (diffEnd === -1 || pos < diffEnd) {
+          diffEnd = pos;
+        }
+      }
+    }
+
+    if (diffEnd === -1 || diffEnd <= diffStart) {
+      return jsonStr; // Couldn't find diff end
+    }
+
+    // Extract and escape the diff content
+    const beforeDiff = jsonStr.slice(0, diffStart);
+    const diffContent = jsonStr.slice(diffStart, diffEnd);
+    const afterDiff = jsonStr.slice(diffEnd);
+
+    // Escape the diff content properly for JSON
+    const escapedDiff = diffContent
+      .replace(/\\/g, "\\\\") // Escape backslashes first
+      .replace(/"/g, '\\"') // Escape quotes
+      .replace(/\n/g, "\\n") // Escape newlines
+      .replace(/\r/g, "\\r") // Escape carriage returns
+      .replace(/\t/g, "\\t"); // Escape tabs
+
+    return beforeDiff + escapedDiff + afterDiff;
   }
 
   /**

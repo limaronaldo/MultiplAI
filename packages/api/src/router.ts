@@ -1940,6 +1940,286 @@ route("PUT", "/api/config/autonomy", async (req) => {
 });
 
 // ============================================
+// Processing Modes API (AutoGen Patterns)
+// ============================================
+
+import {
+  getProcessingModeConfig,
+  setProcessingModeConfig,
+  getTaskProcessingMode,
+  setTaskProcessingMode,
+  getAvailableModes,
+  recommendProcessingMode,
+  type ProcessingMode,
+  type ProcessingModeConfig,
+} from "./core/processing-modes";
+
+/**
+ * GET /api/config/processing-mode - Get current global processing mode
+ */
+route("GET", "/api/config/processing-mode", async () => {
+  const config = getProcessingModeConfig();
+  const availableModes = getAvailableModes();
+
+  return Response.json({
+    current: config,
+    availableModes,
+  });
+});
+
+/**
+ * PUT /api/config/processing-mode - Update global processing mode
+ */
+route("PUT", "/api/config/processing-mode", async (req) => {
+  try {
+    const body = (await req.json()) as Partial<ProcessingModeConfig>;
+
+    if (
+      body.mode &&
+      !["single", "moa", "debate", "swarm"].includes(body.mode)
+    ) {
+      return Response.json(
+        { error: `Invalid processing mode: ${body.mode}` },
+        { status: 400 },
+      );
+    }
+
+    const previousConfig = getProcessingModeConfig();
+    setProcessingModeConfig(body);
+    const newConfig = getProcessingModeConfig();
+
+    console.log(
+      `[ProcessingMode] Mode changed: ${previousConfig.mode} → ${newConfig.mode}`,
+    );
+
+    return Response.json({
+      ok: true,
+      previous: previousConfig,
+      current: newConfig,
+    });
+  } catch (error) {
+    console.error("[ProcessingMode] Error updating mode:", error);
+    return Response.json(
+      { error: "Failed to update processing mode" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/tasks/:id/processing-mode - Get processing mode for a specific task
+ */
+route("GET", "/api/tasks/:id/processing-mode", async (req) => {
+  const url = new URL(req.url);
+  const taskId = url.pathname.split("/")[3];
+
+  try {
+    const task = await db.getTask(taskId);
+    if (!task) {
+      return Response.json({ error: "Task not found" }, { status: 404 });
+    }
+
+    const config = await getTaskProcessingMode(taskId);
+    const recommended = recommendProcessingMode(task);
+
+    return Response.json({
+      taskId,
+      current: config,
+      recommended,
+    });
+  } catch (error) {
+    console.error("[ProcessingMode] Error getting task mode:", error);
+    return Response.json(
+      { error: "Failed to get task processing mode" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * PUT /api/tasks/:id/processing-mode - Set processing mode for a specific task
+ */
+route("PUT", "/api/tasks/:id/processing-mode", async (req) => {
+  const url = new URL(req.url);
+  const taskId = url.pathname.split("/")[3];
+
+  try {
+    const task = await db.getTask(taskId);
+    if (!task) {
+      return Response.json({ error: "Task not found" }, { status: 404 });
+    }
+
+    const body = (await req.json()) as ProcessingModeConfig;
+
+    if (
+      !body.mode ||
+      !["single", "moa", "debate", "swarm"].includes(body.mode)
+    ) {
+      return Response.json(
+        { error: `Invalid processing mode: ${body.mode}` },
+        { status: 400 },
+      );
+    }
+
+    await setTaskProcessingMode(taskId, body);
+
+    return Response.json({
+      ok: true,
+      taskId,
+      mode: body,
+    });
+  } catch (error) {
+    console.error("[ProcessingMode] Error setting task mode:", error);
+    return Response.json(
+      { error: "Failed to set task processing mode" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/tasks/:id/moa-runs - Get MoA runs for a task
+ */
+route("GET", "/api/tasks/:id/moa-runs", async (req) => {
+  const url = new URL(req.url);
+  const taskId = url.pathname.split("/")[3];
+
+  try {
+    const runs = await db.getMoARuns(taskId);
+    return Response.json({ taskId, runs });
+  } catch (error) {
+    console.error("[MoA] Error getting runs:", error);
+    return Response.json({ error: "Failed to get MoA runs" }, { status: 500 });
+  }
+});
+
+/**
+ * GET /api/tasks/:id/debate-sessions - Get debate sessions for a task
+ */
+route("GET", "/api/tasks/:id/debate-sessions", async (req) => {
+  const url = new URL(req.url);
+  const taskId = url.pathname.split("/")[3];
+
+  try {
+    const sessions = await db.getDebateSessions(taskId);
+    return Response.json({ taskId, sessions });
+  } catch (error) {
+    console.error("[Debate] Error getting sessions:", error);
+    return Response.json(
+      { error: "Failed to get debate sessions" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/tasks/:id/swarm-runs - Get swarm runs for a task
+ */
+route("GET", "/api/tasks/:id/swarm-runs", async (req) => {
+  const url = new URL(req.url);
+  const taskId = url.pathname.split("/")[3];
+
+  try {
+    const runs = await db.getSwarmRuns(taskId);
+    return Response.json({ taskId, runs });
+  } catch (error) {
+    console.error("[Swarm] Error getting runs:", error);
+    return Response.json(
+      { error: "Failed to get swarm runs" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/tasks/:id/handoff-requests - Get handoff requests for a task
+ */
+route("GET", "/api/tasks/:id/handoff-requests", async (req) => {
+  const url = new URL(req.url);
+  const taskId = url.pathname.split("/")[3];
+  const status = url.searchParams.get("status") || undefined;
+
+  try {
+    const requests = await db.getHandoffRequests(taskId, status);
+    return Response.json({ taskId, requests });
+  } catch (error) {
+    console.error("[Handoff] Error getting requests:", error);
+    return Response.json(
+      { error: "Failed to get handoff requests" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * POST /api/handoff-requests/:id/respond - Respond to a handoff request
+ */
+route("POST", "/api/handoff-requests/:id/respond", async (req) => {
+  const url = new URL(req.url);
+  const handoffId = url.pathname.split("/")[3];
+
+  try {
+    const body = (await req.json()) as {
+      choice?: string;
+      feedback?: string;
+      action?: string;
+    };
+
+    await db.respondToHandoff(handoffId, body);
+
+    return Response.json({
+      ok: true,
+      handoffId,
+      response: body,
+    });
+  } catch (error) {
+    console.error("[Handoff] Error responding:", error);
+    return Response.json(
+      { error: "Failed to respond to handoff" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/tasks/:id/agent-selections - Get agent selection log for a task
+ */
+route("GET", "/api/tasks/:id/agent-selections", async (req) => {
+  const url = new URL(req.url);
+  const taskId = url.pathname.split("/")[3];
+
+  try {
+    const selections = await db.getAgentSelections(taskId);
+    return Response.json({ taskId, selections });
+  } catch (error) {
+    console.error("[AgentSelection] Error getting selections:", error);
+    return Response.json(
+      { error: "Failed to get agent selections" },
+      { status: 500 },
+    );
+  }
+});
+
+/**
+ * GET /api/tasks/:id/termination-events - Get termination events for a task
+ */
+route("GET", "/api/tasks/:id/termination-events", async (req) => {
+  const url = new URL(req.url);
+  const taskId = url.pathname.split("/")[3];
+
+  try {
+    const events = await db.getTerminationEvents(taskId);
+    return Response.json({ taskId, events });
+  } catch (error) {
+    console.error("[Termination] Error getting events:", error);
+    return Response.json(
+      { error: "Failed to get termination events" },
+      { status: 500 },
+    );
+  }
+});
+
+// ============================================
 // Dashboard API (Issue #339)
 // ============================================
 

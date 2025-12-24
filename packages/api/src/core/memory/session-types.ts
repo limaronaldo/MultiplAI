@@ -420,7 +420,7 @@ export const OrchestrationStateSchema = z.object({
         "failed",
         "blocked",
       ]),
-      diff: z.string().nullable(),
+      diff: z.string().nullable().optional(), // Can be missing, null, or string
       attempts: z.number().int().min(0),
       targetFiles: z.array(z.string()).optional(),
       acceptanceCriteria: z.array(z.string()).optional(),

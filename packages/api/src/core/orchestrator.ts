@@ -199,6 +199,18 @@ export class Orchestrator {
     // Best-effort: initialize RAG index on first task for this repo (Issue #211)
     this.ensureRagInitialized(task, logger);
 
+    // Load orchestration state from database if not in memory
+    // This is needed before shouldDecompose() check for REVIEW_REJECTED tasks
+    if (!task.orchestrationState) {
+      const savedState = await db.getOrchestrationState(task.id);
+      if (savedState) {
+        task.orchestrationState = savedState;
+        logger.info(
+          `Loaded orchestration state with ${savedState.subtasks.length} subtasks`,
+        );
+      }
+    }
+
     const action = getNextAction(task.status);
     logger.info(`${task.status} -> action: ${action}`);
 
@@ -210,6 +222,24 @@ export class Orchestrator {
           // Check if this is an M/L complexity task that needs decomposition
           if (this.shouldDecompose(task)) {
             return await this.runBreakdown(task);
+          }
+          // For orchestrated tasks that need re-coding (after REVIEW_REJECTED),
+          // go back to orchestration to re-run the subtasks
+          if (task.orchestrationState && task.status === "REVIEW_REJECTED") {
+            logger.info(
+              "Re-running orchestration for REVIEW_REJECTED orchestrated task",
+            );
+            // Reset subtasks to pending for re-coding
+            for (const subtask of task.orchestrationState.subtasks) {
+              subtask.status = "pending";
+              subtask.attempts = 0;
+              subtask.diff = null; // Use null, not undefined (schema requires string | null)
+            }
+            task.orchestrationState.completedSubtasks = [];
+            task.orchestrationState.currentSubtask = null;
+            // Save the reset state using initializeOrchestration (upsert)
+            await db.initializeOrchestration(task.id, task.orchestrationState);
+            return this.updateStatus(task, "BREAKDOWN_DONE");
           }
           return await this.runCoding(task);
         case "BREAKDOWN":
@@ -358,8 +388,8 @@ export class Orchestrator {
       task.plan = plannerOutput.plan;
       task.targetFiles = plannerOutput.targetFiles;
       task.multiFilePlan = plannerOutput.multiFilePlan;
-      task.commands = plannerOutput.commands;
-      task.commandOrder = plannerOutput.commandOrder;
+      task.commands = plannerOutput.commands ?? undefined;
+      task.commandOrder = plannerOutput.commandOrder ?? undefined;
 
       // Expand target files with import analysis
       if (EXPAND_IMPORTS && task.targetFiles && task.targetFiles.length > 0) {
@@ -779,11 +809,55 @@ export class Orchestrator {
 
     for (const subtask of state.subtasks) {
       if (subtask.status === "completed" && subtask.diff) {
-        diffs.push(`# Subtask: ${subtask.id}\n${subtask.diff}`);
+        // Unescape the diff - it may be stored with escaped characters from JSON
+        const unescapedDiff = this.unescapeDiff(subtask.diff);
+        diffs.push(`# Subtask: ${subtask.id}\n${unescapedDiff}`);
       }
     }
 
     return diffs.join("\n\n");
+  }
+
+  /**
+   * Unescape a diff string that was stored with escaped characters
+   * Handles: \\n -> \n, \\t -> \t, \\" -> ", \\\\ -> \\
+   * Also handles double-escaping: \\\\n -> \n, \\\" -> "
+   */
+  private unescapeDiff(diff: string): string {
+    // Check if this diff has escaped newlines (literal \n instead of actual newlines)
+    // If the diff contains actual newlines and no escaped ones, it's already unescaped
+    if (diff.includes("\n") && !diff.includes("\\n")) {
+      return diff; // Already has real newlines, not escaped
+    }
+
+    let result = diff;
+
+    // First pass: handle double-escaping (\\\\n -> \\n, then \\n -> \n)
+    // Some LLMs return double-escaped content
+    if (
+      result.includes("\\\\n") ||
+      result.includes("\\\\t") ||
+      result.includes('\\\\"')
+    ) {
+      result = result
+        .replace(/\\\\n/g, "\n")
+        .replace(/\\\\t/g, "\t")
+        .replace(/\\\\r/g, "\r")
+        .replace(/\\\\"/g, '"')
+        .replace(/\\\\\\\\/g, "\\");
+    }
+
+    // Second pass: handle single-escaping (if still present)
+    if (result.includes("\\n") || result.includes("\\t")) {
+      result = result
+        .replace(/\\n/g, "\n")
+        .replace(/\\t/g, "\t")
+        .replace(/\\r/g, "\r")
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, "\\");
+    }
+
+    return result;
   }
 
   /**
@@ -929,7 +1003,8 @@ export class Orchestrator {
       );
     }
 
-    task.currentDiff = coderOutput.diff;
+    // Unescape diff content (LLMs often return escaped newlines)
+    task.currentDiff = this.unescapeDiff(coderOutput.diff);
     task.commitMessage = coderOutput.commitMessage;
 
     const impact = await this.knowledgeGraph.analyzeImpact(
@@ -957,12 +1032,12 @@ export class Orchestrator {
       }
     }
 
-    // Validate diff before applying
+    // Validate diff before applying (use unescaped diff from task.currentDiff)
     if (VALIDATE_DIFF) {
       const validationResult = await this.validateAndApplyDiff(
         task,
-        coderOutput.diff,
-        coderOutput.commitMessage,
+        task.currentDiff!,
+        task.commitMessage!,
         logger,
         { applyToGitHub: !USE_FOREMAN },
       );
@@ -1616,24 +1691,25 @@ export class Orchestrator {
       fixerOutput.diff = normalizePatch(fixerOutput.diff);
     }
 
-    task.currentDiff = fixerOutput.diff;
+    // Unescape diff content (LLMs often return escaped newlines)
+    task.currentDiff = this.unescapeDiff(fixerOutput.diff);
     task.commitMessage = fixerOutput.commitMessage;
 
     const impact = await this.knowledgeGraph.analyzeImpact(
       task,
-      fixerOutput.diff,
+      task.currentDiff,
       fileContents,
     );
     if (impact?.warnings?.length) {
       for (const w of impact.warnings) logger.warn(`[KnowledgeGraph] ${w}`);
     }
 
-    // Validate diff before applying
+    // Validate diff before applying (use unescaped diff from task.currentDiff)
     if (VALIDATE_DIFF) {
       const validationResult = await this.validateAndApplyDiff(
         task,
-        fixerOutput.diff,
-        fixerOutput.commitMessage,
+        task.currentDiff!,
+        task.commitMessage!,
         logger,
         { applyToGitHub: !USE_FOREMAN },
       );
@@ -1645,8 +1721,8 @@ export class Orchestrator {
         await this.github.applyDiff(
           task.githubRepo,
           task.branchName!,
-          fixerOutput.diff,
-          fixerOutput.commitMessage,
+          task.currentDiff!,
+          task.commitMessage!,
         );
       } else {
         logger.info("Skipping diff apply (Foreman enabled)");

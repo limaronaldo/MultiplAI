@@ -31,7 +31,7 @@ export class ConsensusEngine {
       plan: string[];
       fileContents: Record<string, string>;
     },
-    useReviewer: boolean = true
+    useReviewer: boolean = true,
   ): Promise<ConsensusResult<CoderOutput>> {
     if (candidates.length === 0) {
       throw new Error("No candidates to evaluate");
@@ -76,9 +76,7 @@ export class ConsensusEngine {
 
     if (useReviewer && scores[0].score - scores[1].score < 20) {
       // Close race - use reviewer to decide
-      console.log(
-        "[Consensus] Close scores, using reviewer to break tie..."
-      );
+      console.log("[Consensus] Close scores, using reviewer to break tie...");
       reviewerVotes = await this.reviewCandidates(candidates, context);
 
       // Find candidate with most APPROVE votes or highest review score
@@ -89,8 +87,8 @@ export class ConsensusEngine {
           vote.verdict === "APPROVE"
             ? 100
             : vote.verdict === "NEEDS_DISCUSSION"
-            ? 50
-            : 0;
+              ? 50
+              : 0;
         voteScores.set(vote.candidateId, current + voteValue + vote.score);
       }
 
@@ -114,7 +112,7 @@ export class ConsensusEngine {
 
     console.log(`[Consensus] Winner: ${winner.model}`);
     console.log(
-      `[Consensus] Scores: ${scores.map((s) => `${s.model.split("/").pop()}:${s.score.toFixed(0)}`).join(", ")}`
+      `[Consensus] Scores: ${scores.map((s) => `${s.model.split("/").pop()}:${s.score.toFixed(0)}`).join(", ")}`,
     );
 
     return {
@@ -139,7 +137,7 @@ export class ConsensusEngine {
       fileContents: Record<string, string>;
       errorLogs: string;
     },
-    useReviewer: boolean = true
+    useReviewer: boolean = true,
   ): Promise<ConsensusResult<FixerOutput>> {
     if (candidates.length === 0) {
       throw new Error("No fixer candidates to evaluate");
@@ -188,7 +186,7 @@ export class ConsensusEngine {
     for (const candidate of candidates) {
       const fixDesc = candidate.output.fixDescription?.toLowerCase() || "";
       const matchCount = errorTerms.filter((term) =>
-        fixDesc.includes(term)
+        fixDesc.includes(term),
       ).length;
       const scoreIdx = scores.findIndex((s) => s.candidateId === candidate.id);
       if (scoreIdx >= 0) {
@@ -247,7 +245,8 @@ export class ConsensusEngine {
     else breakdown.fileCount = 5;
 
     // Structure validation
-    const hasHeaders = output.diff.includes("---") && output.diff.includes("+++");
+    const hasHeaders =
+      output.diff.includes("---") && output.diff.includes("+++");
     const hasHunks = output.diff.includes("@@");
     const hasChanges =
       output.diff.includes("\n+") || output.diff.includes("\n-");
@@ -328,7 +327,7 @@ export class ConsensusEngine {
       definitionOfDone: string[];
       plan: string[];
       fileContents: Record<string, string>;
-    }
+    },
   ): Promise<ReviewerVote[]> {
     const votes: ReviewerVote[] = [];
 
@@ -343,22 +342,25 @@ export class ConsensusEngine {
           testsPassed: true, // Assume tests would pass for comparison
         });
 
+        // Normalize verdict - LLMs sometimes return "APPROVED" instead of "APPROVE"
+        const normalizedVerdict = this.normalizeVerdict(result.verdict);
+
         votes.push({
           candidateId: candidate.id,
           model: candidate.model,
-          verdict: result.verdict,
+          verdict: normalizedVerdict,
           score:
-            result.verdict === "APPROVE"
+            normalizedVerdict === "APPROVE"
               ? 100
-              : result.verdict === "NEEDS_DISCUSSION"
-              ? 50
-              : 0,
+              : normalizedVerdict === "NEEDS_DISCUSSION"
+                ? 50
+                : 0,
           comments: result.comments?.map((c) => c.comment) || [],
         });
       } catch (error) {
         console.error(
           `[Consensus] Failed to review ${candidate.model}:`,
-          error
+          error,
         );
         votes.push({
           candidateId: candidate.id,
@@ -371,6 +373,27 @@ export class ConsensusEngine {
     }
 
     return votes;
+  }
+
+  /**
+   * Normalize verdict from LLM response
+   * LLMs sometimes return "APPROVED" instead of "APPROVE" or "NEEDS_CHANGES" instead of "REQUEST_CHANGES"
+   */
+  private normalizeVerdict(
+    verdict: string,
+  ): "APPROVE" | "REQUEST_CHANGES" | "NEEDS_DISCUSSION" {
+    const upper = verdict.toUpperCase();
+    if (upper === "APPROVE" || upper === "APPROVED") {
+      return "APPROVE";
+    }
+    if (
+      upper === "REQUEST_CHANGES" ||
+      upper === "NEEDS_CHANGES" ||
+      upper === "CHANGES_REQUESTED"
+    ) {
+      return "REQUEST_CHANGES";
+    }
+    return "NEEDS_DISCUSSION";
   }
 
   /**
@@ -407,7 +430,7 @@ export class ConsensusEngine {
  * Format consensus result for PR comment
  */
 export function formatConsensusForComment<T>(
-  result: ConsensusResult<T>
+  result: ConsensusResult<T>,
 ): string {
   const lines: string[] = [
     "## Multi-Agent Consensus Report",
@@ -426,7 +449,7 @@ export function formatConsensusForComment<T>(
     const isWinner = candidate.id === result.winner.id;
     const marker = isWinner ? " ✓" : "";
     lines.push(
-      `| ${candidate.model}${marker} | ${score?.score.toFixed(0) || "-"} | ${(candidate.duration / 1000).toFixed(1)}s | ${candidate.tokens} |`
+      `| ${candidate.model}${marker} | ${score?.score.toFixed(0) || "-"} | ${(candidate.duration / 1000).toFixed(1)}s | ${candidate.tokens} |`,
     );
   }
 
@@ -439,15 +462,15 @@ export function formatConsensusForComment<T>(
         vote.verdict === "APPROVE"
           ? "✅"
           : vote.verdict === "REQUEST_CHANGES"
-          ? "❌"
-          : "⚠️";
+            ? "❌"
+            : "⚠️";
       lines.push(`- ${emoji} **${vote.model}**: ${vote.verdict}`);
     }
   }
 
   lines.push("");
   lines.push(
-    `**Total Tokens:** ${result.totalTokens} | **Parallel Duration:** ${(result.totalDuration / 1000).toFixed(1)}s`
+    `**Total Tokens:** ${result.totalTokens} | **Parallel Duration:** ${(result.totalDuration / 1000).toFixed(1)}s`,
   );
 
   return lines.join("\n");

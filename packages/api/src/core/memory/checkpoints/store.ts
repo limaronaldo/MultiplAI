@@ -47,7 +47,7 @@ export class CheckpointStore {
     // Get current task state
     const [task] = await sql`
       SELECT current_diff, plan, definition_of_done, target_files,
-             attempt_count, last_error, estimated_complexity, effort
+             attempt_count, last_error, estimated_complexity, estimated_effort
       FROM tasks WHERE id = ${input.taskId}
     `;
 
@@ -60,7 +60,7 @@ export class CheckpointStore {
       attemptCount: task?.attempt_count || 0,
       lastError: task?.last_error || undefined,
       complexity: task?.estimated_complexity || undefined,
-      effort: task?.effort || undefined,
+      effort: task?.estimated_effort || undefined,
     };
 
     const [row] = await sql`
@@ -120,17 +120,19 @@ export class CheckpointStore {
       ORDER BY sequence ASC
     `;
 
-    return rows.map(row => ({
+    return rows.map((row) => ({
       id: row.id,
       sequence: row.sequence,
       phase: row.phase as CheckpointPhase,
       description: row.description || undefined,
       createdAt: row.created_at.toISOString(),
-      effort: row.tokens_used ? {
-        tokensUsed: row.tokens_used,
-        costUsd: Number(row.cost_usd),
-        durationMs: row.duration_ms,
-      } : undefined,
+      effort: row.tokens_used
+        ? {
+            tokensUsed: row.tokens_used,
+            costUsd: Number(row.cost_usd),
+            durationMs: row.duration_ms,
+          }
+        : undefined,
     }));
   }
 
@@ -196,7 +198,7 @@ export class CheckpointStore {
    */
   async compare(
     checkpointId1: string,
-    checkpointId2: string
+    checkpointId2: string,
   ): Promise<{
     added: string[];
     removed: string[];
@@ -215,12 +217,15 @@ export class CheckpointStore {
     const keys1 = new Set(Object.keys(state1.memoryBlocks));
     const keys2 = new Set(Object.keys(state2.memoryBlocks));
 
-    const added = [...keys2].filter(k => !keys1.has(k));
-    const removed = [...keys1].filter(k => !keys2.has(k));
+    const added = [...keys2].filter((k) => !keys1.has(k));
+    const removed = [...keys1].filter((k) => !keys2.has(k));
     const changed: Array<{ key: string; from: unknown; to: unknown }> = [];
 
     for (const key of keys1) {
-      if (keys2.has(key) && state1.memoryBlocks[key] !== state2.memoryBlocks[key]) {
+      if (
+        keys2.has(key) &&
+        state1.memoryBlocks[key] !== state2.memoryBlocks[key]
+      ) {
         changed.push({
           key,
           from: state1.memoryBlocks[key],
@@ -231,10 +236,18 @@ export class CheckpointStore {
 
     // Also compare non-block state
     if (state1.currentDiff !== state2.currentDiff) {
-      changed.push({ key: "currentDiff", from: state1.currentDiff, to: state2.currentDiff });
+      changed.push({
+        key: "currentDiff",
+        from: state1.currentDiff,
+        to: state2.currentDiff,
+      });
     }
     if (state1.attemptCount !== state2.attemptCount) {
-      changed.push({ key: "attemptCount", from: state1.attemptCount, to: state2.attemptCount });
+      changed.push({
+        key: "attemptCount",
+        from: state1.attemptCount,
+        to: state2.attemptCount,
+      });
     }
 
     return { added, removed, changed };
@@ -302,7 +315,10 @@ export class CheckpointStore {
   /**
    * Get checkpoints by phase
    */
-  async getByPhase(taskId: string, phase: CheckpointPhase): Promise<Checkpoint[]> {
+  async getByPhase(
+    taskId: string,
+    phase: CheckpointPhase,
+  ): Promise<Checkpoint[]> {
     const sql = getDb();
     const rows = await sql`
       SELECT * FROM checkpoints
@@ -324,11 +340,13 @@ export class CheckpointStore {
       state: row.state as CheckpointState,
       description: (row.description as string) || undefined,
       createdAt: (row.created_at as Date).toISOString(),
-      effort: row.tokens_used ? {
-        tokensUsed: row.tokens_used as number,
-        costUsd: Number(row.cost_usd),
-        durationMs: row.duration_ms as number,
-      } : undefined,
+      effort: row.tokens_used
+        ? {
+            tokensUsed: row.tokens_used as number,
+            costUsd: Number(row.cost_usd),
+            durationMs: row.duration_ms as number,
+          }
+        : undefined,
     };
   }
 }

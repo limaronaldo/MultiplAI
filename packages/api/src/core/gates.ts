@@ -13,7 +13,7 @@
  */
 
 import type { Task } from "./types";
-import { db } from "../integrations/db";
+import { getDb } from "../integrations/db";
 
 export interface GateResult {
   passed: boolean;
@@ -39,10 +39,11 @@ async function validatePlanningComplete(task: Task): Promise<GateResult> {
   const details: Record<string, unknown> = {};
 
   // Check plan exists and has content
-  if (!task.plan || task.plan.trim().length === 0) {
+  if (!task.plan || task.plan.length === 0) {
     missing.push("plan");
   } else {
     details.planLength = task.plan.length;
+    details.planSteps = task.plan.length;
   }
 
   // Check target files exist
@@ -61,17 +62,18 @@ async function validatePlanningComplete(task: Task): Promise<GateResult> {
   }
 
   // Check complexity was assessed
-  if (!task.complexity) {
+  if (!task.estimatedComplexity) {
     missing.push("complexity");
   } else {
-    details.complexity = task.complexity;
+    details.complexity = task.estimatedComplexity;
   }
 
-  // Check effort was assessed
-  if (!task.effort) {
-    missing.push("effort");
+  // Check effort was assessed (optional - default to "medium" if not provided)
+  if (!task.estimatedEffort) {
+    details.effort = "medium"; // Default effort when not specified
+    details.effortDefaulted = true;
   } else {
-    details.effort = task.effort;
+    details.effort = task.estimatedEffort;
   }
 
   return {
@@ -123,10 +125,10 @@ async function validateCodingComplete(task: Task): Promise<GateResult> {
   }
 
   // Check branch exists
-  if (!task.branch) {
+  if (!task.branchName) {
     missing.push("branch");
   } else {
-    details.branch = task.branch;
+    details.branch = task.branchName;
   }
 
   return {
@@ -159,9 +161,9 @@ async function validateTestingComplete(task: Task): Promise<GateResult> {
   }
 
   // Check attempt count
-  details.attempts = task.attempts || 0;
+  details.attempts = task.attemptCount || 0;
   const MAX_ATTEMPTS = parseInt(process.env.MAX_ATTEMPTS || "3");
-  if ((task.attempts || 0) >= MAX_ATTEMPTS) {
+  if ((task.attemptCount || 0) >= MAX_ATTEMPTS) {
     details.maxAttemptsReached = true;
   }
 
@@ -186,7 +188,7 @@ async function validateReviewComplete(task: Task): Promise<GateResult> {
     if (task.status === "REVIEW_REJECTED") {
       missing.push("approvedReview");
       details.verdict = "rejected";
-      details.reviewFeedback = task.reviewFeedback;
+      details.reviewFeedback = task.lastError; // lastError contains review feedback when rejected
     } else {
       missing.push("reviewVerdict");
       details.verdict = "unknown";
@@ -211,8 +213,15 @@ export const GATES: Record<string, Gate> = {
   PLANNING_COMPLETE: {
     id: "PLANNING_COMPLETE",
     name: "Planning Gate",
-    description: "Verifies planning output is complete with plan, target files, and DoD",
-    requiredArtifacts: ["plan", "targetFiles", "definitionOfDone", "complexity", "effort"],
+    description:
+      "Verifies planning output is complete with plan, target files, and DoD",
+    requiredArtifacts: [
+      "plan",
+      "targetFiles",
+      "definitionOfDone",
+      "complexity",
+      // "effort" is optional - defaults to "medium" if not provided
+    ],
     validate: validatePlanningComplete,
   },
   CODING_COMPLETE: {
@@ -241,7 +250,10 @@ export const GATES: Record<string, Gate> = {
 /**
  * Validates a specific gate for a task
  */
-export async function validateGate(gateId: string, task: Task): Promise<GateResult> {
+export async function validateGate(
+  gateId: string,
+  task: Task,
+): Promise<GateResult> {
   const gate = GATES[gateId];
   if (!gate) {
     throw new Error(`Unknown gate: ${gateId}`);
@@ -264,7 +276,7 @@ export async function validateGate(gateId: string, task: Task): Promise<GateResu
  */
 export async function validateGatesUntilFailure(
   gateIds: string[],
-  task: Task
+  task: Task,
 ): Promise<{ allPassed: boolean; results: GateResult[] }> {
   const results: GateResult[] = [];
 
@@ -301,8 +313,15 @@ export function getNextGate(task: Task): string | null {
 /**
  * Log gate validation result to agent_traces table
  */
-async function logGateResult(taskId: string, result: GateResult): Promise<void> {
-  const query = `
+async function logGateResult(
+  taskId: string,
+  result: GateResult,
+): Promise<void> {
+  const sql = getDb();
+  const outputSummary = JSON.stringify(result.details);
+  const status = result.passed ? "completed" : "failed";
+
+  await sql`
     INSERT INTO agent_traces (
       task_id,
       agent_name,
@@ -312,25 +331,28 @@ async function logGateResult(taskId: string, result: GateResult): Promise<void> 
       gate_missing_artifacts,
       output_summary,
       completed_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+    ) VALUES (
+      ${taskId},
+      'gate_validator',
+      ${status},
+      ${result.gate},
+      ${result.passed},
+      ${result.missing},
+      ${outputSummary},
+      now()
+    )
   `;
-
-  await db.query(query, [
-    taskId,
-    "gate_validator",
-    result.passed ? "completed" : "failed",
-    result.gate,
-    result.passed,
-    result.missing,
-    JSON.stringify(result.details),
-  ]);
 }
 
 /**
  * Get gate results for a task
  */
-export async function getTaskGateHistory(taskId: string): Promise<GateResult[]> {
-  const query = `
+export async function getTaskGateHistory(
+  taskId: string,
+): Promise<GateResult[]> {
+  const sql = getDb();
+
+  const result = await sql`
     SELECT
       gate_name as gate,
       gate_passed as passed,
@@ -338,16 +360,15 @@ export async function getTaskGateHistory(taskId: string): Promise<GateResult[]> 
       output_summary as details,
       completed_at as "validatedAt"
     FROM agent_traces
-    WHERE task_id = $1 AND gate_name IS NOT NULL
+    WHERE task_id = ${taskId} AND gate_name IS NOT NULL
     ORDER BY completed_at
   `;
 
-  const result = await db.query(query, [taskId]);
-  return result.rows.map(row => ({
-    gate: row.gate,
-    passed: row.passed,
-    missing: row.missing || [],
-    details: row.details || {},
-    validatedAt: row.validatedAt,
+  return result.map((row: Record<string, unknown>) => ({
+    gate: row.gate as string,
+    passed: row.passed as boolean,
+    missing: (row.missing as string[]) || [],
+    details: (row.details as Record<string, unknown>) || {},
+    validatedAt: row.validatedAt as Date,
   }));
 }
