@@ -1343,7 +1343,7 @@ route("DELETE", "/api/tasks/failed", async (req) => {
 
     return Response.json({
       message: "Deleted failed tasks",
-      deleted: result.count || parseInt(count),
+      deleted: (result as unknown as { count: number }).count || parseInt(count),
       olderThanDays: olderThanDays || "all",
     });
   } catch (error) {
