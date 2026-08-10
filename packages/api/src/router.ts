@@ -35,6 +35,7 @@ import {
   getRateLimitStats,
 } from "./core/rate-limiter";
 import { addCorsHeaders, corsHeadersFor } from "./core/cors";
+import { authMiddleware } from "./core/auth";
 import { generateOpenAPISpec, getOpenAPIJSON } from "./core/openapi";
 import { generateSwaggerHTML, generateReDocHTML } from "./core/swagger-ui";
 import { VisualTestRunner } from "./agents/computer-use/visual-test-runner";
@@ -7809,6 +7810,12 @@ export async function handleRequest(req: Request): Promise<Response> {
   const rateLimitResponse = rateLimitMiddleware(req);
   if (rateLimitResponse) {
     return addCorsHeaders(rateLimitResponse, req);
+  }
+
+  // Require authentication for /api/* (except public paths) — ENG-1671
+  const authResponse = authMiddleware(req);
+  if (authResponse) {
+    return addCorsHeaders(authResponse, req);
   }
 
   for (const route of routes) {
