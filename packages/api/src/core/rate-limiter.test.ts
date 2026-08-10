@@ -265,3 +265,136 @@ describe("Rate Limiter", () => {
     });
   });
 });
+
+// ============================================
+// ENG-1670: conformance tests
+// ============================================
+
+import {
+  getConfigForRequest,
+  acquireSseSlot,
+  releaseSseSlot,
+  getSseConnectionCount,
+  clearAllSseSlots,
+  createSseLimitResponse,
+  SSE_MAX_CONCURRENT,
+} from "./rate-limiter";
+
+describe("ENG-1670 conformance", () => {
+  beforeEach(() => {
+    clearAllRateLimits();
+    clearAllSseSlots();
+  });
+
+  describe("limits per category", () => {
+    it("webhook limit defaults to 30 req/min", () => {
+      expect(RATE_LIMIT_CONFIGS.webhook.maxRequests).toBe(30);
+      expect(RATE_LIMIT_CONFIGS.webhook.windowMs).toBe(60000);
+    });
+
+    it("api read limit defaults to 60 req/min", () => {
+      expect(RATE_LIMIT_CONFIGS.api.maxRequests).toBe(60);
+      expect(RATE_LIMIT_CONFIGS.api.windowMs).toBe(60000);
+    });
+
+    it("api write limit defaults to 20 req/min", () => {
+      expect(RATE_LIMIT_CONFIGS.write.maxRequests).toBe(20);
+      expect(RATE_LIMIT_CONFIGS.write.windowMs).toBe(60000);
+    });
+  });
+
+  describe("getConfigForRequest (method-aware)", () => {
+    it("GET /api/* uses read config", () => {
+      expect(getConfigForRequest("/api/tasks", "GET")).toBe(RATE_LIMIT_CONFIGS.api);
+    });
+
+    it("POST/PUT/PATCH/DELETE /api/* use write config", () => {
+      expect(getConfigForRequest("/api/tasks/123/reject", "POST")).toBe(RATE_LIMIT_CONFIGS.write);
+      expect(getConfigForRequest("/api/tasks/123", "PUT")).toBe(RATE_LIMIT_CONFIGS.write);
+      expect(getConfigForRequest("/api/tasks/123", "PATCH")).toBe(RATE_LIMIT_CONFIGS.write);
+      expect(getConfigForRequest("/api/tasks/123", "DELETE")).toBe(RATE_LIMIT_CONFIGS.write);
+    });
+
+    it("heavy paths take precedence over write config", () => {
+      expect(getConfigForRequest("/api/tasks/123/process", "POST")).toBe(RATE_LIMIT_CONFIGS.heavy);
+      expect(getConfigForRequest("/api/jobs", "POST")).toBe(RATE_LIMIT_CONFIGS.heavy);
+    });
+
+    it("webhooks use webhook config regardless of method", () => {
+      expect(getConfigForRequest("/webhooks/github", "POST")).toBe(RATE_LIMIT_CONFIGS.webhook);
+    });
+
+    it("getConfigForPath stays backwards-compatible (read semantics)", () => {
+      expect(getConfigForPath("/api/tasks")).toBe(RATE_LIMIT_CONFIGS.api);
+    });
+  });
+
+  describe("write limiting via middleware", () => {
+    it("blocks POST /api/* after 20 requests with 429 + Retry-After", () => {
+      const mkReq = () =>
+        new Request("http://localhost/api/tasks/1/reject", {
+          method: "POST",
+          headers: { "x-forwarded-for": "10.9.9.9" },
+        });
+
+      for (let i = 0; i < 20; i++) {
+        expect(rateLimitMiddleware(mkReq())).toBeNull();
+      }
+      const blocked = rateLimitMiddleware(mkReq());
+      expect(blocked).not.toBeNull();
+      expect(blocked!.status).toBe(429);
+      expect(blocked!.headers.get("Retry-After")).not.toBeNull();
+    });
+
+    it("GET on same path from same IP still allowed up to 60", () => {
+      const mkGet = () =>
+        new Request("http://localhost/api/tasks", {
+          method: "GET",
+          headers: { "x-forwarded-for": "10.9.9.10" },
+        });
+      for (let i = 0; i < 60; i++) {
+        expect(rateLimitMiddleware(mkGet())).toBeNull();
+      }
+      const blocked = rateLimitMiddleware(mkGet());
+      expect(blocked).not.toBeNull();
+      expect(blocked!.status).toBe(429);
+    });
+  });
+
+  describe("SSE concurrent connection limiting", () => {
+    it("allows up to SSE_MAX_CONCURRENT slots per IP", () => {
+      for (let i = 0; i < SSE_MAX_CONCURRENT; i++) {
+        expect(acquireSseSlot("1.2.3.4")).toBe(true);
+      }
+      expect(getSseConnectionCount("1.2.3.4")).toBe(SSE_MAX_CONCURRENT);
+      expect(acquireSseSlot("1.2.3.4")).toBe(false);
+    });
+
+    it("defaults to 5 concurrent connections", () => {
+      expect(SSE_MAX_CONCURRENT).toBe(5);
+    });
+
+    it("tracks IPs independently", () => {
+      for (let i = 0; i < SSE_MAX_CONCURRENT; i++) acquireSseSlot("1.1.1.1");
+      expect(acquireSseSlot("2.2.2.2")).toBe(true);
+    });
+
+    it("release frees a slot", () => {
+      for (let i = 0; i < SSE_MAX_CONCURRENT; i++) acquireSseSlot("3.3.3.3");
+      expect(acquireSseSlot("3.3.3.3")).toBe(false);
+      releaseSseSlot("3.3.3.3");
+      expect(acquireSseSlot("3.3.3.3")).toBe(true);
+    });
+
+    it("release below zero is safe", () => {
+      releaseSseSlot("9.9.9.9");
+      expect(getSseConnectionCount("9.9.9.9")).toBe(0);
+    });
+
+    it("SSE limit response is 429 with Retry-After", () => {
+      const res = createSseLimitResponse();
+      expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("30");
+    });
+  });
+});
