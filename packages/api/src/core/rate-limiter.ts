@@ -50,17 +50,23 @@ cleanupInterval.unref?.();
  * Default configuration by endpoint type
  */
 export const RATE_LIMIT_CONFIGS = {
-  /** Webhook endpoints - higher limits */
+  /** Webhook endpoints - 30 req/min per IP (ENG-1670) */
   webhook: {
-    maxRequests: parseInt(process.env.RATE_LIMIT_WEBHOOK_MAX || "100", 10),
+    maxRequests: parseInt(process.env.RATE_LIMIT_WEBHOOK_MAX || "30", 10),
     windowMs: parseInt(process.env.RATE_LIMIT_WEBHOOK_WINDOW || "60000", 10),
     keyPrefix: "webhook:",
   },
-  /** API query endpoints - moderate limits */
+  /** API read endpoints (GET/HEAD/OPTIONS) - 60 req/min per IP */
   api: {
     maxRequests: parseInt(process.env.RATE_LIMIT_API_MAX || "60", 10),
     windowMs: parseInt(process.env.RATE_LIMIT_API_WINDOW || "60000", 10),
     keyPrefix: "api:",
+  },
+  /** API write endpoints (POST/PUT/PATCH/DELETE) - 20 req/min per IP (ENG-1670) */
+  write: {
+    maxRequests: parseInt(process.env.RATE_LIMIT_WRITE_MAX || "20", 10),
+    windowMs: parseInt(process.env.RATE_LIMIT_WRITE_WINDOW || "60000", 10),
+    keyPrefix: "write:",
   },
   /** Heavy operations (jobs, processing) - lower limits */
   heavy: {
@@ -177,16 +183,22 @@ export function createRateLimitResponse(result: RateLimitResult): Response {
   );
 }
 
+/** HTTP methods considered writes for rate limiting purposes (ENG-1670) */
+const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
 /**
- * Determine rate limit config based on request path
+ * Determine rate limit config based on request path and method (ENG-1670)
  */
-export function getConfigForPath(path: string): RateLimitConfig {
+export function getConfigForRequest(
+  path: string,
+  method: string = "GET"
+): RateLimitConfig {
   // Webhook endpoints
   if (path.startsWith("/webhooks/")) {
     return RATE_LIMIT_CONFIGS.webhook;
   }
 
-  // Heavy operations
+  // Heavy operations (stricter than generic writes)
   if (
     path.includes("/process") ||
     path.includes("/run") ||
@@ -196,13 +208,24 @@ export function getConfigForPath(path: string): RateLimitConfig {
     return RATE_LIMIT_CONFIGS.heavy;
   }
 
-  // API endpoints
+  // API endpoints: distinguish writes (20/min) from reads (60/min)
   if (path.startsWith("/api/")) {
+    if (WRITE_METHODS.has(method.toUpperCase())) {
+      return RATE_LIMIT_CONFIGS.write;
+    }
     return RATE_LIMIT_CONFIGS.api;
   }
 
   // Default
   return RATE_LIMIT_CONFIGS.default;
+}
+
+/**
+ * Determine rate limit config based on request path only
+ * (kept for backwards compatibility; treats request as a read)
+ */
+export function getConfigForPath(path: string): RateLimitConfig {
+  return getConfigForRequest(path, "GET");
 }
 
 /**
@@ -233,8 +256,8 @@ export function rateLimitMiddleware(req: Request): Response | null {
     return null;
   }
 
-  // Get appropriate config
-  const config = getConfigForPath(path);
+  // Get appropriate config (method-aware: reads 60/min, writes 20/min)
+  const config = getConfigForRequest(path, req.method);
 
   // Get client identifier
   const clientIp = getClientIp(req);
@@ -262,7 +285,7 @@ export function addRateLimitHeaders(
 ): Response {
   const url = new URL(req.url);
   const path = url.pathname;
-  const config = getConfigForPath(path);
+  const config = getConfigForRequest(path, req.method);
   const clientIp = getClientIp(req);
   const key = `${clientIp}:${path}`;
 
@@ -299,6 +322,78 @@ export function resetRateLimit(key: string): void {
  */
 export function clearAllRateLimits(): void {
   store.clear();
+}
+
+// ============================================
+// SSE / long-lived connection concurrency limiting (ENG-1670)
+// Max 5 simultaneous connections per IP
+// ============================================
+
+const sseConnections = new Map<string, number>();
+
+/** Max simultaneous SSE/WS connections per IP */
+export const SSE_MAX_CONCURRENT = parseInt(
+  process.env.RATE_LIMIT_SSE_MAX_CONCURRENT || "5",
+  10
+);
+
+/**
+ * Try to acquire an SSE connection slot for an IP.
+ * Returns true if acquired; false if the per-IP concurrent limit is reached.
+ * Callers MUST call releaseSseSlot(ip) when the connection closes.
+ */
+export function acquireSseSlot(ip: string): boolean {
+  if (process.env.RATE_LIMIT_ENABLED === "false") {
+    return true;
+  }
+  const current = sseConnections.get(ip) ?? 0;
+  if (current >= SSE_MAX_CONCURRENT) {
+    return false;
+  }
+  sseConnections.set(ip, current + 1);
+  return true;
+}
+
+/**
+ * Release an SSE connection slot for an IP.
+ */
+export function releaseSseSlot(ip: string): void {
+  const current = sseConnections.get(ip) ?? 0;
+  if (current <= 1) {
+    sseConnections.delete(ip);
+  } else {
+    sseConnections.set(ip, current - 1);
+  }
+}
+
+/** Current number of active SSE connections for an IP */
+export function getSseConnectionCount(ip: string): number {
+  return sseConnections.get(ip) ?? 0;
+}
+
+/** Clear all SSE slots (for testing) */
+export function clearAllSseSlots(): void {
+  sseConnections.clear();
+}
+
+/**
+ * 429 response for SSE concurrent connection limit, with Retry-After
+ */
+export function createSseLimitResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      error: "Too Many Requests",
+      message: `Too many simultaneous stream connections. Limit is ${SSE_MAX_CONCURRENT} per IP.`,
+      retryAfter: 30,
+    }),
+    {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": "30",
+      },
+    }
+  );
 }
 
 /**
