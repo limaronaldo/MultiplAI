@@ -24,6 +24,7 @@ import {
   addRateLimitHeaders,
   getRateLimitStats,
 } from "./core/rate-limiter";
+import { addCorsHeaders, corsHeadersFor } from "./core/cors";
 import { generateOpenAPISpec, getOpenAPIJSON } from "./core/openapi";
 import { generateSwaggerHTML, generateReDocHTML } from "./core/swagger-ui";
 import { VisualTestRunner } from "./agents/computer-use/visual-test-runner";
@@ -4363,7 +4364,7 @@ route("GET", "/api/logs/stream", async (req) => {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
-      "Access-Control-Allow-Origin": "*",
+      ...corsHeadersFor(req),
     },
   });
 });
@@ -7741,24 +7742,7 @@ route("POST", "/api/plan-conversations/:id/convert", async (req) => {
 // Router
 // ============================================
 
-// CORS headers for cross-origin requests
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-};
-
-function addCorsHeaders(response: Response): Response {
-  const newHeaders = new Headers(response.headers);
-  for (const [key, value] of Object.entries(CORS_HEADERS)) {
-    newHeaders.set(key, value);
-  }
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: newHeaders,
-  });
-}
+// CORS restrito a origens confiáveis via ALLOWED_ORIGINS (ENG-1666) — ver core/cors.ts
 
 export async function handleRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
@@ -7767,13 +7751,13 @@ export async function handleRequest(req: Request): Promise<Response> {
 
   // Handle CORS preflight requests
   if (method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: CORS_HEADERS });
+    return new Response(null, { status: 204, headers: corsHeadersFor(req) });
   }
 
   // Apply rate limiting
   const rateLimitResponse = rateLimitMiddleware(req);
   if (rateLimitResponse) {
-    return addCorsHeaders(rateLimitResponse);
+    return addCorsHeaders(rateLimitResponse, req);
   }
 
   for (const route of routes) {
@@ -7781,15 +7765,19 @@ export async function handleRequest(req: Request): Promise<Response> {
       try {
         const response = await route.handler(req);
         // Add rate limit headers and CORS headers to successful responses
-        return addCorsHeaders(addRateLimitHeaders(response, req));
+        return addCorsHeaders(addRateLimitHeaders(response, req), req);
       } catch (error) {
         console.error(`[Router] Error handling ${method} ${path}:`, error);
         return addCorsHeaders(
           Response.json({ error: "Internal server error" }, { status: 500 }),
+          req,
         );
       }
     }
   }
 
-  return addCorsHeaders(Response.json({ error: "Not found" }, { status: 404 }));
+  return addCorsHeaders(
+    Response.json({ error: "Not found" }, { status: 404 }),
+    req,
+  );
 }
