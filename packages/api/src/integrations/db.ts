@@ -6,6 +6,7 @@ import {
   OrchestrationState,
   OrchestrationStateSchema,
 } from "../core/types";
+import { taskEventBus } from "../core/task-event-bus";
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -300,7 +301,27 @@ export const db = {
       )
       RETURNING *
     `;
-    return this.mapTaskEvent(result);
+    const mapped = this.mapTaskEvent(result);
+
+    // ENG-1669: broadcast to in-process subscribers (SSE) instead of
+    // having each connection poll the DB. Only pay for the task-status
+    // lookup (RML-716) when someone is actually listening.
+    if (taskEventBus.listenerCountTaskEvent > 0) {
+      try {
+        const [task] = await sql`
+          SELECT status FROM tasks WHERE id = ${mapped.taskId}
+        `;
+        taskEventBus.emitTaskEvent({
+          ...mapped,
+          taskStatus: task?.status as string | undefined,
+        });
+      } catch (err) {
+        // Broadcasting is best-effort; never fail the write because of it.
+        console.error("[task-event-bus] Failed to broadcast event:", err);
+      }
+    }
+
+    return mapped;
   },
 
   async getTaskEvents(taskId: string): Promise<TaskEvent[]> {

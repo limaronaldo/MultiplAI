@@ -3,9 +3,11 @@ import {
   GitHubCheckRunEvent,
   GitHubPullRequestReviewEvent,
   Task,
+  TaskEvent,
   defaultConfig,
   JobStatus,
 } from "./core/types";
+import { taskEventBus } from "./core/task-event-bus";
 import { Orchestrator } from "./core/orchestrator";
 import { TaskRunner } from "./core/task-runner";
 import { db } from "./integrations/db";
@@ -4296,48 +4298,74 @@ route("GET", "/api/logs/stream", async (req) => {
         ),
       );
 
-      // Poll for new events every 2 seconds
-      const pollInterval = setInterval(async () => {
-        if (!isActive) {
-          clearInterval(pollInterval);
+      function sendEvent(event: TaskEvent & { taskStatus?: string }): void {
+        const cursor = formatCursor({
+          createdAt: event.createdAt,
+          id: event.id,
+        });
+
+        controller.enqueue(encoder.encode(`id: ${cursor}\n`));
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({
+              type: "event",
+              id: event.id,
+              taskId: event.taskId,
+              eventType: event.eventType,
+              agent: event.agent,
+              message: event.outputSummary || event.eventType,
+              timestamp: event.createdAt,
+              level: getLogLevel(event.eventType),
+              tokensUsed: event.tokensUsed,
+              durationMs: event.durationMs,
+              // Include current task status for real-time UI updates (RML-716)
+              taskStatus: event.taskStatus,
+            })}\n\n`,
+          ),
+        );
+
+        lastCursor = { createdAt: event.createdAt, id: event.id };
+      }
+
+      // ENG-1669: push-based delivery via shared EventEmitter instead of
+      // polling the DB every 2s per connection.
+      const unsubscribe = taskEventBus.onTaskEvent((event) => {
+        if (!isActive) return;
+        if (taskId && event.taskId !== taskId) return;
+        // Skip events already delivered by the catch-up query below.
+        if (
+          event.createdAt.getTime() < lastCursor.createdAt.getTime() ||
+          (event.createdAt.getTime() === lastCursor.createdAt.getTime() &&
+            event.id <= lastCursor.id)
+        ) {
           return;
         }
-
         try {
-          const events = await db.getRecentTaskEvents(lastCursor, taskId);
-
-          for (const event of events) {
-            const cursor = formatCursor({
-              createdAt: event.createdAt,
-              id: event.id,
-            });
-
-            controller.enqueue(encoder.encode(`id: ${cursor}\n`));
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({
-                  type: "event",
-                  id: event.id,
-                  taskId: event.taskId,
-                  eventType: event.eventType,
-                  agent: event.agent,
-                  message: event.outputSummary || event.eventType,
-                  timestamp: event.createdAt,
-                  level: getLogLevel(event.eventType),
-                  tokensUsed: event.tokensUsed,
-                  durationMs: event.durationMs,
-                  // Include current task status for real-time UI updates (RML-716)
-                  taskStatus: (event as any).taskStatus,
-                })}\n\n`,
-              ),
-            );
-
-            lastCursor = { createdAt: event.createdAt, id: event.id };
-          }
+          sendEvent(event);
         } catch (err) {
-          console.error("[SSE] Error fetching events:", err);
+          console.error("[SSE] Error sending event:", err);
         }
-      }, 2000);
+      });
+
+      // One-time catch-up for events missed since Last-Event-ID/cursor
+      // (also covers events written between connect and subscribe).
+      try {
+        const missed = await db.getRecentTaskEvents(lastCursor, taskId);
+        for (const event of missed) {
+          if (!isActive) break;
+          // Skip anything already delivered live while the query ran.
+          if (
+            event.createdAt.getTime() < lastCursor.createdAt.getTime() ||
+            (event.createdAt.getTime() === lastCursor.createdAt.getTime() &&
+              event.id <= lastCursor.id)
+          ) {
+            continue;
+          }
+          sendEvent(event);
+        }
+      } catch (err) {
+        console.error("[SSE] Error fetching catch-up events:", err);
+      }
 
       // Send keep-alive ping every 30 seconds
       const keepAlive = setInterval(() => {
@@ -4351,7 +4379,7 @@ route("GET", "/api/logs/stream", async (req) => {
       // Cleanup on close (handled by abort signal)
       req.signal?.addEventListener("abort", () => {
         isActive = false;
-        clearInterval(pollInterval);
+        unsubscribe();
         clearInterval(keepAlive);
         controller.close();
       });
