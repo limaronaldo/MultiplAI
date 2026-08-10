@@ -124,7 +124,9 @@ async function cloneRepo(
 ): Promise<string> {
   registerCleanupHandlers();
 
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "diff-validate-"));
+  const tempDir = await fs.promises.mkdtemp(
+    path.join(os.tmpdir(), "diff-validate-"),
+  );
   tempDirs.add(tempDir);
 
   const token = process.env.GITHUB_TOKEN;
@@ -138,9 +140,11 @@ async function cloneRepo(
 
   // Write credentials to temp file that git will use
   const credentialFile = path.join(tempDir, ".git-credentials");
-  fs.writeFileSync(credentialFile, `https://oauth2:${token}@github.com\n`, {
-    mode: 0o600,
-  });
+  await fs.promises.writeFile(
+    credentialFile,
+    `https://oauth2:${token}@github.com\n`,
+    { mode: 0o600 },
+  );
 
   const envWithCredentials = {
     GIT_ASKPASS: "echo",
@@ -170,7 +174,7 @@ async function cloneRepo(
   } finally {
     // Clean up credentials file immediately
     try {
-      fs.unlinkSync(credentialFile);
+      await fs.promises.unlink(credentialFile);
     } catch {
       // Ignore
     }
@@ -179,9 +183,11 @@ async function cloneRepo(
   if (cloneResult.exitCode !== 0) {
     // Try cloning main/master if branch doesn't exist yet
     const credentialFile2 = path.join(tempDir, ".git-credentials");
-    fs.writeFileSync(credentialFile2, `https://oauth2:${token}@github.com\n`, {
-      mode: 0o600,
-    });
+    await fs.promises.writeFile(
+      credentialFile2,
+      `https://oauth2:${token}@github.com\n`,
+      { mode: 0o600 },
+    );
 
     let mainResult: { exitCode: number; stdout: string; stderr: string };
     try {
@@ -202,7 +208,7 @@ async function cloneRepo(
       );
     } finally {
       try {
-        fs.unlinkSync(credentialFile2);
+        await fs.promises.unlink(credentialFile2);
       } catch {
         // Ignore
       }
@@ -221,39 +227,42 @@ async function cloneRepo(
 }
 
 /**
- * Remove temp directory and untrack it
+ * Remove temp directory and untrack it (async — ENG-1667)
  */
-function cleanupTempDir(tempDir: string): void {
+async function cleanupTempDir(tempDir: string): Promise<void> {
   tempDirs.delete(tempDir);
   try {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
   } catch {
     // Ignore cleanup errors
   }
 }
 
 /**
- * Apply file changes to the temp directory
+ * Apply file changes to the temp directory.
+ * Async with parallel writes via Promise.all (ENG-1667) — previously used
+ * writeFileSync inside a loop, blocking the event loop per modified file.
  */
-function applyFileChanges(tempDir: string, files: DiffFile[]): void {
-  for (const file of files) {
-    const fullPath = path.join(tempDir, file.path);
-    const dir = path.dirname(fullPath);
+async function applyFileChanges(
+  tempDir: string,
+  files: DiffFile[],
+): Promise<void> {
+  await Promise.all(
+    files.map(async (file) => {
+      const fullPath = path.join(tempDir, file.path);
+      const dir = path.dirname(fullPath);
 
-    if (file.deleted) {
-      if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
+      if (file.deleted) {
+        // rm with force ignores missing files (no existsSync needed)
+        await fs.promises.rm(fullPath, { force: true });
+        return;
       }
-      continue;
-    }
 
-    // Ensure directory exists
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    fs.writeFileSync(fullPath, file.content, "utf-8");
-  }
+      // Ensure directory exists (recursive mkdir is a no-op if present)
+      await fs.promises.mkdir(dir, { recursive: true });
+      await fs.promises.writeFile(fullPath, file.content, "utf-8");
+    }),
+  );
 }
 
 /**
@@ -623,8 +632,8 @@ export async function validateDiff(
   try {
     tempDir = await cloneRepo(repoFullName, branch);
 
-    // Apply the file changes
-    applyFileChanges(tempDir, files);
+    // Apply the file changes (parallel async writes)
+    await applyFileChanges(tempDir, files);
 
     // Run typecheck
     const typecheckResult = await runTypecheck(tempDir);
@@ -639,7 +648,7 @@ export async function validateDiff(
   } finally {
     // Cleanup temp directory
     if (tempDir) {
-      cleanupTempDir(tempDir);
+      await cleanupTempDir(tempDir);
     }
   }
 
