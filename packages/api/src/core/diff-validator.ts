@@ -124,7 +124,9 @@ async function cloneRepo(
 ): Promise<string> {
   registerCleanupHandlers();
 
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "diff-validate-"));
+  const tempDir = await fs.promises.mkdtemp(
+    path.join(os.tmpdir(), "diff-validate-"),
+  );
   tempDirs.add(tempDir);
 
   const token = process.env.GITHUB_TOKEN;
@@ -138,9 +140,11 @@ async function cloneRepo(
 
   // Write credentials to temp file that git will use
   const credentialFile = path.join(tempDir, ".git-credentials");
-  fs.writeFileSync(credentialFile, `https://oauth2:${token}@github.com\n`, {
-    mode: 0o600,
-  });
+  await fs.promises.writeFile(
+    credentialFile,
+    `https://oauth2:${token}@github.com\n`,
+    { mode: 0o600 },
+  );
 
   const envWithCredentials = {
     GIT_ASKPASS: "echo",
@@ -170,7 +174,7 @@ async function cloneRepo(
   } finally {
     // Clean up credentials file immediately
     try {
-      fs.unlinkSync(credentialFile);
+      await fs.promises.unlink(credentialFile);
     } catch {
       // Ignore
     }
@@ -179,9 +183,11 @@ async function cloneRepo(
   if (cloneResult.exitCode !== 0) {
     // Try cloning main/master if branch doesn't exist yet
     const credentialFile2 = path.join(tempDir, ".git-credentials");
-    fs.writeFileSync(credentialFile2, `https://oauth2:${token}@github.com\n`, {
-      mode: 0o600,
-    });
+    await fs.promises.writeFile(
+      credentialFile2,
+      `https://oauth2:${token}@github.com\n`,
+      { mode: 0o600 },
+    );
 
     let mainResult: { exitCode: number; stdout: string; stderr: string };
     try {
@@ -202,7 +208,7 @@ async function cloneRepo(
       );
     } finally {
       try {
-        fs.unlinkSync(credentialFile2);
+        await fs.promises.unlink(credentialFile2);
       } catch {
         // Ignore
       }
@@ -221,39 +227,140 @@ async function cloneRepo(
 }
 
 /**
- * Remove temp directory and untrack it
+ * Remove temp directory and untrack it (async — ENG-1667)
  */
-function cleanupTempDir(tempDir: string): void {
+async function cleanupTempDir(tempDir: string): Promise<void> {
   tempDirs.delete(tempDir);
   try {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
   } catch {
     // Ignore cleanup errors
   }
 }
 
 /**
- * Apply file changes to the temp directory
+ * Apply a single file change (write or delete) to the temp directory.
  */
-function applyFileChanges(tempDir: string, files: DiffFile[]): void {
-  for (const file of files) {
-    const fullPath = path.join(tempDir, file.path);
-    const dir = path.dirname(fullPath);
+async function applyOneFileChange(
+  tempDir: string,
+  file: DiffFile,
+): Promise<void> {
+  const fullPath = path.join(tempDir, file.path);
+  const dir = path.dirname(fullPath);
 
-    if (file.deleted) {
-      if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
-      }
-      continue;
-    }
-
-    // Ensure directory exists
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    fs.writeFileSync(fullPath, file.content, "utf-8");
+  if (file.deleted) {
+    // rm with force ignores missing files (no existsSync needed)
+    await fs.promises.rm(fullPath, { force: true });
+    return;
   }
+
+  // If a conflicting group left a stale directory at this exact path (e.g.
+  // the last file under it was just deleted, but the now-empty directory
+  // remains), remove it before writing — writeFile fails with EISDIR
+  // otherwise. Sibling deletes always run before this create within the
+  // same group, but an emptied directory itself isn't cleaned up by rm-ing
+  // its children.
+  const existingStat = await fs.promises.stat(fullPath).catch(() => null);
+  if (existingStat?.isDirectory()) {
+    await fs.promises.rm(fullPath, { recursive: true, force: true });
+  }
+
+  // Ensure directory exists (recursive mkdir is a no-op if present)
+  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.writeFile(fullPath, file.content, "utf-8");
+}
+
+/**
+ * True if `a` and `b` are the same path, or one is an ancestor directory of
+ * the other (e.g. "foo" and "foo/bar.ts"). Such pairs are path-dependent:
+ * replacing a tracked file with a directory of the same name (or vice
+ * versa) requires the delete to complete before the create runs, or a
+ * parallel mkdir/rm race can throw EEXIST/EISDIR/ENOTDIR.
+ */
+function pathsConflict(a: string, b: string): boolean {
+  if (a === b) return true;
+  const aWithSep = a.endsWith(path.sep) ? a : a + path.sep;
+  const bWithSep = b.endsWith(path.sep) ? b : b + path.sep;
+  return aWithSep.startsWith(bWithSep) || bWithSep.startsWith(aWithSep);
+}
+
+/**
+ * Partition files into disjoint groups such that any two files with a
+ * path-dependent relationship (see pathsConflict) end up in the same group.
+ * Uses union-find over normalized relative paths.
+ */
+function groupConflictingFiles(files: DiffFile[]): DiffFile[][] {
+  const normalized = files.map((f) => path.normalize(f.path));
+  const parent = files.map((_, i) => i);
+
+  function find(i: number): number {
+    while (parent[i] !== i) {
+      parent[i] = parent[parent[i] as number] as number;
+      i = parent[i] as number;
+    }
+    return i;
+  }
+
+  function union(i: number, j: number): void {
+    const ri = find(i);
+    const rj = find(j);
+    if (ri !== rj) parent[ri] = rj;
+  }
+
+  for (let i = 0; i < files.length; i++) {
+    for (let j = i + 1; j < files.length; j++) {
+      if (pathsConflict(normalized[i] as string, normalized[j] as string)) {
+        union(i, j);
+      }
+    }
+  }
+
+  const groups = new Map<number, DiffFile[]>();
+  for (let i = 0; i < files.length; i++) {
+    const root = find(i);
+    const group = groups.get(root);
+    if (group) {
+      group.push(files[i] as DiffFile);
+    } else {
+      groups.set(root, [files[i] as DiffFile]);
+    }
+  }
+  return Array.from(groups.values());
+}
+
+/**
+ * Apply file changes to the temp directory.
+ * Async with parallel writes via Promise.all (ENG-1667) — previously used
+ * writeFileSync inside a loop, blocking the event loop per modified file.
+ *
+ * Path-dependent changes (e.g. deleting `foo` while adding `foo/bar.ts`)
+ * are grouped together and applied sequentially within the group, deletes
+ * before creates, so a directory-for-file (or file-for-directory)
+ * replacement never races an mkdir/writeFile against a still-present
+ * conflicting entry (EEXIST/EISDIR/ENOTDIR). Groups with no path overlap
+ * still run fully in parallel.
+ */
+export async function applyFileChanges(
+  tempDir: string,
+  files: DiffFile[],
+): Promise<void> {
+  const groups = groupConflictingFiles(files);
+
+  await Promise.all(
+    groups.map(async (group) => {
+      if (group.length === 1) {
+        await applyOneFileChange(tempDir, group[0] as DiffFile);
+        return;
+      }
+      // Deletes first, then creates/updates, both in original diff order,
+      // so e.g. delete `foo` fully completes before create `foo/bar.ts`.
+      const deletes = group.filter((f) => f.deleted);
+      const creates = group.filter((f) => !f.deleted);
+      for (const file of [...deletes, ...creates]) {
+        await applyOneFileChange(tempDir, file);
+      }
+    }),
+  );
 }
 
 /**
@@ -623,8 +730,8 @@ export async function validateDiff(
   try {
     tempDir = await cloneRepo(repoFullName, branch);
 
-    // Apply the file changes
-    applyFileChanges(tempDir, files);
+    // Apply the file changes (parallel async writes)
+    await applyFileChanges(tempDir, files);
 
     // Run typecheck
     const typecheckResult = await runTypecheck(tempDir);
@@ -639,7 +746,7 @@ export async function validateDiff(
   } finally {
     // Cleanup temp directory
     if (tempDir) {
-      cleanupTempDir(tempDir);
+      await cleanupTempDir(tempDir);
     }
   }
 
