@@ -137,31 +137,78 @@ describe("Rate Limiter", () => {
   });
 
   describe("getClientIp", () => {
-    it("should extract IP from x-forwarded-for", () => {
+    const PROXY_ADDR = "172.16.0.9";
+
+    function withTrustedProxy<T>(fn: () => T): T {
+      const prevTrusted = process.env.TRUSTED_PROXY;
+      const prevFly = process.env.FLY_APP_NAME;
+      delete process.env.FLY_APP_NAME;
+      process.env.TRUSTED_PROXY = PROXY_ADDR;
+      try {
+        return fn();
+      } finally {
+        if (prevTrusted === undefined) delete process.env.TRUSTED_PROXY;
+        else process.env.TRUSTED_PROXY = prevTrusted;
+        if (prevFly !== undefined) process.env.FLY_APP_NAME = prevFly;
+      }
+    }
+
+    it("should extract the LAST x-forwarded-for entry behind a trusted proxy", () => {
       const req = new Request("http://localhost", {
         headers: { "x-forwarded-for": "1.2.3.4, 5.6.7.8" },
       });
 
-      expect(getClientIp(req)).toBe("1.2.3.4");
+      // The first entry is client-controlled (spoofable); the last entry is
+      // the one appended by our trusted proxy.
+      withTrustedProxy(() => {
+        expect(getClientIp(req, PROXY_ADDR)).toBe("5.6.7.8");
+      });
     });
 
-    it("should extract IP from x-real-ip", () => {
+    it("should extract IP from x-real-ip behind a trusted proxy", () => {
       const req = new Request("http://localhost", {
         headers: { "x-real-ip": "10.0.0.1" },
       });
 
-      expect(getClientIp(req)).toBe("10.0.0.1");
+      withTrustedProxy(() => {
+        expect(getClientIp(req, PROXY_ADDR)).toBe("10.0.0.1");
+      });
     });
 
-    it("should extract IP from fly-client-ip", () => {
+    it("should extract IP from fly-client-ip behind a trusted proxy", () => {
       const req = new Request("http://localhost", {
         headers: { "fly-client-ip": "192.168.1.1" },
       });
 
-      expect(getClientIp(req)).toBe("192.168.1.1");
+      withTrustedProxy(() => {
+        expect(getClientIp(req, PROXY_ADDR)).toBe("192.168.1.1");
+      });
     });
 
-    it("should return unknown when no IP header", () => {
+    it("should IGNORE spoofable headers when not behind a trusted proxy", () => {
+      const req = new Request("http://localhost", {
+        headers: {
+          "x-forwarded-for": "1.2.3.4",
+          "x-real-ip": "10.0.0.1",
+          "fly-client-ip": "192.168.1.1",
+        },
+      });
+
+      // No TRUSTED_PROXY / FLY_APP_NAME: fall back to the socket address.
+      expect(getClientIp(req, "203.0.113.7")).toBe("203.0.113.7");
+    });
+
+    it("should ignore headers from a non-trusted remote address", () => {
+      const req = new Request("http://localhost", {
+        headers: { "x-forwarded-for": "1.2.3.4" },
+      });
+
+      withTrustedProxy(() => {
+        expect(getClientIp(req, "203.0.113.7")).toBe("203.0.113.7");
+      });
+    });
+
+    it("should return unknown when no IP header and no remote address", () => {
       const req = new Request("http://localhost");
 
       expect(getClientIp(req)).toBe("unknown");

@@ -83,28 +83,70 @@ export const RATE_LIMIT_CONFIGS = {
 };
 
 /**
- * Extract client IP from request
+ * ENG-1670 (HIGH): proxy-supplied client-IP headers are trivially spoofable
+ * and must only be honored when the request actually arrived through a proxy
+ * we trust. Trust is established by either:
+ *   - FLY_APP_NAME being set (running on Fly.io, whose edge proxy always
+ *     fronts the app and sets fly-client-ip), or
+ *   - TRUSTED_PROXY (comma-separated list of addresses) containing the
+ *     direct remote address of the connection.
+ * Otherwise the direct connection IP is used (or "unknown" when the caller
+ * has no access to it).
  */
-export function getClientIp(req: Request): string {
-  // Check common proxy headers
-  const forwardedFor = req.headers.get("x-forwarded-for");
-  if (forwardedFor) {
-    return forwardedFor.split(",")[0].trim();
+export function isTrustedProxy(remoteAddr?: string | null): boolean {
+  if (process.env.FLY_APP_NAME) {
+    return true;
+  }
+  const trusted = process.env.TRUSTED_PROXY;
+  if (!trusted || !remoteAddr) {
+    return false;
+  }
+  return trusted
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .includes(remoteAddr);
+}
+
+/**
+ * Extract client IP from request.
+ *
+ * @param remoteAddr the direct remote address of the underlying socket, when
+ *        the caller has access to it (e.g. via Bun's server.requestIP()).
+ *        Used both to validate TRUSTED_PROXY and as the fallback identity.
+ */
+export function getClientIp(req: Request, remoteAddr?: string | null): string {
+  if (isTrustedProxy(remoteAddr)) {
+    // fly-client-ip is set authoritatively by Fly's edge; a client cannot
+    // inject it through the edge, so prefer it.
+    const flyClientIp = req.headers.get("fly-client-ip");
+    if (flyClientIp) {
+      return flyClientIp;
+    }
+
+    const realIp = req.headers.get("x-real-ip");
+    if (realIp) {
+      return realIp;
+    }
+
+    // x-forwarded-for accumulates one entry per proxy hop; the LAST entry
+    // is the one appended by our trusted proxy. The FIRST entry is fully
+    // client-controlled and spoofable even behind a trusted proxy, so it
+    // must never be used for rate-limit identity.
+    const forwardedFor = req.headers.get("x-forwarded-for");
+    if (forwardedFor) {
+      const parts = forwardedFor
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (parts.length > 0) {
+        return parts[parts.length - 1];
+      }
+    }
   }
 
-  const realIp = req.headers.get("x-real-ip");
-  if (realIp) {
-    return realIp;
-  }
-
-  // Fly.io specific header
-  const flyClientIp = req.headers.get("fly-client-ip");
-  if (flyClientIp) {
-    return flyClientIp;
-  }
-
-  // Fallback to unknown
-  return "unknown";
+  // Not behind a trusted proxy: never trust headers, use the socket address.
+  return remoteAddr || "unknown";
 }
 
 /**
@@ -329,61 +371,161 @@ export function clearAllRateLimits(): void {
 // Max 5 simultaneous connections per IP
 // ============================================
 
-const sseConnections = new Map<string, number>();
+interface ConnectionSlotEntry {
+  count: number;
+  /** Last acquire/release touch for this key — drives zombie TTL cleanup */
+  updatedAt: number;
+}
 
-/** Max simultaneous SSE/WS connections per IP */
+// Keyed by `${kind}:${ip}` (kind = "sse" | "ws")
+const connectionSlots = new Map<string, ConnectionSlotEntry>();
+
+/** Max simultaneous SSE connections per IP */
 export const SSE_MAX_CONCURRENT = parseInt(
   process.env.RATE_LIMIT_SSE_MAX_CONCURRENT || "5",
   10
 );
 
+/** Max simultaneous WebSocket connections per IP (ENG-1670) */
+export const WS_MAX_CONCURRENT = parseInt(
+  process.env.RATE_LIMIT_WS_MAX_CONCURRENT || "5",
+  10
+);
+
 /**
- * Try to acquire an SSE connection slot for an IP.
- * Returns true if acquired; false if the per-IP concurrent limit is reached.
- * Callers MUST call releaseSseSlot(ip) when the connection closes.
+ * Global cap across ALL IPs and connection kinds — bounds total memory and
+ * socket usage even under a distributed attack, and bounds the size of the
+ * connectionSlots Map itself (ENG-1670 HIGH: unbounded Map growth).
  */
-export function acquireSseSlot(ip: string): boolean {
+export const CONNECTION_GLOBAL_MAX = parseInt(
+  process.env.RATE_LIMIT_CONNECTION_GLOBAL_MAX || "200",
+  10
+);
+
+/**
+ * Zombie-entry TTL: if a slot entry has not been touched for this long,
+ * assume its release was lost (crashed stream, missed close event) and
+ * reclaim it. Trade-off: an entry backing a legitimate connection that
+ * lives longer than the TTL can be reclaimed early, briefly under-enforcing
+ * the cap — preferable to permanently leaking slots and locking an IP out.
+ */
+export const CONNECTION_SLOT_TTL_MS = parseInt(
+  process.env.RATE_LIMIT_CONNECTION_SLOT_TTL_MS || String(60 * 60 * 1000),
+  10
+);
+
+function totalConnectionCount(): number {
+  let total = 0;
+  for (const entry of connectionSlots.values()) {
+    total += entry.count;
+  }
+  return total;
+}
+
+function acquireSlot(kind: string, ip: string, maxPerIp: number): boolean {
   if (process.env.RATE_LIMIT_ENABLED === "false") {
     return true;
   }
-  const current = sseConnections.get(ip) ?? 0;
-  if (current >= SSE_MAX_CONCURRENT) {
+  if (totalConnectionCount() >= CONNECTION_GLOBAL_MAX) {
     return false;
   }
-  sseConnections.set(ip, current + 1);
+  const key = `${kind}:${ip}`;
+  const current = connectionSlots.get(key)?.count ?? 0;
+  if (current >= maxPerIp) {
+    return false;
+  }
+  connectionSlots.set(key, { count: current + 1, updatedAt: Date.now() });
   return true;
 }
 
-/**
- * Release an SSE connection slot for an IP.
- */
-export function releaseSseSlot(ip: string): void {
-  const current = sseConnections.get(ip) ?? 0;
+function releaseSlot(kind: string, ip: string): void {
+  const key = `${kind}:${ip}`;
+  const current = connectionSlots.get(key)?.count ?? 0;
   if (current <= 1) {
-    sseConnections.delete(ip);
+    connectionSlots.delete(key);
   } else {
-    sseConnections.set(ip, current - 1);
+    connectionSlots.set(key, { count: current - 1, updatedAt: Date.now() });
   }
+}
+
+/**
+ * Try to acquire an SSE connection slot for an IP.
+ * Returns true if acquired; false if the per-IP or global limit is reached.
+ * Callers MUST call releaseSseSlot(ip) exactly once when the connection
+ * closes (idempotence is the caller's responsibility).
+ */
+export function acquireSseSlot(ip: string): boolean {
+  return acquireSlot("sse", ip, SSE_MAX_CONCURRENT);
+}
+
+/** Release an SSE connection slot for an IP. */
+export function releaseSseSlot(ip: string): void {
+  releaseSlot("sse", ip);
+}
+
+/**
+ * Try to acquire a WebSocket connection slot for an IP (ENG-1670).
+ * Same contract as acquireSseSlot.
+ */
+export function acquireWsSlot(ip: string): boolean {
+  return acquireSlot("ws", ip, WS_MAX_CONCURRENT);
+}
+
+/** Release a WebSocket connection slot for an IP. */
+export function releaseWsSlot(ip: string): void {
+  releaseSlot("ws", ip);
 }
 
 /** Current number of active SSE connections for an IP */
 export function getSseConnectionCount(ip: string): number {
-  return sseConnections.get(ip) ?? 0;
+  return connectionSlots.get(`sse:${ip}`)?.count ?? 0;
 }
 
-/** Clear all SSE slots (for testing) */
+/** Current number of active WebSocket connections for an IP */
+export function getWsConnectionCount(ip: string): number {
+  return connectionSlots.get(`ws:${ip}`)?.count ?? 0;
+}
+
+/** Clear all connection slots (for testing) */
 export function clearAllSseSlots(): void {
-  sseConnections.clear();
+  connectionSlots.clear();
 }
 
 /**
- * 429 response for SSE concurrent connection limit, with Retry-After
+ * Remove zombie entries older than CONNECTION_SLOT_TTL_MS.
+ * Returns the number of entries reclaimed. Exported for tests.
  */
-export function createSseLimitResponse(): Response {
+export function cleanupStaleConnectionSlots(now: number = Date.now()): number {
+  let removed = 0;
+  for (const [key, entry] of connectionSlots.entries()) {
+    if (now - entry.updatedAt > CONNECTION_SLOT_TTL_MS) {
+      connectionSlots.delete(key);
+      removed++;
+    }
+  }
+  return removed;
+}
+
+// Periodic zombie reclaim; unref'd for the same reason as cleanupInterval
+// above (must never keep the process alive on its own).
+const slotCleanupInterval = setInterval(() => {
+  const removed = cleanupStaleConnectionSlots();
+  if (removed > 0) {
+    console.warn(
+      `[RateLimit] Reclaimed ${removed} zombie connection slot entries`
+    );
+  }
+}, 60000);
+slotCleanupInterval.unref?.();
+
+/**
+ * 429 response for concurrent connection limits, with Retry-After
+ */
+export function createConnectionLimitResponse(limit: number): Response {
   return new Response(
     JSON.stringify({
       error: "Too Many Requests",
-      message: `Too many simultaneous stream connections. Limit is ${SSE_MAX_CONCURRENT} per IP.`,
+      message: `Too many simultaneous stream connections. Limit is ${limit} per IP.`,
       retryAfter: 30,
     }),
     {
@@ -394,6 +536,16 @@ export function createSseLimitResponse(): Response {
       },
     }
   );
+}
+
+/** 429 response for the SSE per-IP concurrency limit */
+export function createSseLimitResponse(): Response {
+  return createConnectionLimitResponse(SSE_MAX_CONCURRENT);
+}
+
+/** 429 response for the WebSocket per-IP concurrency limit */
+export function createWsLimitResponse(): Response {
+  return createConnectionLimitResponse(WS_MAX_CONCURRENT);
 }
 
 /**

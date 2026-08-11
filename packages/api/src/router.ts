@@ -33,6 +33,10 @@ import {
   rateLimitMiddleware,
   addRateLimitHeaders,
   getRateLimitStats,
+  getClientIp,
+  acquireSseSlot,
+  releaseSseSlot,
+  createSseLimitResponse,
 } from "./core/rate-limiter";
 import { addCorsHeaders, corsHeadersFor } from "./core/cors";
 import { authMiddleware } from "./core/auth";
@@ -4285,6 +4289,21 @@ route("GET", "/api/logs/stream", async (req) => {
     url.searchParams.get("cursor") || req.headers.get("last-event-id");
   const initialCursor = parseCursor(initialCursorParam);
 
+  // ENG-1670: cap simultaneous SSE connections (per-IP + global) BEFORE
+  // allocating any stream resources. Must be released exactly once when the
+  // connection ends, whichever path ends it (abort, cancel, error).
+  const sseClientIp = getClientIp(req);
+  if (!acquireSseSlot(sseClientIp)) {
+    return createSseLimitResponse();
+  }
+  let sseSlotReleased = false;
+  const releaseSseConnectionSlot = () => {
+    if (!sseSlotReleased) {
+      sseSlotReleased = true;
+      releaseSseSlot(sseClientIp);
+    }
+  };
+
   let isActive = true;
   let streamHandle: SseLogStreamHandle | null = null;
   let keepAlive: ReturnType<typeof setInterval> | null = null;
@@ -4298,6 +4317,7 @@ route("GET", "/api/logs/stream", async (req) => {
         isActive = false;
         streamHandle?.stop();
         if (keepAlive) clearInterval(keepAlive);
+        releaseSseConnectionSlot(); // ENG-1670: free the concurrency slot
         try {
           controller.close();
         } catch {
@@ -4408,6 +4428,7 @@ route("GET", "/api/logs/stream", async (req) => {
       isActive = false;
       streamHandle?.stop();
       if (keepAlive) clearInterval(keepAlive);
+      releaseSseConnectionSlot(); // ENG-1670: free the concurrency slot
     },
   });
 
