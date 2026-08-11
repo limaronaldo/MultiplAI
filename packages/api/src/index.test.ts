@@ -64,13 +64,16 @@ function restoreEnv() {
 let server: ReturnType<typeof Bun.serve>;
 let baseUrl: string;
 let createFetchHandler: typeof import("./index").createFetchHandler;
+let releaseWsSlotOnce: typeof import("./index").releaseWsSlotOnce;
+let rateLimiter: typeof import("./core/rate-limiter");
 
 beforeAll(async () => {
   // Dynamic import defers evaluation of index.ts's module body (including
   // its `if (process.env.NODE_ENV !== "test") main();` guard) until after
   // the NODE_ENV assignment above has run. A static top-level import would
   // be hoisted and evaluated before that assignment, defeating the guard.
-  ({ createFetchHandler } = await import("./index"));
+  ({ createFetchHandler, releaseWsSlotOnce } = await import("./index"));
+  rateLimiter = await import("./core/rate-limiter");
   server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -78,7 +81,13 @@ beforeAll(async () => {
     websocket: {
       open() {},
       message() {},
-      close() {},
+      // Mirrors the real index.ts close handler: without this, the ENG-1670
+      // concurrency slot acquired in the fetch handler would leak in tests,
+      // because slot release lives in the production websocket.close handler
+      // that this harness replaces.
+      close(ws: any) {
+        releaseWsSlotOnce(ws.data);
+      },
     },
   });
   baseUrl = `ws://127.0.0.1:${server.port}`;
@@ -91,6 +100,9 @@ afterAll(() => {
 beforeEach(() => {
   resetAuthWarningForTests();
   setEnv({ MULTIPLAI_API_KEY: "secret-key-1" });
+  // Connection slots are process-global module state; clear between tests so
+  // WS-cap tests can't poison each other (or the auth tests above).
+  rateLimiter.clearAllSseSlots();
 });
 
 afterEach(() => {
@@ -182,5 +194,104 @@ describe("real Bun.serve fetch handler: /api/ws/tasks upgrade auth gate", () => 
       });
     });
     expect(result).toBe("rejected");
+  });
+});
+
+// ENG-1670: per-IP WebSocket concurrency cap on the real upgrade path.
+describe("real Bun.serve fetch handler: /api/ws/tasks concurrency cap", () => {
+  const WS_URL = () => `${baseUrl}/api/ws/tasks?token=secret-key-1`;
+
+  function openWs(): Promise<WebSocket> {
+    const ws = new WebSocket(WS_URL());
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("WS open timed out")),
+        5000,
+      );
+      ws.addEventListener("open", () => {
+        clearTimeout(timeout);
+        resolve(ws);
+      });
+      ws.addEventListener("error", (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+  }
+
+  /** Raw handshake so we can observe the HTTP status of a rejection. */
+  function rawHandshake(token?: string): Promise<Response> {
+    const qs = token !== undefined ? `?token=${token}` : "";
+    return fetch(`http://127.0.0.1:${server.port}/api/ws/tasks${qs}`, {
+      headers: {
+        upgrade: "websocket",
+        connection: "Upgrade",
+        "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+        "sec-websocket-version": "13",
+      },
+    });
+  }
+
+  async function waitForWsCount(ip: string, expected: number): Promise<void> {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (rateLimiter.getWsConnectionCount(ip) === expected) return;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    throw new Error(
+      `getWsConnectionCount("${ip}") never reached ${expected} (still ${rateLimiter.getWsConnectionCount(ip)})`,
+    );
+  }
+
+  test("rejects the connection over the per-IP cap with 429 and frees the slot on close", async () => {
+    const sockets: WebSocket[] = [];
+    try {
+      for (let i = 0; i < rateLimiter.WS_MAX_CONCURRENT; i++) {
+        sockets.push(await openWs());
+      }
+      await waitForWsCount("127.0.0.1", rateLimiter.WS_MAX_CONCURRENT);
+
+      // Over-cap handshake must be refused with 429 + Retry-After,
+      // not silently dropped and not a 5xx.
+      const res = await rawHandshake("secret-key-1");
+      expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("30");
+
+      // Closing one connection must free exactly one slot...
+      sockets.pop()!.close();
+      await waitForWsCount("127.0.0.1", rateLimiter.WS_MAX_CONCURRENT - 1);
+
+      // ...making room for a new connection to succeed again.
+      sockets.push(await openWs());
+      await waitForWsCount("127.0.0.1", rateLimiter.WS_MAX_CONCURRENT);
+    } finally {
+      for (const ws of sockets) ws.close();
+    }
+  });
+
+  test("rejected auth (401) does not consume a concurrency slot", async () => {
+    const res = await rawHandshake(); // no token
+    expect(res.status).toBe(401);
+    expect(rateLimiter.getWsConnectionCount("127.0.0.1")).toBe(0);
+  });
+
+  test("429 from the cap is returned only after auth (no unauthenticated slot probing)", async () => {
+    const sockets: WebSocket[] = [];
+    try {
+      for (let i = 0; i < rateLimiter.WS_MAX_CONCURRENT; i++) {
+        sockets.push(await openWs());
+      }
+      await waitForWsCount("127.0.0.1", rateLimiter.WS_MAX_CONCURRENT);
+      // Even with the cap saturated, a bad token must see 401, not 429 —
+      // auth runs first, so the limiter leaks nothing to unauthenticated
+      // clients and rejected requests never touch the slot table.
+      const res = await rawHandshake("not-the-key");
+      expect(res.status).toBe(401);
+      expect(rateLimiter.getWsConnectionCount("127.0.0.1")).toBe(
+        rateLimiter.WS_MAX_CONCURRENT,
+      );
+    } finally {
+      for (const ws of sockets) ws.close();
+    }
   });
 });
