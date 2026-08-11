@@ -239,28 +239,126 @@ async function cleanupTempDir(tempDir: string): Promise<void> {
 }
 
 /**
+ * Apply a single file change (write or delete) to the temp directory.
+ */
+async function applyOneFileChange(
+  tempDir: string,
+  file: DiffFile,
+): Promise<void> {
+  const fullPath = path.join(tempDir, file.path);
+  const dir = path.dirname(fullPath);
+
+  if (file.deleted) {
+    // rm with force ignores missing files (no existsSync needed)
+    await fs.promises.rm(fullPath, { force: true });
+    return;
+  }
+
+  // If a conflicting group left a stale directory at this exact path (e.g.
+  // the last file under it was just deleted, but the now-empty directory
+  // remains), remove it before writing — writeFile fails with EISDIR
+  // otherwise. Sibling deletes always run before this create within the
+  // same group, but an emptied directory itself isn't cleaned up by rm-ing
+  // its children.
+  const existingStat = await fs.promises.stat(fullPath).catch(() => null);
+  if (existingStat?.isDirectory()) {
+    await fs.promises.rm(fullPath, { recursive: true, force: true });
+  }
+
+  // Ensure directory exists (recursive mkdir is a no-op if present)
+  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.writeFile(fullPath, file.content, "utf-8");
+}
+
+/**
+ * True if `a` and `b` are the same path, or one is an ancestor directory of
+ * the other (e.g. "foo" and "foo/bar.ts"). Such pairs are path-dependent:
+ * replacing a tracked file with a directory of the same name (or vice
+ * versa) requires the delete to complete before the create runs, or a
+ * parallel mkdir/rm race can throw EEXIST/EISDIR/ENOTDIR.
+ */
+function pathsConflict(a: string, b: string): boolean {
+  if (a === b) return true;
+  const aWithSep = a.endsWith(path.sep) ? a : a + path.sep;
+  const bWithSep = b.endsWith(path.sep) ? b : b + path.sep;
+  return aWithSep.startsWith(bWithSep) || bWithSep.startsWith(aWithSep);
+}
+
+/**
+ * Partition files into disjoint groups such that any two files with a
+ * path-dependent relationship (see pathsConflict) end up in the same group.
+ * Uses union-find over normalized relative paths.
+ */
+function groupConflictingFiles(files: DiffFile[]): DiffFile[][] {
+  const normalized = files.map((f) => path.normalize(f.path));
+  const parent = files.map((_, i) => i);
+
+  function find(i: number): number {
+    while (parent[i] !== i) {
+      parent[i] = parent[parent[i] as number] as number;
+      i = parent[i] as number;
+    }
+    return i;
+  }
+
+  function union(i: number, j: number): void {
+    const ri = find(i);
+    const rj = find(j);
+    if (ri !== rj) parent[ri] = rj;
+  }
+
+  for (let i = 0; i < files.length; i++) {
+    for (let j = i + 1; j < files.length; j++) {
+      if (pathsConflict(normalized[i] as string, normalized[j] as string)) {
+        union(i, j);
+      }
+    }
+  }
+
+  const groups = new Map<number, DiffFile[]>();
+  for (let i = 0; i < files.length; i++) {
+    const root = find(i);
+    const group = groups.get(root);
+    if (group) {
+      group.push(files[i] as DiffFile);
+    } else {
+      groups.set(root, [files[i] as DiffFile]);
+    }
+  }
+  return Array.from(groups.values());
+}
+
+/**
  * Apply file changes to the temp directory.
  * Async with parallel writes via Promise.all (ENG-1667) — previously used
  * writeFileSync inside a loop, blocking the event loop per modified file.
+ *
+ * Path-dependent changes (e.g. deleting `foo` while adding `foo/bar.ts`)
+ * are grouped together and applied sequentially within the group, deletes
+ * before creates, so a directory-for-file (or file-for-directory)
+ * replacement never races an mkdir/writeFile against a still-present
+ * conflicting entry (EEXIST/EISDIR/ENOTDIR). Groups with no path overlap
+ * still run fully in parallel.
  */
-async function applyFileChanges(
+export async function applyFileChanges(
   tempDir: string,
   files: DiffFile[],
 ): Promise<void> {
-  await Promise.all(
-    files.map(async (file) => {
-      const fullPath = path.join(tempDir, file.path);
-      const dir = path.dirname(fullPath);
+  const groups = groupConflictingFiles(files);
 
-      if (file.deleted) {
-        // rm with force ignores missing files (no existsSync needed)
-        await fs.promises.rm(fullPath, { force: true });
+  await Promise.all(
+    groups.map(async (group) => {
+      if (group.length === 1) {
+        await applyOneFileChange(tempDir, group[0] as DiffFile);
         return;
       }
-
-      // Ensure directory exists (recursive mkdir is a no-op if present)
-      await fs.promises.mkdir(dir, { recursive: true });
-      await fs.promises.writeFile(fullPath, file.content, "utf-8");
+      // Deletes first, then creates/updates, both in original diff order,
+      // so e.g. delete `foo` fully completes before create `foo/bar.ts`.
+      const deletes = group.filter((f) => f.deleted);
+      const creates = group.filter((f) => !f.deleted);
+      for (const file of [...deletes, ...creates]) {
+        await applyOneFileChange(tempDir, file);
+      }
     }),
   );
 }
