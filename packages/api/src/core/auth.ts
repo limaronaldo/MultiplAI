@@ -7,8 +7,17 @@
  *   - MULTIPLAI_API_KEY: single accepted key (fallback)
  *
  * Behavior when no key is configured:
- *   - NODE_ENV=production: fail closed (503 "auth not configured")
- *   - otherwise: allow all requests, logging a single warning
+ *   - Fail closed (503 "auth not configured") by default, in every
+ *     environment. NODE_ENV is not a security boundary — it is commonly
+ *     unset or misconfigured (typos, "prod" vs "production", containers
+ *     that never set it) and a fail-open default keyed off it is a
+ *     realistic full-auth-bypass path.
+ *   - Fail open (allow all requests, logging a single warning) only when
+ *     an explicit, distinct dev/test flag is set:
+ *       - ALLOW_UNAUTHENTICATED=1, or
+ *       - NODE_ENV=test
+ *     Both must be set intentionally by the operator/test harness; neither
+ *     is a value any production deploy should carry.
  */
 
 import { createHash, timingSafeEqual } from "node:crypto";
@@ -120,15 +129,22 @@ export function authMiddleware(req: Request): Response | null {
 
   const keys = getConfiguredApiKeys();
   if (keys.length === 0) {
-    if (process.env.NODE_ENV === "production") {
-      // Fail closed: never serve authenticated surface without keys in prod
+    // Fail closed by default. Only fail open when an explicit dev/test
+    // escape hatch is set — NODE_ENV alone is not trustworthy enough to
+    // gate an auth bypass on (see module doc comment above).
+    const explicitlyAllowUnauthenticated =
+      process.env.ALLOW_UNAUTHENTICATED === "1" ||
+      process.env.NODE_ENV === "test";
+
+    if (!explicitlyAllowUnauthenticated) {
       return authNotConfiguredResponse();
     }
+
     if (!warnedNoKeys) {
       warnedNoKeys = true;
       console.warn(
         "[Auth] No MULTIPLAI_API_KEYS/MULTIPLAI_API_KEY configured — " +
-          "allowing all /api requests (non-production only)",
+          "allowing all /api requests (ALLOW_UNAUTHENTICATED=1 or NODE_ENV=test)",
       );
     }
     return null;
@@ -136,7 +152,15 @@ export function authMiddleware(req: Request): Response | null {
 
   let token = extractBearerToken(req);
 
-  // SSE / WebSocket clients cannot always set headers; accept ?token=
+  // SSE / WebSocket clients cannot always set headers; accept ?token=.
+  // KNOWN RISK (tracked, not fully resolved by this PR): a query string
+  // is commonly captured in reverse-proxy/access logs, APM tools, and
+  // browser history, which can leak this reusable API key outside the
+  // Authorization header's usual handling. We intentionally never log
+  // the full request URL with query string for QUERY_TOKEN_PATHS (see
+  // callers) to reduce exposure. Follow-up: issue a short-lived,
+  // scope-limited token for the SSE/WS handshake instead of accepting
+  // the primary API key verbatim in the URL (tracked separately).
   if (!token && QUERY_TOKEN_PATHS.has(path)) {
     token = url.searchParams.get("token");
   }

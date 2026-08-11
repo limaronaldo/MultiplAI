@@ -151,9 +151,30 @@ describe("authMiddleware", () => {
     expect(res!.status).toBe(503);
   });
 
-  test("allows in non-production when no key configured", () => {
+  test("allows when NODE_ENV=test and no key configured (explicit test escape hatch)", () => {
     setEnv({ NODE_ENV: "test" });
     expect(authMiddleware(req("/api/tasks"))).toBeNull();
+  });
+
+  test("allows when ALLOW_UNAUTHENTICATED=1 and no key configured (explicit dev escape hatch)", () => {
+    setEnv({});
+    process.env.ALLOW_UNAUTHENTICATED = "1";
+    expect(authMiddleware(req("/api/tasks"))).toBeNull();
+    delete process.env.ALLOW_UNAUTHENTICATED;
+  });
+
+  test("fails closed (503) for arbitrary/misconfigured NODE_ENV values when no key configured", () => {
+    // Regression test for the HIGH fail-open bug: previously only
+    // NODE_ENV === "production" failed closed, so unset/staging/typo'd
+    // values fell through to fail-open. Now everything except the
+    // explicit escape hatches (ALLOW_UNAUTHENTICATED=1, NODE_ENV=test)
+    // must fail closed.
+    for (const nodeEnv of [undefined, "staging", "prod", "Production", ""]) {
+      setEnv(nodeEnv === undefined ? {} : { NODE_ENV: nodeEnv });
+      const res = authMiddleware(req("/api/tasks"));
+      expect(res).not.toBeNull();
+      expect(res!.status).toBe(503);
+    }
   });
 
   test("SSE accepts ?token= query param", () => {
@@ -166,13 +187,38 @@ describe("authMiddleware", () => {
     expect(res!.status).toBe(401);
   });
 
-  test("WS upgrade path accepts ?token=", () => {
+  test("authMiddleware accepts ?token= for WS path pattern (middleware-only; see index.test.ts for the real upgrade path)", () => {
+    // NOTE: this only proves authMiddleware() itself accepts a valid
+    // ?token= for /api/ws/tasks. It does NOT prove the WebSocket upgrade
+    // is actually authenticated in production — index.ts's Bun.serve
+    // fetch handler calls server.upgrade() for this path, which bypasses
+    // handleRequest()/authMiddleware() entirely unless index.ts itself
+    // invokes authMiddleware() first (see index.ts + index.test.ts).
     const res = authMiddleware(req("/api/ws/tasks?token=secret-key-1"));
     expect(res).toBeNull();
   });
 
   test("?token= is NOT accepted on regular API paths", () => {
     const res = authMiddleware(req("/api/tasks?token=secret-key-1"));
+    expect(res!.status).toBe(401);
+  });
+
+  test("rejects Authorization header with scheme but no token", () => {
+    const res = authMiddleware(req("/api/tasks", { authorization: "Bearer" }));
+    expect(res!.status).toBe(401);
+  });
+
+  test("rejects Authorization header with scheme and only whitespace", () => {
+    const res = authMiddleware(
+      req("/api/tasks", { authorization: "Bearer    " }),
+    );
+    expect(res!.status).toBe(401);
+  });
+
+  test("rejects non-Bearer Authorization scheme", () => {
+    const res = authMiddleware(
+      req("/api/tasks", { authorization: "Basic secret-key-1" }),
+    );
     expect(res!.status).toBe(401);
   });
 });

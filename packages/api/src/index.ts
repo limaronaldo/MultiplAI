@@ -2,6 +2,7 @@ import { handleRequest } from "./router";
 import { db } from "./integrations/db";
 import { initModelConfig } from "./core/model-selection";
 import { runStartupCleanup } from "./services/stale-task-cleanup";
+import { authMiddleware } from "./core/auth";
 
 // WebSocket client tracking for live updates
 interface WebSocketClient {
@@ -90,6 +91,19 @@ async function main() {
       if (url.pathname === "/api/ws/tasks") {
         const upgradeHeader = req.headers.get("upgrade");
         if (upgradeHeader?.toLowerCase() === "websocket") {
+          // ENG-1671: authenticate BEFORE upgrading. server.upgrade() takes
+          // over the connection and never reaches handleRequest()/
+          // authMiddleware() below, so the check must happen here or the
+          // WS endpoint is unauthenticated in production regardless of
+          // what the router does.
+          const authResponse = authMiddleware(req);
+          if (authResponse) {
+            console.log(
+              `[${new Date().toISOString()}] ${method} ${url.pathname} ${authResponse.status} (ws upgrade rejected)`,
+            );
+            return authResponse;
+          }
+
           const success = server.upgrade(req, {
             data: {
               taskFilter: url.searchParams.get("taskId") || null,
