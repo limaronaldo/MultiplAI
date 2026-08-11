@@ -7,6 +7,7 @@ import {
   JobStatus,
 } from "./core/types";
 import { Orchestrator } from "./core/orchestrator";
+import { sanitizeErrorForResponse } from "./core/errors";
 import { TaskRunner } from "./core/task-runner";
 import { db } from "./integrations/db";
 import { dbJobs } from "./integrations/db-jobs";
@@ -123,7 +124,7 @@ function startBackgroundTaskRunner(task: Task): void {
         } else if (processedTask.status === "FAILED") {
           await linear.addComment(
             processedTask.linearIssueId,
-            `❌ **AutoDev failed to complete this task**\n\nReason: ${processedTask.lastError}\n\nThis issue may require manual implementation.`,
+            `❌ **AutoDev failed to complete this task**\n\nReason: ${sanitizeErrorForResponse(processedTask.lastError ?? "")}\n\nThis issue may require manual implementation.`,
           );
         }
       }
@@ -511,7 +512,7 @@ async function handleCheckRunEvent(
         } else if (processedTask.status === "FAILED") {
           await linear.addComment(
             task.linearIssueId,
-            `❌ **AutoDev failed to complete this task**\n\nReason: ${processedTask.lastError}\n\nThis issue may require manual implementation.`,
+            `❌ **AutoDev failed to complete this task**\n\nReason: ${sanitizeErrorForResponse(processedTask.lastError ?? "")}\n\nThis issue may require manual implementation.`,
           );
         }
       }
@@ -619,7 +620,7 @@ async function handlePullRequestReviewEvent(
   } catch (error) {
     console.error(`[Webhook] Error reprocessing task ${task.id}:`, error);
     return Response.json(
-      { error: "Failed to reprocess task", details: String(error) },
+      { error: "Failed to reprocess task", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -1280,7 +1281,7 @@ route("POST", "/api/tasks/cleanup", async (req) => {
   } catch (error) {
     console.error("[Cleanup] Error:", error);
     return Response.json(
-      { error: "Failed to cleanup stale tasks", details: String(error) },
+      { error: "Failed to cleanup stale tasks", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -1350,7 +1351,7 @@ route("DELETE", "/api/tasks/failed", async (req) => {
   } catch (error) {
     console.error("[Delete Failed Tasks] Error:", error);
     return Response.json(
-      { error: "Failed to delete tasks", details: String(error) },
+      { error: "Failed to delete tasks", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -1424,7 +1425,7 @@ route("GET", "/api/tasks/cleanup/stats", async (req) => {
   } catch (error) {
     console.error("[Cleanup Stats] Error:", error);
     return Response.json(
-      { error: "Failed to get cleanup stats", details: String(error) },
+      { error: "Failed to get cleanup stats", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -1468,7 +1469,7 @@ route("GET", "/api/costs", async (req) => {
   } catch (error) {
     console.error("[Costs] Error:", error);
     return Response.json(
-      { error: "Failed to get cost summary", details: String(error) },
+      { error: "Failed to get cost summary", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -1492,7 +1493,7 @@ route("GET", "/api/costs/by-model", async (req) => {
   } catch (error) {
     console.error("[Costs] Error:", error);
     return Response.json(
-      { error: "Failed to get cost by model", details: String(error) },
+      { error: "Failed to get cost by model", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -1516,7 +1517,7 @@ route("GET", "/api/costs/by-agent", async (req) => {
   } catch (error) {
     console.error("[Costs] Error:", error);
     return Response.json(
-      { error: "Failed to get cost by agent", details: String(error) },
+      { error: "Failed to get cost by agent", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -1540,7 +1541,7 @@ route("GET", "/api/costs/daily", async (req) => {
   } catch (error) {
     console.error("[Costs] Error:", error);
     return Response.json(
-      { error: "Failed to get daily costs", details: String(error) },
+      { error: "Failed to get daily costs", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -1563,7 +1564,7 @@ route("GET", "/api/costs/task/:id", async (req) => {
   } catch (error) {
     console.error("[Costs] Error:", error);
     return Response.json(
-      { error: "Failed to get task cost", details: String(error) },
+      { error: "Failed to get task cost", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -1579,7 +1580,7 @@ route("GET", "/api/costs/alerts", async () => {
   } catch (error) {
     console.error("[Costs] Error:", error);
     return Response.json(
-      { error: "Failed to check budget alerts", details: String(error) },
+      { error: "Failed to check budget alerts", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -1595,7 +1596,7 @@ route("GET", "/api/costs/optimizations", async () => {
   } catch (error) {
     console.error("[Costs] Error:", error);
     return Response.json(
-      { error: "Failed to get optimizations", details: String(error) },
+      { error: "Failed to get optimizations", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -1630,7 +1631,7 @@ route("GET", "/api/costs/export", async (req) => {
   } catch (error) {
     console.error("[Costs] Error:", error);
     return Response.json(
-      { error: "Failed to export costs", details: String(error) },
+      { error: "Failed to export costs", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -1893,7 +1894,7 @@ route("PUT", "/api/config/models", async (req) => {
   } catch (error) {
     console.error("[ModelConfig] Error updating config:", error);
     return Response.json(
-      { error: "Failed to update model config", details: String(error) },
+      { error: "Failed to update model config", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -1914,7 +1915,7 @@ route("POST", "/api/config/models/reset", async () => {
   } catch (error) {
     console.error("[ModelConfig] Error resetting config:", error);
     return Response.json(
-      { error: "Failed to reset model config", details: String(error) },
+      { error: "Failed to reset model config", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -2710,7 +2711,7 @@ route("POST", "/api/rag/index", async (req) => {
     github = new GitHubClient();
   } catch (error) {
     return Response.json(
-      { error: "GitHub client not configured", details: String(error) },
+      { error: "GitHub client not configured", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -3399,7 +3400,7 @@ route("POST", "/api/tasks/:id/reject", async (req) => {
   } catch (error) {
     console.error(`[API] Error reprocessing task ${task.id}:`, error);
     return Response.json(
-      { error: "Failed to reprocess task", details: String(error) },
+      { error: "Failed to reprocess task", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -4486,7 +4487,7 @@ route("POST", "/api/linear/sync", async (req) => {
   } catch (error) {
     console.error("[API] Error syncing to Linear:", error);
     return Response.json(
-      { error: "Failed to sync issues", details: String(error) },
+      { error: "Failed to sync issues", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -5983,7 +5984,7 @@ route("POST", "/api/repositories", async (req) => {
   } catch (error) {
     console.error("[API] Failed to create repository:", error);
     return Response.json(
-      { error: "Failed to link repository", details: String(error) },
+      { error: "Failed to link repository", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6043,7 +6044,7 @@ route("DELETE", "/api/repositories/:id", async (req) => {
   } catch (error) {
     console.error("[API] Failed to delete repository:", error);
     return Response.json(
-      { error: "Failed to unlink repository", details: String(error) },
+      { error: "Failed to unlink repository", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6068,7 +6069,7 @@ route("POST", "/api/repositories/sync", async () => {
   } catch (error) {
     console.error("[API] Failed to sync repositories:", error);
     return Response.json(
-      { error: "Failed to sync repositories", details: String(error) },
+      { error: "Failed to sync repositories", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6142,7 +6143,7 @@ route("POST", "/api/issues", async (req) => {
   } catch (error) {
     console.error("[API] Failed to create issue:", error);
     return Response.json(
-      { error: "Failed to create issue", details: String(error) },
+      { error: "Failed to create issue", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6190,7 +6191,7 @@ route("GET", "/api/issues/:owner/:repo", async (req) => {
   } catch (error) {
     console.error("[API] Failed to list issues:", error);
     return Response.json(
-      { error: "Failed to list issues", details: String(error) },
+      { error: "Failed to list issues", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6279,7 +6280,7 @@ route("POST", "/api/tasks/import", async (req) => {
   } catch (error) {
     console.error("[API] Failed to import issues:", error);
     return Response.json(
-      { error: "Failed to import issues", details: String(error) },
+      { error: "Failed to import issues", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6310,7 +6311,7 @@ route("GET", "/api/plans", async (req) => {
   } catch (error) {
     console.error("[API] Failed to list plans:", error);
     return Response.json(
-      { error: "Failed to list plans", details: String(error) },
+      { error: "Failed to list plans", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6353,7 +6354,7 @@ route("POST", "/api/plans", async (req) => {
   } catch (error) {
     console.error("[API] Failed to create plan:", error);
     return Response.json(
-      { error: "Failed to create plan", details: String(error) },
+      { error: "Failed to create plan", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6399,7 +6400,7 @@ route("GET", "/api/plans/:id", async (req) => {
   } catch (error) {
     console.error("[API] Failed to get plan:", error);
     return Response.json(
-      { error: "Failed to get plan", details: String(error) },
+      { error: "Failed to get plan", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6438,7 +6439,7 @@ route("PUT", "/api/plans/:id", async (req) => {
   } catch (error) {
     console.error("[API] Failed to update plan:", error);
     return Response.json(
-      { error: "Failed to update plan", details: String(error) },
+      { error: "Failed to update plan", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6468,7 +6469,7 @@ route("DELETE", "/api/plans/:id", async (req) => {
   } catch (error) {
     console.error("[API] Failed to delete plan:", error);
     return Response.json(
-      { error: "Failed to delete plan", details: String(error) },
+      { error: "Failed to delete plan", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6500,7 +6501,7 @@ route("GET", "/api/plans/:id/cards", async (req) => {
   } catch (error) {
     console.error("[API] Failed to get plan cards:", error);
     return Response.json(
-      { error: "Failed to get plan cards", details: String(error) },
+      { error: "Failed to get plan cards", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6548,7 +6549,7 @@ route("POST", "/api/plans/:id/cards", async (req) => {
   } catch (error) {
     console.error("[API] Failed to create card:", error);
     return Response.json(
-      { error: "Failed to create card", details: String(error) },
+      { error: "Failed to create card", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6589,7 +6590,7 @@ route("POST", "/api/plans/:id/cards/reorder", async (req) => {
   } catch (error) {
     console.error("[API] Failed to reorder cards:", error);
     return Response.json(
-      { error: "Failed to reorder cards", details: String(error) },
+      { error: "Failed to reorder cards", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6616,7 +6617,7 @@ route("GET", "/api/cards/:id", async (req) => {
   } catch (error) {
     console.error("[API] Failed to get card:", error);
     return Response.json(
-      { error: "Failed to get card", details: String(error) },
+      { error: "Failed to get card", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6667,7 +6668,7 @@ route("PUT", "/api/cards/:id", async (req) => {
   } catch (error) {
     console.error("[API] Failed to update card:", error);
     return Response.json(
-      { error: "Failed to update card", details: String(error) },
+      { error: "Failed to update card", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6697,7 +6698,7 @@ route("DELETE", "/api/cards/:id", async (req) => {
   } catch (error) {
     console.error("[API] Failed to delete card:", error);
     return Response.json(
-      { error: "Failed to delete card", details: String(error) },
+      { error: "Failed to delete card", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6821,7 +6822,7 @@ route("POST", "/api/plans/:id/create-issues", async (req) => {
   } catch (error) {
     console.error("[API] Failed to create issues from plan:", error);
     return Response.json(
-      { error: "Failed to create issues from plan", details: String(error) },
+      { error: "Failed to create issues from plan", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -6974,7 +6975,7 @@ route("POST", "/api/tasks/:id/chat", async (req) => {
   } catch (error) {
     console.error("[Chat] Error processing message:", error);
     return Response.json(
-      { error: "Failed to process chat message", details: String(error) },
+      { error: "Failed to process chat message", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -7006,7 +7007,7 @@ route("GET", "/api/tasks/:id/conversations", async (req) => {
   } catch (error) {
     console.error("[Chat] Error listing conversations:", error);
     return Response.json(
-      { error: "Failed to list conversations", details: String(error) },
+      { error: "Failed to list conversations", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -7046,7 +7047,7 @@ route("GET", "/api/conversations/:id/messages", async (req) => {
   } catch (error) {
     console.error("[Chat] Error getting messages:", error);
     return Response.json(
-      { error: "Failed to get messages", details: String(error) },
+      { error: "Failed to get messages", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -7078,7 +7079,7 @@ route("GET", "/api/tasks/:id/external-sessions", async (req) => {
   } catch (error) {
     console.error("[Chat] Error listing external sessions:", error);
     return Response.json(
-      { error: "Failed to list external sessions", details: String(error) },
+      { error: "Failed to list external sessions", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -7134,7 +7135,7 @@ route("POST", "/api/tasks/:id/external-sessions", async (req) => {
   } catch (error) {
     console.error("[Chat] Error creating external session:", error);
     return Response.json(
-      { error: "Failed to create external session", details: String(error) },
+      { error: "Failed to create external session", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -7173,7 +7174,7 @@ route("PATCH", "/api/conversations/:id", async (req) => {
   } catch (error) {
     console.error("[Chat] Error updating conversation:", error);
     return Response.json(
-      { error: "Failed to update conversation", details: String(error) },
+      { error: "Failed to update conversation", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -7249,7 +7250,7 @@ route("POST", "/api/tasks/:id/run-visual-tests", async (req) => {
       );
     }
     return Response.json(
-      { error: "Failed to run visual tests", details: String(error) },
+      { error: "Failed to run visual tests", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -7269,7 +7270,7 @@ route("GET", "/api/tasks/:id/visual-tests", async (req) => {
   } catch (error) {
     console.error("[API] Failed to get visual test runs:", error);
     return Response.json(
-      { error: "Failed to get visual test runs", details: String(error) },
+      { error: "Failed to get visual test runs", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -7295,7 +7296,7 @@ route("GET", "/api/visual-tests/:runId", async (req) => {
   } catch (error) {
     console.error("[API] Failed to get visual test run:", error);
     return Response.json(
-      { error: "Failed to get visual test run", details: String(error) },
+      { error: "Failed to get visual test run", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -7344,7 +7345,7 @@ route("POST", "/api/plan-conversations", async (req) => {
   } catch (error) {
     console.error("[PlanConversation] Error creating conversation:", error);
     return Response.json(
-      { error: "Failed to create conversation", details: String(error) },
+      { error: "Failed to create conversation", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -7372,7 +7373,7 @@ route("GET", "/api/plan-conversations", async (req) => {
   } catch (error) {
     console.error("[PlanConversation] Error listing conversations:", error);
     return Response.json(
-      { error: "Failed to list conversations", details: String(error) },
+      { error: "Failed to list conversations", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -7409,7 +7410,7 @@ route("GET", "/api/plan-conversations/:id", async (req) => {
   } catch (error) {
     console.error("[PlanConversation] Error getting conversation:", error);
     return Response.json(
-      { error: "Failed to get conversation", details: String(error) },
+      { error: "Failed to get conversation", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -7537,7 +7538,7 @@ route("POST", "/api/plan-conversations/:id/messages", async (req) => {
   } catch (error) {
     console.error("[PlanConversation] Error sending message:", error);
     return Response.json(
-      { error: "Failed to send message", details: String(error) },
+      { error: "Failed to send message", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -7583,7 +7584,7 @@ route("PATCH", "/api/plan-conversations/:id", async (req) => {
   } catch (error) {
     console.error("[PlanConversation] Error updating conversation:", error);
     return Response.json(
-      { error: "Failed to update conversation", details: String(error) },
+      { error: "Failed to update conversation", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -7625,7 +7626,7 @@ route("PATCH", "/api/plan-draft-cards/:id", async (req) => {
   } catch (error) {
     console.error("[PlanConversation] Error updating card:", error);
     return Response.json(
-      { error: "Failed to update card", details: String(error) },
+      { error: "Failed to update card", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -7648,7 +7649,7 @@ route("DELETE", "/api/plan-draft-cards/:id", async (req) => {
   } catch (error) {
     console.error("[PlanConversation] Error deleting card:", error);
     return Response.json(
-      { error: "Failed to delete card", details: String(error) },
+      { error: "Failed to delete card", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
@@ -7732,7 +7733,7 @@ route("POST", "/api/plan-conversations/:id/convert", async (req) => {
   } catch (error) {
     console.error("[PlanConversation] Error converting to plan:", error);
     return Response.json(
-      { error: "Failed to convert to plan", details: String(error) },
+      { error: "Failed to convert to plan", details: sanitizeErrorForResponse(error) },
       { status: 500 },
     );
   }
