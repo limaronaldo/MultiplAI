@@ -40,6 +40,7 @@ import {
 } from "./core/rate-limiter";
 import { addCorsHeaders, corsHeadersFor } from "./core/cors";
 import { authMiddleware } from "./core/auth";
+import { issueTicket, type TicketPurpose } from "./core/ticket";
 import { generateOpenAPISpec, getOpenAPIJSON } from "./core/openapi";
 import { generateSwaggerHTML, generateReDocHTML } from "./core/swagger-ui";
 import { VisualTestRunner } from "./agents/computer-use/visual-test-runner";
@@ -4275,6 +4276,70 @@ function getLogLevel(eventType: string): "INFO" | "SUCCESS" | "WARN" | "ERROR" {
  * ENG-1669 rework).
  */
 const SSE_BACKPRESSURE_THRESHOLD_BYTES = 0;
+
+/**
+ * POST /api/auth/ticket - Mint a short-lived, single-purpose stream ticket.
+ *
+ * Follow-up to PR #425 (ENG-1671): replaces `?token=<raw API key>` on the
+ * SSE/WebSocket handshake with a ticket that is HMAC-signed, expires in ~60s,
+ * and is bound to a single purpose ("ws" | "sse"). The endpoint itself is a
+ * normal /api/* route, so it is authenticated by the header flow in
+ * handleRequest() (authMiddleware runs before routing). A client authenticates
+ * once with its API key over the Authorization header, receives a ticket, and
+ * puts only that disposable ticket in the stream URL.
+ *
+ * Body (optional): { "purpose": "ws" | "sse" }  — defaults to "ws".
+ * Response: { "ticket": string, "purpose": string, "expiresAt": number }
+ */
+route("POST", "/api/auth/ticket", async (req) => {
+  let purpose: TicketPurpose = "ws";
+  try {
+    const raw = await req.text();
+    if (raw.trim().length > 0) {
+      const body = JSON.parse(raw);
+      if (body && typeof body.purpose === "string") {
+        if (body.purpose !== "ws" && body.purpose !== "sse") {
+          return Response.json(
+            {
+              error: "Invalid purpose",
+              message: 'purpose must be "ws" or "sse"',
+            },
+            { status: 400 },
+          );
+        }
+        purpose = body.purpose;
+      }
+    }
+  } catch {
+    return Response.json(
+      { error: "Invalid JSON", message: "Request body must be valid JSON" },
+      { status: 400 },
+    );
+  }
+
+  const issued = issueTicket(purpose);
+  if (!issued) {
+    // No signing secret derivable (no API keys configured and no explicit
+    // MULTIPLAI_TICKET_SECRET). Fail closed rather than mint an unsigned
+    // ticket. This mirrors authMiddleware's fail-closed posture.
+    return Response.json(
+      {
+        error: "Service Unavailable",
+        message: "ticket signing not configured",
+      },
+      { status: 503 },
+    );
+  }
+
+  return Response.json(
+    {
+      ticket: issued.ticket,
+      purpose: issued.purpose,
+      expiresAt: issued.expiresAt,
+    },
+    { status: 201 },
+  );
+});
 
 /**
  * GET /api/logs/stream - SSE endpoint for real-time task events

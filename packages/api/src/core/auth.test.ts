@@ -8,6 +8,7 @@ import {
   isValidToken,
   resetAuthWarningForTests,
 } from "./auth";
+import { issueTicket, clearUsedTicketsForTests } from "./ticket";
 
 const ORIGINAL_ENV = {
   MULTIPLAI_API_KEYS: process.env.MULTIPLAI_API_KEYS,
@@ -46,6 +47,9 @@ function req(path: string, headers: Record<string, string> = {}): Request {
 
 beforeEach(() => {
   resetAuthWarningForTests();
+  delete process.env.ALLOW_QUERY_TOKEN;
+  delete process.env.MULTIPLAI_TICKET_SECRET;
+  clearUsedTicketsForTests();
   setEnv({ MULTIPLAI_API_KEY: "secret-key-1" });
 });
 
@@ -177,30 +181,99 @@ describe("authMiddleware", () => {
     }
   });
 
-  test("SSE accepts ?token= query param", () => {
+  // Follow-up to PR #425: raw `?token=<API key>` in the query string is now
+  // OFF by default (it leaks a reusable key through logs/Referer/history).
+  // Stream paths authenticate with a short-lived `?ticket=` instead; raw token
+  // is honored only under the ALLOW_QUERY_TOKEN=1 migration flag.
+  test("SSE rejects raw ?token= by default (ALLOW_QUERY_TOKEN off)", () => {
+    delete process.env.ALLOW_QUERY_TOKEN;
     const res = authMiddleware(req("/api/logs/stream?token=secret-key-1"));
-    expect(res).toBeNull();
-  });
-
-  test("SSE rejects bad ?token=", () => {
-    const res = authMiddleware(req("/api/logs/stream?token=bad"));
     expect(res!.status).toBe(401);
   });
 
-  test("authMiddleware accepts ?token= for WS path pattern (middleware-only; see index.test.ts for the real upgrade path)", () => {
-    // NOTE: this only proves authMiddleware() itself accepts a valid
-    // ?token= for /api/ws/tasks. It does NOT prove the WebSocket upgrade
-    // is actually authenticated in production — index.ts's Bun.serve
-    // fetch handler calls server.upgrade() for this path, which bypasses
-    // handleRequest()/authMiddleware() entirely unless index.ts itself
-    // invokes authMiddleware() first (see index.ts + index.test.ts).
+  test("SSE accepts raw ?token= only when ALLOW_QUERY_TOKEN=1", () => {
+    process.env.ALLOW_QUERY_TOKEN = "1";
+    try {
+      const ok = authMiddleware(req("/api/logs/stream?token=secret-key-1"));
+      expect(ok).toBeNull();
+      const bad = authMiddleware(req("/api/logs/stream?token=nope"));
+      expect(bad!.status).toBe(401);
+    } finally {
+      delete process.env.ALLOW_QUERY_TOKEN;
+    }
+  });
+
+  test("SSE rejects bad ?token= even with ALLOW_QUERY_TOKEN=1", () => {
+    process.env.ALLOW_QUERY_TOKEN = "1";
+    try {
+      const res = authMiddleware(req("/api/logs/stream?token=bad"));
+      expect(res!.status).toBe(401);
+    } finally {
+      delete process.env.ALLOW_QUERY_TOKEN;
+    }
+  });
+
+  test("WS rejects raw ?token= by default (ALLOW_QUERY_TOKEN off)", () => {
+    delete process.env.ALLOW_QUERY_TOKEN;
     const res = authMiddleware(req("/api/ws/tasks?token=secret-key-1"));
+    expect(res!.status).toBe(401);
+  });
+
+  test("SSE accepts a valid ?ticket= (purpose sse)", () => {
+    clearUsedTicketsForTests();
+    const { ticket } = issueTicket("sse")!;
+    const res = authMiddleware(req(`/api/logs/stream?ticket=${ticket}`));
     expect(res).toBeNull();
   });
 
-  test("?token= is NOT accepted on regular API paths", () => {
-    const res = authMiddleware(req("/api/tasks?token=secret-key-1"));
+  test("WS accepts a valid ?ticket= (purpose ws)", () => {
+    clearUsedTicketsForTests();
+    const { ticket } = issueTicket("ws")!;
+    const res = authMiddleware(req(`/api/ws/tasks?ticket=${ticket}`));
+    expect(res).toBeNull();
+  });
+
+  test("a ticket minted for one stream purpose is rejected on the other path", () => {
+    clearUsedTicketsForTests();
+    const { ticket } = issueTicket("ws")!;
+    // ws-purpose ticket used on the SSE path -> bad_purpose -> 401
+    const res = authMiddleware(req(`/api/logs/stream?ticket=${ticket}`));
     expect(res!.status).toBe(401);
+  });
+
+  test("a tampered ticket is rejected (bad signature)", () => {
+    clearUsedTicketsForTests();
+    const { ticket } = issueTicket("ws")!;
+    const tampered = ticket.slice(0, -2) + (ticket.endsWith("a") ? "b" : "a");
+    const res = authMiddleware(req(`/api/ws/tasks?ticket=${tampered}`));
+    expect(res!.status).toBe(401);
+  });
+
+  test("a single-use ticket cannot be replayed", () => {
+    clearUsedTicketsForTests();
+    const { ticket } = issueTicket("ws")!;
+    expect(authMiddleware(req(`/api/ws/tasks?ticket=${ticket}`))).toBeNull();
+    // Second use of the same ticket is rejected by the jti single-use cache.
+    expect(
+      authMiddleware(req(`/api/ws/tasks?ticket=${ticket}`))!.status,
+    ).toBe(401);
+  });
+
+  test("?ticket= is NOT accepted on regular API paths", () => {
+    clearUsedTicketsForTests();
+    const { ticket } = issueTicket("ws")!;
+    const res = authMiddleware(req(`/api/tasks?ticket=${ticket}`));
+    expect(res!.status).toBe(401);
+  });
+
+  test("?token= is NOT accepted on regular API paths (even with ALLOW_QUERY_TOKEN=1)", () => {
+    process.env.ALLOW_QUERY_TOKEN = "1";
+    try {
+      const res = authMiddleware(req("/api/tasks?token=secret-key-1"));
+      expect(res!.status).toBe(401);
+    } finally {
+      delete process.env.ALLOW_QUERY_TOKEN;
+    }
   });
 
   test("rejects Authorization header with scheme but no token", () => {
