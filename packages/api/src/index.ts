@@ -3,6 +3,12 @@ import { db } from "./integrations/db";
 import { initModelConfig } from "./core/model-selection";
 import { runStartupCleanup } from "./services/stale-task-cleanup";
 import { authMiddleware } from "./core/auth";
+import {
+  getClientIp,
+  acquireWsSlot,
+  releaseWsSlot,
+  createWsLimitResponse,
+} from "./core/rate-limiter";
 
 // WebSocket client tracking for live updates
 interface WebSocketClient {
@@ -47,10 +53,34 @@ export function broadcastTaskEvent(event: {
  * main()'s production startup side effects (DB connections, model config
  * load, stale-task cleanup).
  */
+/**
+ * Per-connection data attached at upgrade time. `clientIp` +
+ * `releaseWsSlotOnce` carry the ENG-1670 concurrency-slot ownership from the
+ * fetch handler to the websocket close handler; the guard flag makes release
+ * idempotent no matter which path ends the socket.
+ */
+export interface WsUpgradeData {
+  taskFilter: string | null;
+  connectedAt: number;
+  clientIp: string;
+  wsSlotReleased: boolean;
+}
+
+/** Release the WS concurrency slot for a socket exactly once. */
+export function releaseWsSlotOnce(data: WsUpgradeData | undefined): void {
+  if (data && !data.wsSlotReleased) {
+    data.wsSlotReleased = true;
+    releaseWsSlot(data.clientIp);
+  }
+}
+
 export function createFetchHandler() {
   return async function fetch(
     req: Request,
-    server: { upgrade: (req: Request, opts: { data: unknown }) => boolean },
+    server: {
+      upgrade: (req: Request, opts: { data: unknown }) => boolean;
+      requestIP?: (req: Request) => { address: string } | null;
+    },
   ): Promise<Response | undefined> {
     const url = new URL(req.url);
     const method = req.method;
@@ -73,15 +103,34 @@ export function createFetchHandler() {
           return authResponse;
         }
 
+        // ENG-1670: cap simultaneous WS connections per IP (+ global cap)
+        // AFTER auth (so unauthenticated probes can't consume slots) and
+        // BEFORE server.upgrade() takes over the connection.
+        const clientIp = getClientIp(
+          req,
+          server.requestIP?.(req)?.address ?? null,
+        );
+        if (!acquireWsSlot(clientIp)) {
+          console.log(
+            `[${new Date().toISOString()}] ${method} ${url.pathname} 429 (ws concurrency limit for ${clientIp})`,
+          );
+          return createWsLimitResponse();
+        }
+
         const success = server.upgrade(req, {
           data: {
             taskFilter: url.searchParams.get("taskId") || null,
             connectedAt: Date.now(),
-          } as any,
+            clientIp,
+            wsSlotReleased: false,
+          } satisfies WsUpgradeData as any,
         });
         if (success) {
           return undefined; // Bun handles the upgrade
         }
+        // Upgrade failed: the socket never opened, so close() will never
+        // fire — release the slot here or it leaks.
+        releaseWsSlot(clientIp);
       }
     }
 
@@ -201,6 +250,9 @@ async function main() {
             break;
           }
         }
+        // ENG-1670: free the concurrency slot (idempotent). Bun invokes
+        // close() for both clean and error-terminated sockets.
+        releaseWsSlotOnce(ws.data as WsUpgradeData | undefined);
         console.log(
           `[WebSocket] Client disconnected (total: ${wsClients.size})`,
         );

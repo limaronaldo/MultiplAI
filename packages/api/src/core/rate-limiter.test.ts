@@ -137,31 +137,78 @@ describe("Rate Limiter", () => {
   });
 
   describe("getClientIp", () => {
-    it("should extract IP from x-forwarded-for", () => {
+    const PROXY_ADDR = "172.16.0.9";
+
+    function withTrustedProxy<T>(fn: () => T): T {
+      const prevTrusted = process.env.TRUSTED_PROXY;
+      const prevFly = process.env.FLY_APP_NAME;
+      delete process.env.FLY_APP_NAME;
+      process.env.TRUSTED_PROXY = PROXY_ADDR;
+      try {
+        return fn();
+      } finally {
+        if (prevTrusted === undefined) delete process.env.TRUSTED_PROXY;
+        else process.env.TRUSTED_PROXY = prevTrusted;
+        if (prevFly !== undefined) process.env.FLY_APP_NAME = prevFly;
+      }
+    }
+
+    it("should extract the LAST x-forwarded-for entry behind a trusted proxy", () => {
       const req = new Request("http://localhost", {
         headers: { "x-forwarded-for": "1.2.3.4, 5.6.7.8" },
       });
 
-      expect(getClientIp(req)).toBe("1.2.3.4");
+      // The first entry is client-controlled (spoofable); the last entry is
+      // the one appended by our trusted proxy.
+      withTrustedProxy(() => {
+        expect(getClientIp(req, PROXY_ADDR)).toBe("5.6.7.8");
+      });
     });
 
-    it("should extract IP from x-real-ip", () => {
+    it("should extract IP from x-real-ip behind a trusted proxy", () => {
       const req = new Request("http://localhost", {
         headers: { "x-real-ip": "10.0.0.1" },
       });
 
-      expect(getClientIp(req)).toBe("10.0.0.1");
+      withTrustedProxy(() => {
+        expect(getClientIp(req, PROXY_ADDR)).toBe("10.0.0.1");
+      });
     });
 
-    it("should extract IP from fly-client-ip", () => {
+    it("should extract IP from fly-client-ip behind a trusted proxy", () => {
       const req = new Request("http://localhost", {
         headers: { "fly-client-ip": "192.168.1.1" },
       });
 
-      expect(getClientIp(req)).toBe("192.168.1.1");
+      withTrustedProxy(() => {
+        expect(getClientIp(req, PROXY_ADDR)).toBe("192.168.1.1");
+      });
     });
 
-    it("should return unknown when no IP header", () => {
+    it("should IGNORE spoofable headers when not behind a trusted proxy", () => {
+      const req = new Request("http://localhost", {
+        headers: {
+          "x-forwarded-for": "1.2.3.4",
+          "x-real-ip": "10.0.0.1",
+          "fly-client-ip": "192.168.1.1",
+        },
+      });
+
+      // No TRUSTED_PROXY / FLY_APP_NAME: fall back to the socket address.
+      expect(getClientIp(req, "203.0.113.7")).toBe("203.0.113.7");
+    });
+
+    it("should ignore headers from a non-trusted remote address", () => {
+      const req = new Request("http://localhost", {
+        headers: { "x-forwarded-for": "1.2.3.4" },
+      });
+
+      withTrustedProxy(() => {
+        expect(getClientIp(req, "203.0.113.7")).toBe("203.0.113.7");
+      });
+    });
+
+    it("should return unknown when no IP header and no remote address", () => {
       const req = new Request("http://localhost");
 
       expect(getClientIp(req)).toBe("unknown");
@@ -262,6 +309,139 @@ describe("Rate Limiter", () => {
       expect(stats.totalKeys).toBe(3);
       expect(stats.byPrefix["api:"]).toBe(2);
       expect(stats.byPrefix["webhook:"]).toBe(1);
+    });
+  });
+});
+
+// ============================================
+// ENG-1670: conformance tests
+// ============================================
+
+import {
+  getConfigForRequest,
+  acquireSseSlot,
+  releaseSseSlot,
+  getSseConnectionCount,
+  clearAllSseSlots,
+  createSseLimitResponse,
+  SSE_MAX_CONCURRENT,
+} from "./rate-limiter";
+
+describe("ENG-1670 conformance", () => {
+  beforeEach(() => {
+    clearAllRateLimits();
+    clearAllSseSlots();
+  });
+
+  describe("limits per category", () => {
+    it("webhook limit defaults to 30 req/min", () => {
+      expect(RATE_LIMIT_CONFIGS.webhook.maxRequests).toBe(30);
+      expect(RATE_LIMIT_CONFIGS.webhook.windowMs).toBe(60000);
+    });
+
+    it("api read limit defaults to 60 req/min", () => {
+      expect(RATE_LIMIT_CONFIGS.api.maxRequests).toBe(60);
+      expect(RATE_LIMIT_CONFIGS.api.windowMs).toBe(60000);
+    });
+
+    it("api write limit defaults to 20 req/min", () => {
+      expect(RATE_LIMIT_CONFIGS.write.maxRequests).toBe(20);
+      expect(RATE_LIMIT_CONFIGS.write.windowMs).toBe(60000);
+    });
+  });
+
+  describe("getConfigForRequest (method-aware)", () => {
+    it("GET /api/* uses read config", () => {
+      expect(getConfigForRequest("/api/tasks", "GET")).toBe(RATE_LIMIT_CONFIGS.api);
+    });
+
+    it("POST/PUT/PATCH/DELETE /api/* use write config", () => {
+      expect(getConfigForRequest("/api/tasks/123/reject", "POST")).toBe(RATE_LIMIT_CONFIGS.write);
+      expect(getConfigForRequest("/api/tasks/123", "PUT")).toBe(RATE_LIMIT_CONFIGS.write);
+      expect(getConfigForRequest("/api/tasks/123", "PATCH")).toBe(RATE_LIMIT_CONFIGS.write);
+      expect(getConfigForRequest("/api/tasks/123", "DELETE")).toBe(RATE_LIMIT_CONFIGS.write);
+    });
+
+    it("heavy paths take precedence over write config", () => {
+      expect(getConfigForRequest("/api/tasks/123/process", "POST")).toBe(RATE_LIMIT_CONFIGS.heavy);
+      expect(getConfigForRequest("/api/jobs", "POST")).toBe(RATE_LIMIT_CONFIGS.heavy);
+    });
+
+    it("webhooks use webhook config regardless of method", () => {
+      expect(getConfigForRequest("/webhooks/github", "POST")).toBe(RATE_LIMIT_CONFIGS.webhook);
+    });
+
+    it("getConfigForPath stays backwards-compatible (read semantics)", () => {
+      expect(getConfigForPath("/api/tasks")).toBe(RATE_LIMIT_CONFIGS.api);
+    });
+  });
+
+  describe("write limiting via middleware", () => {
+    it("blocks POST /api/* after 20 requests with 429 + Retry-After", () => {
+      const mkReq = () =>
+        new Request("http://localhost/api/tasks/1/reject", {
+          method: "POST",
+          headers: { "x-forwarded-for": "10.9.9.9" },
+        });
+
+      for (let i = 0; i < 20; i++) {
+        expect(rateLimitMiddleware(mkReq())).toBeNull();
+      }
+      const blocked = rateLimitMiddleware(mkReq());
+      expect(blocked).not.toBeNull();
+      expect(blocked!.status).toBe(429);
+      expect(blocked!.headers.get("Retry-After")).not.toBeNull();
+    });
+
+    it("GET on same path from same IP still allowed up to 60", () => {
+      const mkGet = () =>
+        new Request("http://localhost/api/tasks", {
+          method: "GET",
+          headers: { "x-forwarded-for": "10.9.9.10" },
+        });
+      for (let i = 0; i < 60; i++) {
+        expect(rateLimitMiddleware(mkGet())).toBeNull();
+      }
+      const blocked = rateLimitMiddleware(mkGet());
+      expect(blocked).not.toBeNull();
+      expect(blocked!.status).toBe(429);
+    });
+  });
+
+  describe("SSE concurrent connection limiting", () => {
+    it("allows up to SSE_MAX_CONCURRENT slots per IP", () => {
+      for (let i = 0; i < SSE_MAX_CONCURRENT; i++) {
+        expect(acquireSseSlot("1.2.3.4")).toBe(true);
+      }
+      expect(getSseConnectionCount("1.2.3.4")).toBe(SSE_MAX_CONCURRENT);
+      expect(acquireSseSlot("1.2.3.4")).toBe(false);
+    });
+
+    it("defaults to 5 concurrent connections", () => {
+      expect(SSE_MAX_CONCURRENT).toBe(5);
+    });
+
+    it("tracks IPs independently", () => {
+      for (let i = 0; i < SSE_MAX_CONCURRENT; i++) acquireSseSlot("1.1.1.1");
+      expect(acquireSseSlot("2.2.2.2")).toBe(true);
+    });
+
+    it("release frees a slot", () => {
+      for (let i = 0; i < SSE_MAX_CONCURRENT; i++) acquireSseSlot("3.3.3.3");
+      expect(acquireSseSlot("3.3.3.3")).toBe(false);
+      releaseSseSlot("3.3.3.3");
+      expect(acquireSseSlot("3.3.3.3")).toBe(true);
+    });
+
+    it("release below zero is safe", () => {
+      releaseSseSlot("9.9.9.9");
+      expect(getSseConnectionCount("9.9.9.9")).toBe(0);
+    });
+
+    it("SSE limit response is 429 with Retry-After", () => {
+      const res = createSseLimitResponse();
+      expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("30");
     });
   });
 });
