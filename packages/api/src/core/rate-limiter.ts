@@ -31,8 +31,12 @@ interface RateLimitEntry {
 // In-memory store (for single instance deployments)
 const store = new Map<string, RateLimitEntry>();
 
-// Cleanup old entries periodically
-setInterval(() => {
+// Cleanup old entries periodically. `.unref()` so this interval never keeps
+// the process (or a test runner importing this module transitively) alive on
+// its own — without it, `bun test` and any script that imports router.ts
+// hangs indefinitely after work completes, since Node/Bun's event loop waits
+// on active (non-unreffed) timers before exiting.
+const cleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of store.entries()) {
     if (entry.resetAt < now) {
@@ -40,6 +44,7 @@ setInterval(() => {
     }
   }
 }, 60000); // Every minute
+cleanupInterval.unref?.();
 
 /**
  * Default configuration by endpoint type

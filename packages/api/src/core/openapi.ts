@@ -328,6 +328,10 @@ const endpoints: EndpointDef[] = [
     description:
       "Returns system health status including database, GitHub API, and LLM providers.",
     operationId: "getHealth",
+    // ENG-1671: public endpoint (see PUBLIC_API_PATHS in core/auth.ts) —
+    // override the global bearerAuth requirement so the generated spec
+    // doesn't falsely claim this needs a token.
+    security: [],
     responses: {
       "200": {
         description: "System is healthy",
@@ -1232,7 +1236,7 @@ AutoDev is an autonomous development system that uses LLMs to resolve GitHub iss
 - **Linear Integration**: Two-way sync with Linear for issue tracking
 
 ## Authentication
-Most endpoints are public for monitoring. The GitHub webhook endpoint requires HMAC-SHA256 signature verification.
+Most \`/api/*\` endpoints require a Bearer token (see the \`bearerAuth\` security scheme) once \`MULTIPLAI_API_KEYS\`/\`MULTIPLAI_API_KEY\` is configured. \`GET /api/health\` is public. SSE (\`/api/logs/stream\`) and the WebSocket endpoint (\`/api/ws/tasks\`) additionally accept the token via a \`?token=\` query parameter since browser \`EventSource\`/\`WebSocket\` clients cannot set custom headers. The GitHub webhook endpoint uses HMAC-SHA256 signature verification instead of a bearer token.
 
 ## Rate Limiting
 API endpoints are rate-limited to prevent abuse:
@@ -1280,8 +1284,20 @@ API endpoints are rate-limited to prevent abuse:
           description:
             "GitHub webhook HMAC-SHA256 signature for payload verification",
         },
+        bearerAuth: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "opaque",
+          description:
+            "MULTIPLAI_API_KEYS/MULTIPLAI_API_KEY value, sent as `Authorization: Bearer <token>`. " +
+            "GET /api/health is exempt. /api/logs/stream and /api/ws/tasks additionally accept " +
+            "the token via a `?token=` query parameter for clients that cannot set headers.",
+        },
       },
     },
+    // Applies to every operation by default; endpoints that define their own
+    // `endpoint.security` (e.g. the GitHub webhook) override this per-operation.
+    security: [{ bearerAuth: [] }],
     tags: [
       { name: "System", description: "System health and configuration" },
       { name: "Tasks", description: "Task management and processing" },
