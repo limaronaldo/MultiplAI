@@ -21,12 +21,31 @@
  */
 
 import { createHash, timingSafeEqual } from "node:crypto";
+import { validateTicket, type TicketPurpose } from "./ticket";
 
 /** Paths under /api/ that never require authentication */
 const PUBLIC_API_PATHS = new Set(["/api/health"]);
 
-/** Paths that may authenticate via ?token= query param (SSE / WebSocket) */
-const QUERY_TOKEN_PATHS = new Set(["/api/logs/stream", "/api/ws/tasks"]);
+/**
+ * Paths that may authenticate via a short-lived `?ticket=` query param, and
+ * the single ticket purpose each accepts. SSE/WebSocket clients (EventSource,
+ * the browser WebSocket API) cannot set an Authorization header, so they mint
+ * a ticket via POST /api/auth/ticket (header-authed) and pass it here.
+ */
+const QUERY_TICKET_PATHS = new Map<string, TicketPurpose>([
+  ["/api/logs/stream", "sse"],
+  ["/api/ws/tasks", "ws"],
+]);
+
+/**
+ * Whether the legacy `?token=<raw API key>` query-string auth from PR #425 is
+ * still accepted on the stream paths. Default OFF: a raw, long-lived API key in
+ * a URL leaks through logs/Referer/history. Set ALLOW_QUERY_TOKEN=1 only for a
+ * transitional window while clients migrate to `?ticket=`.
+ */
+export function isRawQueryTokenAllowed(): boolean {
+  return process.env.ALLOW_QUERY_TOKEN === "1";
+}
 
 let warnedNoKeys = false;
 
@@ -150,24 +169,42 @@ export function authMiddleware(req: Request): Response | null {
     return null;
   }
 
-  let token = extractBearerToken(req);
+  const token = extractBearerToken(req);
 
-  // SSE / WebSocket clients cannot always set headers; accept ?token=.
-  // KNOWN RISK (tracked, not fully resolved by this PR): a query string
-  // is commonly captured in reverse-proxy/access logs, APM tools, and
-  // browser history, which can leak this reusable API key outside the
-  // Authorization header's usual handling. We intentionally never log
-  // the full request URL with query string for QUERY_TOKEN_PATHS (see
-  // callers) to reduce exposure. Follow-up: issue a short-lived,
-  // scope-limited token for the SSE/WS handshake instead of accepting
-  // the primary API key verbatim in the URL (tracked separately).
-  if (!token && QUERY_TOKEN_PATHS.has(path)) {
-    token = url.searchParams.get("token");
+  // Header auth always wins and works on every /api/* path.
+  if (token && isValidToken(token, keys)) {
+    return null;
   }
 
-  if (!token || !isValidToken(token, keys)) {
-    return unauthorizedResponse();
+  // SSE / WebSocket clients cannot set an Authorization header. On the stream
+  // paths they authenticate with a short-lived, single-purpose `?ticket=`
+  // (follow-up to PR #425): the ticket is HMAC-signed and expires in ~60s, so
+  // a leaked URL is worthless almost immediately and cannot be replayed
+  // against another route. The ticket is validated for the exact purpose bound
+  // to this path (ws vs sse), so a ticket minted for one stream cannot be used
+  // on the other.
+  const ticketPurpose = QUERY_TICKET_PATHS.get(path);
+  if (ticketPurpose) {
+    const ticket = url.searchParams.get("ticket");
+    if (ticket) {
+      const result = validateTicket(ticket, ticketPurpose, { markUsed: true });
+      if (result.valid) {
+        return null;
+      }
+      // Fall through to 401 on an invalid/expired/replayed ticket.
+    }
+
+    // Legacy compat: `?token=<raw API key>` (PR #425) is only honored when the
+    // operator explicitly opts in via ALLOW_QUERY_TOKEN=1 during migration.
+    // Default OFF because a raw reusable API key in the URL leaks through
+    // access logs, APM, Referer headers, and browser history.
+    if (isRawQueryTokenAllowed()) {
+      const rawToken = url.searchParams.get("token");
+      if (rawToken && isValidToken(rawToken, keys)) {
+        return null;
+      }
+    }
   }
 
-  return null;
+  return unauthorizedResponse();
 }
