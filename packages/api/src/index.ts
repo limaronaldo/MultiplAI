@@ -40,6 +40,65 @@ export function broadcastTaskEvent(event: {
   }
 }
 
+/**
+ * Builds the Bun.serve `fetch` handler, including the pre-upgrade auth gate
+ * for /api/ws/tasks (ENG-1671). Extracted from main() so it can be exercised
+ * directly in tests against a real Bun.serve instance, without triggering
+ * main()'s production startup side effects (DB connections, model config
+ * load, stale-task cleanup).
+ */
+export function createFetchHandler() {
+  return async function fetch(
+    req: Request,
+    server: { upgrade: (req: Request, opts: { data: unknown }) => boolean },
+  ): Promise<Response | undefined> {
+    const url = new URL(req.url);
+    const method = req.method;
+    const start = Date.now();
+
+    // Handle WebSocket upgrade for /api/ws/tasks
+    if (url.pathname === "/api/ws/tasks") {
+      const upgradeHeader = req.headers.get("upgrade");
+      if (upgradeHeader?.toLowerCase() === "websocket") {
+        // ENG-1671: authenticate BEFORE upgrading. server.upgrade() takes
+        // over the connection and never reaches handleRequest()/
+        // authMiddleware() below, so the check must happen here or the
+        // WS endpoint is unauthenticated in production regardless of
+        // what the router does.
+        const authResponse = authMiddleware(req);
+        if (authResponse) {
+          console.log(
+            `[${new Date().toISOString()}] ${method} ${url.pathname} ${authResponse.status} (ws upgrade rejected)`,
+          );
+          return authResponse;
+        }
+
+        const success = server.upgrade(req, {
+          data: {
+            taskFilter: url.searchParams.get("taskId") || null,
+            connectedAt: Date.now(),
+          } as any,
+        });
+        if (success) {
+          return undefined; // Bun handles the upgrade
+        }
+      }
+    }
+
+    const response = await handleRequest(req);
+
+    const duration = Date.now() - start;
+    const status = response.status;
+
+    // Log request
+    console.log(
+      `[${new Date().toISOString()}] ${method} ${url.pathname} ${status} ${duration}ms`,
+    );
+
+    return response;
+  };
+}
+
 async function main() {
   console.log("AutoDev server starting...");
 
@@ -82,52 +141,7 @@ async function main() {
   const server = Bun.serve({
     port: PORT,
     hostname: "0.0.0.0",
-    async fetch(req, server) {
-      const url = new URL(req.url);
-      const method = req.method;
-      const start = Date.now();
-
-      // Handle WebSocket upgrade for /api/ws/tasks
-      if (url.pathname === "/api/ws/tasks") {
-        const upgradeHeader = req.headers.get("upgrade");
-        if (upgradeHeader?.toLowerCase() === "websocket") {
-          // ENG-1671: authenticate BEFORE upgrading. server.upgrade() takes
-          // over the connection and never reaches handleRequest()/
-          // authMiddleware() below, so the check must happen here or the
-          // WS endpoint is unauthenticated in production regardless of
-          // what the router does.
-          const authResponse = authMiddleware(req);
-          if (authResponse) {
-            console.log(
-              `[${new Date().toISOString()}] ${method} ${url.pathname} ${authResponse.status} (ws upgrade rejected)`,
-            );
-            return authResponse;
-          }
-
-          const success = server.upgrade(req, {
-            data: {
-              taskFilter: url.searchParams.get("taskId") || null,
-              connectedAt: Date.now(),
-            } as any,
-          });
-          if (success) {
-            return undefined as any; // Bun handles the upgrade
-          }
-        }
-      }
-
-      const response = await handleRequest(req);
-
-      const duration = Date.now() - start;
-      const status = response.status;
-
-      // Log request
-      console.log(
-        `[${new Date().toISOString()}] ${method} ${url.pathname} ${status} ${duration}ms`,
-      );
-
-      return response;
-    },
+    fetch: createFetchHandler() as any,
     websocket: {
       open(ws: any) {
         const data = ws.data as {
@@ -220,4 +234,11 @@ Endpoints:
   });
 }
 
-main();
+// Do not auto-start the server when this module is imported by a test file
+// (e.g. index.test.ts imports createFetchHandler to exercise the real
+// fetch handler against an ephemeral Bun.serve instance it creates itself).
+// NODE_ENV=test is the same explicit escape hatch already used in
+// core/auth.ts; production deploys never set it.
+if (process.env.NODE_ENV !== "test") {
+  main();
+}
