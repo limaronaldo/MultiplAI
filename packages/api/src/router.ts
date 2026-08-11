@@ -8,6 +8,13 @@ import {
   JobStatus,
 } from "./core/types";
 import { taskEventBus } from "./core/task-event-bus";
+import {
+  runSseLogStream,
+  parseCursor,
+  formatCursor,
+  type SseLogStreamHandle,
+  type SseSink,
+} from "./core/sse-log-stream";
 import { Orchestrator } from "./core/orchestrator";
 import { TaskRunner } from "./core/task-runner";
 import { db } from "./integrations/db";
@@ -4255,6 +4262,14 @@ function getLogLevel(eventType: string): "INFO" | "SUCCESS" | "WARN" | "ERROR" {
 }
 
 /**
+ * Backpressure threshold: if the underlying sink reports it is this far (or
+ * more) behind, the client is not draining fast enough. We drop the
+ * connection rather than let the buffer grow unbounded (MED finding,
+ * ENG-1669 rework).
+ */
+const SSE_BACKPRESSURE_THRESHOLD_BYTES = 0;
+
+/**
  * GET /api/logs/stream - SSE endpoint for real-time task events
  * Query params:
  *   - taskId: optional filter by task
@@ -4263,33 +4278,35 @@ route("GET", "/api/logs/stream", async (req) => {
   const url = new URL(req.url);
   const taskId = url.searchParams.get("taskId") || undefined;
 
-  const DEFAULT_CURSOR = {
-    createdAt: new Date(0),
-    id: "00000000-0000-0000-0000-000000000000",
-  };
-
-  function parseCursor(cursor: string | null): { createdAt: Date; id: string } {
-    if (!cursor) return DEFAULT_CURSOR;
-    const [createdAtStr, id] = cursor.split("|");
-    const createdAt = new Date(createdAtStr);
-    if (!id || Number.isNaN(createdAt.getTime())) return DEFAULT_CURSOR;
-    return { createdAt, id };
-  }
-
-  function formatCursor(event: { createdAt: Date; id: string }): string {
-    return `${event.createdAt.toISOString()}|${event.id}`;
-  }
-
-  // Track last cursor sent (SSE "Last-Event-ID" compatible)
-  const initialCursor =
+  const initialCursorParam =
     url.searchParams.get("cursor") || req.headers.get("last-event-id");
-  let lastCursor = parseCursor(initialCursor);
+  const initialCursor = parseCursor(initialCursorParam);
+
   let isActive = true;
+  let streamHandle: SseLogStreamHandle | null = null;
+  let keepAlive: ReturnType<typeof setInterval> | null = null;
 
   // Create a readable stream for SSE
   const stream = new ReadableStream({
-    async start(controller) {
+    start(controller) {
       const encoder = new TextEncoder();
+
+      function cleanup(): void {
+        isActive = false;
+        streamHandle?.stop();
+        if (keepAlive) clearInterval(keepAlive);
+        try {
+          controller.close();
+        } catch {
+          // Already closed (e.g. client disconnected mid-write) - ignore.
+        }
+      }
+
+      // HIGH 2 fix: register the abort cleanup IMMEDIATELY, before any
+      // await, so a disconnect during catch-up can never leak the live
+      // listener or the keep-alive timer. try/finally below also runs
+      // cleanup on any unexpected throw from the async flow.
+      req.signal?.addEventListener("abort", cleanup);
 
       // Send initial connection message
       controller.enqueue(
@@ -4298,91 +4315,96 @@ route("GET", "/api/logs/stream", async (req) => {
         ),
       );
 
-      function sendEvent(event: TaskEvent & { taskStatus?: string }): void {
-        const cursor = formatCursor({
-          createdAt: event.createdAt,
-          id: event.id,
-        });
-
-        controller.enqueue(encoder.encode(`id: ${cursor}\n`));
-        controller.enqueue(
-          encoder.encode(
-            `data: ${JSON.stringify({
-              type: "event",
-              id: event.id,
-              taskId: event.taskId,
-              eventType: event.eventType,
-              agent: event.agent,
-              message: event.outputSummary || event.eventType,
-              timestamp: event.createdAt,
-              level: getLogLevel(event.eventType),
-              tokensUsed: event.tokensUsed,
-              durationMs: event.durationMs,
-              // Include current task status for real-time UI updates (RML-716)
-              taskStatus: event.taskStatus,
-            })}\n\n`,
-          ),
-        );
-
-        lastCursor = { createdAt: event.createdAt, id: event.id };
-      }
-
-      // ENG-1669: push-based delivery via shared EventEmitter instead of
-      // polling the DB every 2s per connection.
-      const unsubscribe = taskEventBus.onTaskEvent((event) => {
-        if (!isActive) return;
-        if (taskId && event.taskId !== taskId) return;
-        // Skip events already delivered by the catch-up query below.
-        if (
-          event.createdAt.getTime() < lastCursor.createdAt.getTime() ||
-          (event.createdAt.getTime() === lastCursor.createdAt.getTime() &&
-            event.id <= lastCursor.id)
-        ) {
-          return;
-        }
-        try {
-          sendEvent(event);
-        } catch (err) {
-          console.error("[SSE] Error sending event:", err);
-        }
-      });
-
-      // One-time catch-up for events missed since Last-Event-ID/cursor
-      // (also covers events written between connect and subscribe).
-      try {
-        const missed = await db.getRecentTaskEvents(lastCursor, taskId);
-        for (const event of missed) {
-          if (!isActive) break;
-          // Skip anything already delivered live while the query ran.
+      const sink: SseSink = {
+        isActive: () => isActive,
+        send(event) {
+          // MED fix: backpressure check before enqueue. `desiredSize` is
+          // negative/near-zero when the client isn't draining fast enough.
           if (
-            event.createdAt.getTime() < lastCursor.createdAt.getTime() ||
-            (event.createdAt.getTime() === lastCursor.createdAt.getTime() &&
-              event.id <= lastCursor.id)
+            controller.desiredSize !== null &&
+            controller.desiredSize <= SSE_BACKPRESSURE_THRESHOLD_BYTES
           ) {
-            continue;
+            console.error(
+              "[SSE] Backpressure threshold exceeded, closing slow consumer",
+            );
+            cleanup();
+            return;
           }
-          sendEvent(event);
-        }
-      } catch (err) {
-        console.error("[SSE] Error fetching catch-up events:", err);
-      }
 
-      // Send keep-alive ping every 30 seconds
-      const keepAlive = setInterval(() => {
-        if (!isActive) {
-          clearInterval(keepAlive);
-          return;
-        }
-        controller.enqueue(encoder.encode(`: keep-alive\n\n`));
-      }, 30000);
+          const cursor = formatCursor({
+            createdAt: event.createdAt,
+            id: event.id,
+          });
 
-      // Cleanup on close (handled by abort signal)
-      req.signal?.addEventListener("abort", () => {
-        isActive = false;
-        unsubscribe();
-        clearInterval(keepAlive);
-        controller.close();
-      });
+          try {
+            controller.enqueue(encoder.encode(`id: ${cursor}\n`));
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  type: "event",
+                  id: event.id,
+                  taskId: event.taskId,
+                  eventType: event.eventType,
+                  agent: event.agent,
+                  message: event.outputSummary || event.eventType,
+                  timestamp: event.createdAt,
+                  level: getLogLevel(event.eventType),
+                  tokensUsed: event.tokensUsed,
+                  durationMs: event.durationMs,
+                  // Include current task status for real-time UI updates (RML-716)
+                  taskStatus: event.taskStatus,
+                })}\n\n`,
+              ),
+            );
+          } catch (err) {
+            console.error("[SSE] Error sending event:", err);
+          }
+        },
+      };
+
+      // ENG-1669 rework: buffer-then-drain catch-up (paginated, no
+      // truncating LIMIT) merged with live delivery via a single dedup set,
+      // instead of two independently-advancing cursors racing on
+      // timestamp. See core/sse-log-stream.ts for the full design.
+      void (async () => {
+        try {
+          streamHandle = await runSseLogStream({
+            taskId,
+            initialCursor,
+            bus: taskEventBus,
+            source: db,
+            sink,
+          });
+        } catch (err) {
+          console.error("[SSE] Fatal error running log stream:", err);
+        } finally {
+          if (!isActive) return; // already cleaned up via abort
+          // Start keep-alive only once catch-up/drain has completed and
+          // we're live (or failed fatally) - matches prior behavior.
+          keepAlive = setInterval(() => {
+            if (!isActive) {
+              if (keepAlive) clearInterval(keepAlive);
+              return;
+            }
+            try {
+              controller.enqueue(encoder.encode(`: keep-alive\n\n`));
+            } catch (err) {
+              console.error("[SSE] Error sending keep-alive:", err);
+            }
+          }, 30000);
+        }
+      })();
+
+      // ReadableStream.cancel() is invoked by the platform when the
+      // consumer stops reading without an abort signal firing (e.g. some
+      // proxies/runtimes). Route it through the same cleanup so the
+      // listener/timer never leak.
+      // (Bun/undici call `cancel` on the underlying source, wired below.)
+    },
+    cancel() {
+      isActive = false;
+      streamHandle?.stop();
+      if (keepAlive) clearInterval(keepAlive);
     },
   });
 
