@@ -22,27 +22,59 @@ export type SqlClient = {
 // Cached wrapper instance
 let sqlClient: SqlClient | null = null;
 
+/**
+ * Build a {@link SqlClient} from a connection string using the Neon serverless
+ * driver. Extracted as an injectable factory (follow-up to PR #430) so that
+ * `getDb()` consumers — notably `createTaskEvent` — can be unit-tested in
+ * isolation by injecting a fake `SqlClient` via {@link setDb}, without the
+ * driver ever opening a network connection.
+ *
+ * The default (no argument) preserves the previous import-time-safe, lazy
+ * behavior: the Neon client is only constructed on first `getDb()` call.
+ */
+export function createDb(connString = connectionString): SqlClient {
+  if (!connString) {
+    throw new Error("DATABASE_URL environment variable is required");
+  }
+  const neonClient = neon(connString);
+
+  // Create wrapper function that acts as tagged template
+  const wrapper = ((strings: TemplateStringsArray, ...values: unknown[]) => {
+    return neonClient(strings, ...values);
+  }) as unknown as SqlClient;
+
+  // Add unsafe() method for dynamic queries
+  wrapper.unsafe = async (query: string, params?: unknown[]) => {
+    const result = await neonClient.query(query, params || []);
+    return (result as any).rows || result;
+  };
+
+  return wrapper;
+}
+
 export function getDb(): SqlClient {
   if (!sqlClient) {
-    if (!connectionString) {
-      throw new Error("DATABASE_URL environment variable is required");
-    }
-    const neonClient = neon(connectionString);
-
-    // Create wrapper function that acts as tagged template
-    const wrapper = ((strings: TemplateStringsArray, ...values: unknown[]) => {
-      return neonClient(strings, ...values);
-    }) as unknown as SqlClient;
-
-    // Add unsafe() method for dynamic queries
-    wrapper.unsafe = async (query: string, params?: unknown[]) => {
-      const result = await neonClient.query(query, params || []);
-      return (result as any).rows || result;
-    };
-
-    sqlClient = wrapper;
+    sqlClient = createDb();
   }
   return sqlClient;
+}
+
+/**
+ * Inject a `SqlClient` to be returned by every subsequent `getDb()` call.
+ * Test-only dependency-injection seam: lets unit tests exercise `db` methods
+ * (e.g. `createTaskEvent`) against a mock client with no real database.
+ * Production code never calls this.
+ */
+export function setDb(client: SqlClient): void {
+  sqlClient = client;
+}
+
+/**
+ * Clear the injected/cached `SqlClient` so the next `getDb()` rebuilds the
+ * real Neon client. Pair with {@link setDb} in test teardown.
+ */
+export function resetDb(): void {
+  sqlClient = null;
 }
 
 export const db = {
