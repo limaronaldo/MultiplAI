@@ -41,6 +41,31 @@ describe("sanitizeErrorForResponse (ENG-1668)", () => {
     ).toBe("Internal error");
   });
 
+  it("redacts container WORKDIR paths (e.g. /app) not on an enumerated allowlist", () => {
+    expect(
+      sanitizeErrorForResponse(
+        new Error("ENOENT: /app/packages/api/.env not found"),
+      ),
+    ).toBe("Internal error");
+    expect(
+      sanitizeErrorForResponse(
+        new Error(
+          "Cannot find module '/app/node_modules/some-pkg/index.js'",
+        ),
+      ),
+    ).toBe("Internal error");
+  });
+
+  it("redacts arbitrary Windows drive paths", () => {
+    expect(
+      sanitizeErrorForResponse(
+        new Error(
+          "EBUSY: resource busy or locked, open 'D:\\builds\\app\\secrets.json'",
+        ),
+      ),
+    ).toBe("Internal error");
+  });
+
   it("redacts connection strings", () => {
     expect(
       sanitizeErrorForResponse(
@@ -78,6 +103,26 @@ describe("sanitizeErrorForResponse (ENG-1668)", () => {
     ).toBe("Internal error");
     expect(
       sanitizeErrorForResponse(new Error("Authorization: Bearer x")),
+    ).toBe("Internal error");
+  });
+
+  it("redacts credential-looking phrases with words between the noun and colon", () => {
+    // Reviewer repro (PR #428): "API key provided:" — the colon is not
+    // immediately after "key", so a naive `key\s*[:=]` pattern misses it.
+    expect(
+      sanitizeErrorForResponse(
+        new Error(
+          "Incorrect API key provided: sk-proj-abcdefghijklmnopqrstuvwxyz",
+        ),
+      ),
+    ).toBe("Internal error");
+  });
+
+  it("redacts hyphenated vendor-prefixed tokens (e.g. sk-proj-...)", () => {
+    expect(
+      sanitizeErrorForResponse(
+        new Error("upstream rejected sk-proj-abcdefghijklmnop"),
+      ),
     ).toBe("Internal error");
   });
 
