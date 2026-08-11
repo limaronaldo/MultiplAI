@@ -97,5 +97,48 @@ describe("ENG-1666 CORS conformance", () => {
       );
       expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
     });
+
+    it("overwrites a stale Allow-Origin with the correct value (no duplicates)", () => {
+      process.env.ALLOWED_ORIGINS = "https://app.example.com";
+      const upstream = new Response(JSON.stringify({ ok: true }), {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "https://stale.example.com",
+        },
+      });
+      const res = addCorsHeaders(upstream, makeReq("https://app.example.com"));
+      // Only the correct value, emitted exactly once.
+      expect(res.headers.get("Access-Control-Allow-Origin")).toBe(
+        "https://app.example.com",
+      );
+    });
+
+    it("strips a stale Allow-Origin when the origin is not allowed", () => {
+      process.env.ALLOWED_ORIGINS = "https://app.example.com";
+      const upstream = new Response(JSON.stringify({ ok: true }), {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "https://stale.example.com",
+        },
+      });
+      const res = addCorsHeaders(upstream, makeReq("https://evil.example.com"));
+      expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    });
+
+    it("strips a stale Allow-Credentials header", () => {
+      process.env.ALLOWED_ORIGINS = "https://app.example.com";
+      const upstream = new Response(JSON.stringify({ ok: true }), {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "https://stale.example.com",
+          "Access-Control-Allow-Credentials": "true",
+        },
+      });
+      const res = addCorsHeaders(upstream, makeReq("https://evil.example.com"));
+      expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+      expect(
+        res.headers.get("Access-Control-Allow-Credentials"),
+      ).toBeNull();
+    });
   });
 });

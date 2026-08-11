@@ -34,7 +34,14 @@ export function corsHeadersFor(req: Request): Record<string, string> {
 
 export function addCorsHeaders(response: Response, req: Request): Response {
   const newHeaders = new Headers(response.headers);
-  for (const [key, value] of Object.entries(corsHeadersFor(req))) {
+  // Remove any pre-existing/stale CORS headers so an upstream
+  // Access-Control-Allow-Origin can never leak or be emitted twice.
+  // corsHeadersFor is re-applied below with the values for the evaluated origin;
+  // when the origin is not allowed, ACAO stays absent (secure by default).
+  newHeaders.delete("Access-Control-Allow-Origin");
+  newHeaders.delete("Access-Control-Allow-Credentials");
+  const corsHeaders = corsHeadersFor(req);
+  for (const [key, value] of Object.entries(corsHeaders)) {
     newHeaders.set(key, value);
   }
   return new Response(response.body, {
