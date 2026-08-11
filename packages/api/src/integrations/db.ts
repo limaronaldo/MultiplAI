@@ -6,6 +6,7 @@ import {
   OrchestrationState,
   OrchestrationStateSchema,
 } from "../core/types";
+import { taskEventBus } from "../core/task-event-bus";
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -300,7 +301,41 @@ export const db = {
       )
       RETURNING *
     `;
-    return this.mapTaskEvent(result);
+    const mapped = this.mapTaskEvent(result);
+
+    // ENG-1669: broadcast to in-process subscribers (SSE) instead of
+    // having each connection poll the DB. Only pay for the task-status
+    // lookup (RML-716) when someone is actually listening.
+    if (taskEventBus.listenerCountTaskEvent > 0) {
+      // The status lookup is a best-effort enrichment: if it fails we still
+      // want to broadcast the event (without taskStatus) rather than drop
+      // the broadcast entirely. Keep this SELECT in its own try/catch so a
+      // transient failure here can never suppress the emit below.
+      let taskStatus: string | undefined;
+      try {
+        const [task] = await sql`
+          SELECT status FROM tasks WHERE id = ${mapped.taskId}
+        `;
+        taskStatus = task?.status as string | undefined;
+      } catch (err) {
+        console.error(
+          "[task-event-bus] Failed to look up task status for broadcast (degrading without enrichment):",
+          err,
+        );
+      }
+
+      try {
+        taskEventBus.emitTaskEvent({
+          ...mapped,
+          taskStatus,
+        });
+      } catch (err) {
+        // Broadcasting is best-effort; never fail the write because of it.
+        console.error("[task-event-bus] Failed to broadcast event:", err);
+      }
+    }
+
+    return mapped;
   },
 
   async getTaskEvents(taskId: string): Promise<TaskEvent[]> {
